@@ -1,4 +1,11 @@
-# /common/super/project.py
+# /super/project.py
+"""
+Project super-class for the MSB architecture.
+
+Copyright (c) 2025 Alexey Rudnitskiy. All rights reserved.
+Licensed under the MSB Software License. See LICENSE file for details.
+"""
+
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Type, List, TypeVar
 from common.utils.validation import check_non_empty_string

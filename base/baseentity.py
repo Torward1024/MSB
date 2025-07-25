@@ -1,4 +1,11 @@
 # base/baseentity.py
+"""
+BaseEntity class for the MSB architecture.
+
+Copyright (c) 2025 Alexey Rudnitskiy. All rights reserved.
+Licensed under the MSB Software License. See LICENSE file for details.
+"""
+
 from abc import ABC, ABCMeta
 from typing import Dict, Union, List, Any, Union, get_origin, get_args
 from utils.logging_setup import logger

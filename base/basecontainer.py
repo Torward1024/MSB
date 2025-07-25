@@ -1,4 +1,11 @@
 # base/basecontainer.py
+"""
+BaseContainer class for the MSB architecture.
+
+Copyright (c) 2025 Alexey Rudnitskiy. All rights reserved.
+Licensed under the MSB Software License. See LICENSE file for details.
+"""
+
 from abc import ABC
 from typing import Dict, TypeVar, Generic, Any, Optional, List, Iterator, Union, get_type_hints, get_args, get_origin
 from common.base.baseentity import BaseEntity

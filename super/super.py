@@ -1,3 +1,11 @@
+# /super/super.py
+"""
+Super class for the MSB architecture.
+
+Copyright (c) 2025 Alexey Rudnitskiy. All rights reserved.
+Licensed under the MSB Software License. See LICENSE file for details.
+"""
+
 from abc import ABC
 from typing import Dict, Any, Callable, Type, Optional, Union
 from common.utils.logging_setup import logger
