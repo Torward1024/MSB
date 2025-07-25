@@ -1,0 +1,4 @@
+# msb/MANIFEST.in
+include LICENSE
+include README.md
+recursive-include msb *.py
