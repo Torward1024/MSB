@@ -1,5 +1,5 @@
 # utils/validation.py
-from utils.logging_setup import logger
+from common.utils.logging_setup import logger
 
 def check_type(value, expected_type, name: str) -> None:
     """Check if a value matches the expected type or is None for optional parameters.
