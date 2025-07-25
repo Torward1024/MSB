@@ -9,7 +9,7 @@ pip install msb
 ```
 
 ## Usage
-```
+```python
 from msb.base.baseentity import BaseEntity
 from msb.super.project import Project
 
