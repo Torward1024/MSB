@@ -8,7 +8,7 @@ Licensed under the MSB Software License. See LICENSE file for details.
 
 from abc import ABC, ABCMeta
 from typing import Dict, Union, List, Any, Union, get_origin, get_args
-from utils.logging_setup import logger
+from msb.utils.logging_setup import logger
 
 class EntityMeta(ABCMeta):
     """Metaclass for BaseEntity to handle type annotations and enforce attribute validation.

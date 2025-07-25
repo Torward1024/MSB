@@ -8,7 +8,7 @@ Licensed under the MSB Software License. See LICENSE file for details.
 
 from abc import ABC
 from typing import Dict, Any, Optional, Callable, List, Type
-from utils.logging_setup import logger
+from msb.utils.logging_setup import logger
 from functools import lru_cache
 import inspect
 

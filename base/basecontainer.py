@@ -8,8 +8,8 @@ Licensed under the MSB Software License. See LICENSE file for details.
 
 from abc import ABC
 from typing import Dict, TypeVar, Generic, Any, Optional, List, Iterator, Union, get_type_hints, get_args, get_origin
-from base.baseentity import BaseEntity
-from utils.logging_setup import logger
+from msb.base.baseentity import BaseEntity
+from msb.utils.logging_setup import logger
 
 T = TypeVar('T', bound=BaseEntity)
 
