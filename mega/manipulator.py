@@ -1,4 +1,4 @@
-# /super/manipulator.py
+# msb/super/manipulator.py
 """
 Manipulator mega-class for the MSB architecture.
 

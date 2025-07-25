@@ -1,4 +1,4 @@
-# /super/project.py
+# msb/super/project.py
 """
 Project super-class for the MSB architecture.
 

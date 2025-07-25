@@ -1,4 +1,4 @@
-# base/basecontainer.py
+# msb/base/basecontainer.py
 """
 BaseContainer class for the MSB architecture.
 

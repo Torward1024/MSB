@@ -1,4 +1,4 @@
-# base/baseentity.py
+# msb/base/baseentity.py
 """
 BaseEntity class for the MSB architecture.
 

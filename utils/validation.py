@@ -1,4 +1,4 @@
-# /utils/validation.py
+# msb/utils/validation.py
 from .logging_setup import logger
 
 def check_type(value, expected_type, name: str) -> None:
