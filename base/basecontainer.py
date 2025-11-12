@@ -2,8 +2,8 @@
 from abc import ABC
 from copy import deepcopy
 from typing import Dict, TypeVar, Generic, Any, Optional, List, Iterator, Union, get_type_hints, get_args, get_origin
-from common.base.baseentity import BaseEntity
-from common.utils.logging_setup import logger
+from base.baseentity import BaseEntity
+from utils.logging_setup import logger
 
 T = TypeVar('T', bound=BaseEntity)
 

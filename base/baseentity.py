@@ -1,7 +1,7 @@
 # base/baseentity.py
 from abc import ABC, ABCMeta
 from typing import Dict, Union, List, Any, Union, get_origin, get_args
-from common.utils.logging_setup import logger
+from utils.logging_setup import logger
 
 class EntityMeta(ABCMeta):
     """Metaclass for BaseEntity to handle type annotations and enforce attribute validation.
