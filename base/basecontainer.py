@@ -1,15 +1,9 @@
-# msb/base/basecontainer.py
-"""
-BaseContainer class for the MSB architecture.
-
-Copyright (c) 2025 Alexey Rudnitskiy. All rights reserved.
-Licensed under the MSB Software License. See LICENSE file for details.
-"""
-
+# base/basecontainer.py
 from abc import ABC
+from copy import deepcopy
 from typing import Dict, TypeVar, Generic, Any, Optional, List, Iterator, Union, get_type_hints, get_args, get_origin
-from base.baseentity import BaseEntity
-from utils.logging_setup import logger
+from common.base.baseentity import BaseEntity
+from common.utils.logging_setup import logger
 
 T = TypeVar('T', bound=BaseEntity)
 
@@ -68,32 +62,29 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
             TypeError: If items or its values do not match expected types.
             ValueError: If an item's name does not match its dictionary key.
         """
-        # workaround for Generic[T] breaking EntityMeta's _fields setup
+        
         if not hasattr(self.__class__, '_fields'):
             self.__class__._fields = get_type_hints(self.__class__)
         
-        # prepare items with type validation
         initial_items = items or {}
         if not isinstance(initial_items, dict):
             raise TypeError(f"'items' must be a dict, got {type(initial_items)}")
         
-        # extract T from Generic[T] and validate each item
         generic_base = self.__orig_bases__[0]
-        item_type = self._resolve_type(generic_base.__args__[0])  # Resolve T to actual type (e.g., TestEntity)
+        item_type = self._resolve_type(generic_base.__args__[0])
         for key, item in initial_items.items():
             if not isinstance(key, str):
                 raise TypeError(f"Keys in '_items' must be str, got {type(key)}")
             self._validate_type(f"_items[{key}]", item, item_type)
         
-        # pass the resolved type to BaseEntity
         resolved_items_type = Dict[str, item_type]
-        self._fields["_items"] = resolved_items_type  # update _fields with resolved type
+        self._fields["_items"] = resolved_items_type
         
         generic_base = self.__orig_bases__[0]
-        self._item_type = self._resolve_type(generic_base.__args__[0])  # Кэшируем тип
+        self._item_type = self._resolve_type(generic_base.__args__[0])
         super().__init__(name=name, isactive=isactive, _items=initial_items, _use_cache=use_cache, _cached_to_dict=None)
         self._validate_items(self._items)
-        logger.info(f"Initialized {self.__class__.__name__} with name={name}, isactive={isactive}, item_count={len(self._items)}")
+        logger.debug(f"Initialized {self.__class__.__name__} with name={name}, isactive={isactive}, item_count={len(self._items)}")
 
     def _validate_items(self, items: Dict[str, T]) -> None:
         """Validate the initial dictionary of items.
@@ -125,28 +116,67 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         """
         pass
 
-    def add(self, item: T) -> None:
-        """Add an item to the collection using its name as the key.
+    def add(self, item: Union[T, List[T], 'BaseContainer[T]'], copy_items: bool = True) -> None:
+        """Add one or more items to the collection using their names as keys.
+
+        Supports adding a single item, a list of items, or items from another BaseContainer of the same item type.
+        By default, creates deep copies of items to prevent unintended modifications of original objects.
 
         Args:
-            item (T): The item to add to the container.
+            item (Union[T, List[T], BaseContainer[T]]): A single item, a list of items, or a BaseContainer
+                containing items of type T to add to the container.
+            copy_items (bool): If True, creates deep copies of items to ensure isolation. Defaults to True.
 
         Raises:
-            ValueError: If the item's name is None or already exists in the container.
-            TypeError: If the item's type does not match the expected type T.
+            ValueError: If any item's name is None, already exists in the container, or does not match its key.
+            TypeError: If any item's type does not match the expected type T, or if the input type is unsupported.
+            AttributeError: If an item or container lacks a 'copy' method when copy_items is True.
         """
         generic_base = self.__orig_bases__[0]
         item_type = self._resolve_type(generic_base.__args__[0])
-        if not isinstance(item, item_type):
-            raise TypeError(f"Item must be of type {item_type.__name__}, got {type(item).__name__}")
-        if item.name is None:
-            raise ValueError(f"Cannot add item with no name to {self.__class__.__name__}")
-        self._validate_item(item)
-        if item.name in self._items:
-            raise ValueError(f"Item with name '{item.name}' already exists in {self.__class__.__name__}")
-        self._items[item.name] = item
+
+        if isinstance(item, item_type):
+            item_to_add = deepcopy(item) if copy_items else item
+            if item_to_add.name is None:
+                raise ValueError(f"Cannot add item with no name to {self.__class__.__name__}")
+            self._validate_item(item_to_add)
+            if item_to_add.name in self._items:
+                raise ValueError(f"Item with name '{item_to_add.name}' already exists in {self.__class__.__name__}")
+            self._items[item_to_add.name] = item_to_add
+            logger.debug(f"Added item with name '{item_to_add.name}' to {self.__class__.__name__}")
+
+        elif isinstance(item, list):
+            for i, single_item in enumerate(item):
+                item_to_add = deepcopy(single_item) if copy_items else single_item
+                if not isinstance(item_to_add, item_type):
+                    raise TypeError(f"Item at index {i} must be of type {item_type.__name__}, got {type(single_item).__name__}")
+                if item_to_add.name is None:
+                    raise ValueError(f"Cannot add item at index {i} with no name to {self.__class__.__name__}")
+                self._validate_item(item_to_add)
+                if item_to_add.name in self._items:
+                    raise ValueError(f"Item with name '{item_to_add.name}' at index {i} already exists in {self.__class__.__name__}")
+                self._items[item_to_add.name] = item_to_add
+                logger.debug(f"Added item with name '{item_to_add.name}' to {self.__class__.__name__}")
+
+        elif isinstance(item, BaseContainer):
+            other_generic_base = item.__orig_bases__[0]
+            other_item_type = item._resolve_type(other_generic_base.__args__[0])
+            if other_item_type != item_type:
+                raise TypeError(f"BaseContainer items must be of type {item_type.__name__}, got {other_item_type.__name__}")
+            for single_item in item.get_items():
+                item_to_add = deepcopy(single_item) if copy_items else single_item
+                if item_to_add.name is None:
+                    raise ValueError(f"Cannot add item with no name from BaseContainer to {self.__class__.__name__}")
+                self._validate_item(item_to_add)
+                if item_to_add.name in self._items:
+                    raise ValueError(f"Item with name '{item_to_add.name}' from BaseContainer already exists in {self.__class__.__name__}")
+                self._items[item_to_add.name] = item_to_add
+                logger.debug(f"Added item with name '{item_to_add.name}' from BaseContainer to {self.__class__.__name__}")
+
+        else:
+            raise TypeError(f"Item must be of type {item_type.__name__}, List[{item_type.__name__}], or BaseContainer[{item_type.__name__}], got {type(item).__name__}")
+
         self._invalidate_cache()
-        logger.info(f"Added item with name '{item.name}' to {self.__class__.__name__}")
 
     def set_item(self, name: str, item: T) -> None:
         """Set or replace an item in the container by its name.
@@ -168,7 +198,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         self._validate_item(item)
         self._items[name] = item
         self._invalidate_cache()
-        logger.info(f"Set item with name '{name}' in {self.__class__.__name__}")
+        logger.debug(f"Set item with name '{name}' in {self.__class__.__name__}")
 
     def remove(self, name: str) -> None:
         """Remove an item from the container by its name.
@@ -180,10 +210,11 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
             logger.warning(f"Name '{name}' not found in {self.__class__.__name__}")
         del self._items[name]
         self._invalidate_cache()
-        logger.info(f"Removed item with name '{name}' from {self.__class__.__name__}")
+        logger.debug(f"Removed item with name '{name}' from {self.__class__.__name__}")
 
     def get(self, name: str) -> Optional[T]:
-        """Retrieve an item from the container by its name.
+        """
+        Retrieve an item from the container by its name.
 
         Args:
             name (str): The name of the item to retrieve.
@@ -284,7 +315,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
                 setattr(self, key, value)
         if self._use_cache and hasattr(self, '_cached_to_dict'):
             self._cached_to_dict = None
-        logger.info(f"Updated attributes of {self.__class__.__name__}: {params}")
+        logger.debug(f"Updated attributes of {self.__class__.__name__}: {params}")
 
     def set_items(self, items: Dict[str, T]) -> None:
         """Set or replace all items in the container.
@@ -299,7 +330,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         self._validate_items(items)
         self._items.update(items)
         self._invalidate_cache()
-        logger.info(f"Set {len(items)} items in {self.__class__.__name__}")
+        logger.debug(f"Set {len(items)} items in {self.__class__.__name__}")
 
     def has_item(self, name: str) -> bool:
         """Check if an item with the specified name exists in the container.
@@ -320,7 +351,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         """
         self._items.clear()
         self._invalidate_cache()
-        logger.info(f"Cleared all items from {self.__class__.__name__}")
+        logger.debug(f"Cleared all items from {self.__class__.__name__}")
 
     def clone(self, deep: bool = True) -> 'BaseContainer[T]':
         """Create a deep copy of the container.
@@ -342,7 +373,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         """
         self.get(name).activate()
         self._invalidate_cache()
-        logger.info(f"Activated item with name '{name}' in {self.__class__.__name__}")
+        logger.debug(f"Activated item with name '{name}' in {self.__class__.__name__}")
 
     def activate_all(self) -> None:
         """Activate all items in the container.
@@ -355,7 +386,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         for item in self.get_items():
             item.activate()
         self._invalidate_cache()
-        logger.info(f"Activated all items in {self.__class__.__name__}")
+        logger.debug(f"Activated all items in {self.__class__.__name__}")
 
     def deactivate_all(self) -> None:
         """Deactivate all items in the container.
@@ -368,7 +399,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         for item in self.get_items():
             item.deactivate()
         self._invalidate_cache()
-        logger.info(f"Deactivated all items in {self.__class__.__name__}")
+        logger.debug(f"Deactivated all items in {self.__class__.__name__}")
 
     def drop_active(self) -> None:
         """Remove all active items from the container.
@@ -381,7 +412,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
             logger.warning("No active items to drop")
         for name in active_names:
             self.remove(name)
-        logger.info(f"Dropped {len(active_names)} active items from {self.__class__.__name__}")
+        logger.debug(f"Dropped {len(active_names)} active items from {self.__class__.__name__}")
 
     def drop_inactive(self) -> None:
         """Remove all inactive items from the container.
@@ -394,7 +425,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
             logger.warning("No inactive items to drop")
         for name in inactive_names:
             self.remove(name)
-        logger.info(f"Dropped {len(inactive_names)} inactive items from {self.__class__.__name__}")
+        logger.debug(f"Dropped {len(inactive_names)} inactive items from {self.__class__.__name__}")
 
     def deactivate_item(self, name: str) -> None:
         """Deactivate an item in the container by its name.
@@ -404,7 +435,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         """
         self.get(name).deactivate()
         self._invalidate_cache()
-        logger.info(f"Deactivated item with name '{name}' in {self.__class__.__name__}")
+        logger.debug(f"Deactivated item with name '{name}' in {self.__class__.__name__}")
 
     def to_dict(self, handle_cyclic_refs: str = "mark") -> dict:
         """Convert the container to a dictionary for serialization.
@@ -471,7 +502,6 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         if item_types is Any:
             raise TypeError("Cannot instantiate items with unresolved type 'Any'")
 
-        # Handle Union types by resolving to a list of possible types
         is_union = get_origin(item_type_hint) is Union
         if is_union:
             item_types = get_args(item_type_hint)
@@ -590,6 +620,11 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         except Exception as e:
             logger.error(f"Failed to resolve type hint {type_hint}: {str(e)}")
             raise TypeError(f"Type resolution failed for {type_hint} in {field_path or cls.__name__}: {str(e)}") from e
+    
+    def clear(self) -> None:
+        """Clear all items from the container and release references."""
+        self._items.clear()
+        self._invalidate_cache()
 
     def __iter__(self) -> Iterator[T]:
         """Iterate over the items in the container.
@@ -679,7 +714,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         super().__setattr__(key, value)
         if key != '_cached_to_dict':
             self._cached_to_dict = None
-        logger.info(f"Set attribute '{key}' of {self.__class__.__name__} to {value}")
+        logger.debug(f"Set attribute '{key}' of {self.__class__.__name__} to {value}")
     
     @property
     def items(self) -> Dict[str, T]:
@@ -698,3 +733,10 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         attrs.append(f"active={active_count}")
         attrs.append(f"inactive={len(self._items) - active_count}")
         return f"{self.__class__.__name__}({', '.join(attr for attr in attrs if attr)})"
+
+    def __del__(self) -> None:
+        """Ensure cleanup of references to prevent memory leaks."""
+        try:
+            self.clear()
+        except Exception as e:
+            logger.error(f"Error during cleanup of {self.__class__.__name__}: {str(e)}")

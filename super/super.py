@@ -1,17 +1,9 @@
-# msb/super/super.py
-"""
-Super class for the MSB architecture.
-
-Copyright (c) 2025 Alexey Rudnitskiy. All rights reserved.
-Licensed under the MSB Software License. See LICENSE file for details.
-"""
-
 from abc import ABC
 from typing import Dict, Any, Callable, Type, Optional, Union
-from utils.logging_setup import logger
-from mega.manipulator import Manipulator
-from base.baseentity import BaseEntity
-from base.basecontainer import BaseContainer
+from common.utils.logging_setup import logger
+from common.super.manipulator import Manipulator
+from common.base.baseentity import BaseEntity
+from common.base.basecontainer import BaseContainer
 from collections import OrderedDict
 import inspect
 
@@ -33,6 +25,9 @@ class Super(ABC):
         - Results are returned as dictionaries with keys: status (bool), object (str), method (str | None),
           result (Any), error (str | None, included only if status=False).
     """
+
+    OPERATION: Optional[str] = None # Default operation name for auto-registration
+
     def __init__(self, manipulator: 'Manipulator' = None, methods: Optional[Dict[Type, Dict[str, Callable]]] = None,
                  cache_size: int = 2048):
         """Initialize a Super instance with an optional Manipulator and method registry.
@@ -44,7 +39,7 @@ class Super(ABC):
         """
         self._manipulator = manipulator
         self._methods = methods or {}
-        self._method_cache = OrderedDict()  # Оставляем для совместимости, но не используем
+        self._method_cache = OrderedDict()
         self._cache_size = cache_size
 
     def _build_response(self, obj: Any, status: bool, method: str = None, result: Any = None,
@@ -320,6 +315,22 @@ class Super(ABC):
         except Exception as e:
             logger.error(f"Unexpected error in execute for '{self._operation}': {str(e)}")
             return self._build_response(obj, False, None, None, str(e))
+        
+    def clear_cache(self) -> None:
+        """Clear the method cache to free memory."""
+        self._method_cache.clear()
+        logger.debug(f"Cleared method cache for {self.__class__.__name__}")
+
+    def clear(self) -> None:
+        """Clear all references to prevent memory leaks.
+
+        This method clears the manipulator reference, method registry, and cache
+        to break potential reference cycles and aid garbage collection.
+        """
+        self._manipulator = None
+        self._methods.clear()
+        self.clear_cache()
+        logger.debug(f"Cleared references for {self.__class__.__name__}")
 
     def _default_result(self, obj: Any) -> Dict[str, Any]:
         """Provide a default result when an operation cannot be executed.
@@ -350,3 +361,10 @@ class Super(ABC):
             str: A formatted string with the class name.
         """
         return f"{self.__class__.__name__}()"
+
+    def __del__(self) -> None:
+        """Ensure cleanup of references to prevent memory leaks."""
+        try:
+            self.clear()
+        except Exception as e:
+            logger.error(f"Error during cleanup of {self.__class__.__name__}: {str(e)}")

@@ -1,16 +1,9 @@
-# msb/super/manipulator.py
-"""
-Manipulator mega-class for the MSB architecture.
-
-Copyright (c) 2025 Alexey Rudnitskiy. All rights reserved.
-Licensed under the MSB Software License. See LICENSE file for details.
-"""
-
 from abc import ABC
 from typing import Dict, Any, Optional, Callable, List, Type
-from utils.logging_setup import logger
+from common.utils.logging_setup import logger
 from functools import lru_cache
 import inspect
+import types
 
 class Manipulator(ABC):
     """Abstract class for managing and processing operations on objects.
@@ -56,8 +49,12 @@ class Manipulator(ABC):
         if managing_object is not None and type(managing_object) not in self._base_classes:
             self._base_classes.append(type(managing_object))
         self._operations = operations or {}
+        if self._operations:
+            for op_name, super_inst in list(self._operations.items()):
+                self.register_operation(super_inst, operation=op_name)
         self._registry = self._get_method_registry()
-        logger.info(f"Initialized Manipulator with {len(self._operations)} initial operations")
+        logger.debug(f"Initialized Manipulator with {len(self._operations)} initial operations")
+        self._create_facades()
 
     def set_managing_object(self, obj: Any) -> None:
         """Set the central managing object.
@@ -134,22 +131,37 @@ class Manipulator(ABC):
         self._registry = self._get_method_registry()
         logger.info(f"Registry updated with {len(self._registry)} types")
 
-    def register_operation(self, operation: str, super_instance: Callable) -> None:
+    def register_operation(self, super_instance: Callable, operation: Optional[str] = None) -> None:
         """Register an operation with its super-instance handler.
 
+        If operation is not provided, it is taken from super_instance.OPERATION if available.
+
         Args:
-            operation (str): The name of the operation.
             super_instance (Callable): The super-instance with an 'execute' method.
+            operation (Optional[str]): The name of the operation. Defaults to None (auto from super_instance.OPERATION).
 
         Raises:
-            ValueError: If the operation name is invalid or the super-instance lacks an 'execute' method.
+            ValueError: If the operation name is invalid, duplicate, or the super-instance lacks an 'execute' method.
         """
+        if not hasattr(super_instance, "execute"):
+            logger.error(f"Super-instance must have 'execute' method")
+            raise ValueError(f"Super-instance must have 'execute' method")
+
+        if operation is None:
+            if hasattr(super_instance, 'OPERATION') and super_instance.OPERATION:
+                operation = super_instance.OPERATION
+            else:
+                logger.error("No operation name provided and no OPERATION attribute in super_instance")
+                raise ValueError("Operation name required or set OPERATION in super_instance")
+
         if not isinstance(operation, str) or not operation:
             logger.error("Operation name must be a non-empty string")
             raise ValueError("Operation name must be a non-empty string")
-        if not hasattr(super_instance, "execute"):
-            logger.error(f"Super-instance for '{operation}' must have 'execute' method")
-            raise ValueError(f"Super-instance for '{operation}' must have 'execute' method")
+
+        if operation in self._operations:
+            logger.error(f"Operation '{operation}' already registered")
+            raise ValueError(f"Operation '{operation}' already registered")
+
         super_instance._operation = operation
         self._operations[operation] = super_instance
 
@@ -161,7 +173,50 @@ class Manipulator(ABC):
             }
             self._registry[super_type] = methods
             logger.debug(f"Registered {len(methods)} methods for {super_type.__name__}")
-        logger.info(f"Registered operation '{operation}' with {type(super_instance).__name__}")
+        logger.debug(f"Registered operation '{operation}' with {type(super_instance).__name__}")
+
+        self._add_facade(operation)
+    
+    def _create_facades(self) -> None:
+        """Create facade methods for all registered operations."""
+        for op in self._operations:
+            self._add_facade(op)
+    
+    def _add_facade(self, operation: str) -> None:
+        """Dynamically add a facade method for the given operation."""
+        def facade_wrapper(self, obj: Optional[Any] = None, method: Optional[str] = None, raise_on_error: bool = True, **attributes) -> Any:
+            """Facade for {operation}.
+
+            Args:
+                obj (Optional[Any]): The object to operate on. Defaults to managing_object.
+                method (Optional[str]): Specific method to call.
+                raise_on_error (bool): If True, raise Exception on error; if False, return dict with {{status: bool, result: Any, error: str}}.
+
+            Returns:
+                Any: If raise_on_error=True, returns the result or raises Exception. If False, returns dict {{status: bool, result: Any, error: str}}.
+
+            Raises:
+                Exception: If raise_on_error=True and operation fails.
+            """
+            request_attributes = attributes.copy()
+            if method:
+                request_attributes["method"] = method
+            elif "method" in request_attributes:
+                pass
+            
+            request = {"operation": operation, "obj": obj, "attributes": request_attributes}
+            logger.debug(f"Facade request for {operation}: {request}")
+            result = self.process_request(request)
+            if not raise_on_error:
+                return result
+            if not result["status"]:
+                raise Exception(result.get("error", "Unknown error"))
+            return result["result"]
+
+        facade_wrapper.__doc__ = facade_wrapper.__doc__.format(operation=operation)
+        bound_method = types.MethodType(facade_wrapper, self)
+        setattr(self, operation, bound_method)
+        logger.debug(f"Added facade method '{operation}' to Manipulator with docstring: {bound_method.__doc__}")
 
     @lru_cache(maxsize=2048)
     def _get_method_registry(self, validate_annotations: bool = False) -> Dict[Type, Dict[str, Callable]]:
@@ -234,14 +289,9 @@ class Manipulator(ABC):
             logger.error(f"Invalid request type: expected dict, got {type(request).__name__}")
             raise TypeError(f"Request must be a dictionary, got {type(request).__name__}")
 
-        # Debug: Log request keys and types
-        logger.debug(f"Request keys and types: {[(k, type(v).__name__) for k, v in request.items()]}")
-
-        # Check if the request is a potential sequence (no 'operation' key and multiple keys)
         is_potential_sequence = len(request) > 0 and "operation" not in request
 
         if is_potential_sequence:
-            # Validate that all sub-requests are dictionaries
             invalid_sub_requests = [
                 (k, type(v).__name__) for k, v in request.items() if not isinstance(v, dict)
             ]
@@ -256,7 +306,6 @@ class Manipulator(ABC):
                     "error": error_msg
                 }
 
-            # If all sub-requests are dictionaries, process as sequence
             logger.info(f"Processing sequence of {len(request)} requests")
             results = {}
             for req_id, sub_request in request.items():
@@ -375,6 +424,29 @@ class Manipulator(ABC):
             List[str]: List of registered operation names.
         """
         return list(self._operations.keys())
+    
+    def clear_cache(self) -> None:
+        """Clear the method registry cache to free memory."""
+        self._get_method_registry.cache_clear()
+    
+    def clear_base_classes(self) -> None:
+        """Clear the list of base classes and update the method registry.
+
+        This method removes all registered base classes and refreshes the method
+        registry to prevent memory retention of class references.
+        """
+        self._base_classes.clear()
+        self._registry = self._get_method_registry()
+    
+    def clear_ops(self):
+        """Clear all registered operations and their handlers."""
+        try:
+            for op_name, op_instance in self._operations.items():
+                if hasattr(op_instance, 'deleteLater'):
+                    op_instance.deleteLater()
+            self._operations.clear()
+        except Exception as e:
+            logger.error(f"Error clearing operations: {str(e)}")
 
     def __repr__(self) -> str:
         """Return a string representation of the Manipulator.
@@ -384,3 +456,15 @@ class Manipulator(ABC):
         """
         obj_type = type(self._managing_object).__name__ if self._managing_object else "None"
         return f"Manipulator(managing_object='{obj_type}', operations={list(self._operations.keys())})"
+    
+    def __del__(self):
+        """Ensure cleanup of all resources to prevent memory leaks."""
+        try:
+            self.clear_ops()
+            self.clear_cache()
+            self.clear_base_classes()
+            self._managing_object = None
+            logger.debug(f"ScheduleManipulator {id(self)} deleted")
+        except Exception as e:
+            logger.error(f"Error during cleanup of ScheduleManipulator: {str(e)}")
+        

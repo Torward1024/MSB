@@ -1,14 +1,7 @@
-# msb/base/baseentity.py
-"""
-BaseEntity class for the MSB architecture.
-
-Copyright (c) 2025 Alexey Rudnitskiy. All rights reserved.
-Licensed under the MSB Software License. See LICENSE file for details.
-"""
-
+# base/baseentity.py
 from abc import ABC, ABCMeta
 from typing import Dict, Union, List, Any, Union, get_origin, get_args
-from utils.logging_setup import logger
+from common.utils.logging_setup import logger
 
 class EntityMeta(ABCMeta):
     """Metaclass for BaseEntity to handle type annotations and enforce attribute validation.
@@ -98,7 +91,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         if unknown_attrs:
             raise ValueError(f"Unknown attributes provided for {self.__class__.__name__}: {unknown_attrs}")
         
-        logger.info(f"Initialized {self.__class__.__name__} instance with name={name}, isactive={isactive}")
+        logger.debug(f"Initialized {self.__class__.__name__} instance with name={name}, isactive={isactive}")
     
     def _invalidate_cache(self) -> None:
         """Invalidate the cache of the entity."""
@@ -216,7 +209,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             else:
                 raise ValueError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
         self._invalidate_cache()
-        logger.info(f"Updated attributes of {self.__class__.__name__}: {params.keys}")
+        logger.debug(f"Updated attributes of {self.__class__.__name__}: {params.keys}")
 
     def get(self, key: Union[str, List[str], None] = None) -> Union[Any, Dict[str, Any]]:
         """Retrieve one or more attributes of the entity.
@@ -274,7 +267,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         """
         self.isactive = True
         self._invalidate_cache()
-        logger.info(f"Activated {self.__class__.__name__} instance")
+        logger.debug(f"Activated {self.__class__.__name__} instance")
 
     def deactivate(self) -> None:
         """Deactivate the entity, setting its status to inactive.
@@ -284,7 +277,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         """
         self.isactive = False
         self._invalidate_cache()
-        logger.info(f"Deactivated {self.__class__.__name__} instance")
+        logger.debug(f"Deactivated {self.__class__.__name__} instance")
     
     def has_attribute(self, key: str) -> bool:
         """Check if the entity has a specific attribute.
@@ -464,6 +457,13 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         except Exception as e:
             logger.error(f"Failed to resolve type hint {type_hint}: {str(e)}")
             raise TypeError(f"Type resolution failed for {type_hint} in {cls.__name__}: {str(e)}")
+    
+    def clear(self) -> None:
+        """Clear all non-internal attributes to release references."""
+        for key in self._fields:
+            if key not in {"name", "isactive", "_use_cache", "_cached_to_dict"}:
+                super().__setattr__(key, None)
+        self._invalidate_cache()
 
     def __getitem__(self, key: str) -> Any:
         """Access an attribute using dictionary-like syntax.
@@ -498,7 +498,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         self._validate_type(key, value, expected_type)
         setattr(self, key, value)
         self._invalidate_cache()
-        logger.info(f"Set attribute '{key}' of {self.__class__.__name__}")
+        logger.debug(f"Set attribute '{key}' of {self.__class__.__name__}")
 
     def __eq__(self, other: Any) -> bool:
         """Compare two entities for equality based on their attributes and state.
@@ -545,7 +545,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             self._validate_type(key, value, expected_type)
             super().__setattr__(key, value)
             self._invalidate_cache()
-            logger.info(f"Set attribute '{key}' of {self.__class__.__name__}")
+            logger.debug(f"Set attribute '{key}' of {self.__class__.__name__}")
         else:
             raise ValueError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
 
@@ -565,3 +565,10 @@ class BaseEntity(ABC, metaclass=EntityMeta):
                 else:
                     attrs.append(f"{k}={value!r}")
         return f"{self.__class__.__name__}({', '.join(attr for attr in attrs if attr)})"
+    
+    def __del__(self) -> None:
+        """Ensure cleanup of references to prevent memory leaks."""
+        try:
+            self.clear()
+        except Exception as e:
+            logger.error(f"Error during cleanup of {self.__class__.__name__}: {str(e)}")

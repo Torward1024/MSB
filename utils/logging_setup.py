@@ -1,4 +1,4 @@
-# msb/utils/logging_setup.py
+# utils/logging_setup.py
 import logging
 
 def setup_logging(log_file: str = "output.log", log_level: int = logging.INFO, clear_log: bool = False) -> logging.Logger:
@@ -81,6 +81,6 @@ def update_logging_clear(log_file: str, clear_log: bool) -> None:
         formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         fh.setFormatter(formatter)
         logger.addHandler(fh)
-        logger.info("Log file cleared due to clear_log=True")
+        logger.debug("Log file cleared due to clear_log=True")
 
 logger = setup_logging()

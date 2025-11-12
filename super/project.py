@@ -1,17 +1,10 @@
-# msb/super/project.py
-"""
-Project super-class for the MSB architecture.
-
-Copyright (c) 2025 Alexey Rudnitskiy. All rights reserved.
-Licensed under the MSB Software License. See LICENSE file for details.
-"""
-
+# /common/super/project.py
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Type, List, TypeVar
-from utils.validation import check_non_empty_string
-from utils.logging_setup import logger
-from base.basecontainer import BaseContainer
-from base.baseentity import BaseEntity
+from common.utils.validation import check_non_empty_string
+from common.utils.logging_setup import logger
+from common.base.basecontainer import BaseContainer
+from common.base.baseentity import BaseEntity
 T = TypeVar('T', bound=BaseEntity)
 
 class Project(ABC):
@@ -54,7 +47,7 @@ class Project(ABC):
         if self._items.has_item(item.name):
             raise ValueError(f"Item with name '{item.name}' already exists in project '{self.name}'")
         self._items.add(item)
-        logger.info(f"Added item '{item.name}' to project '{self.name}'")
+        logger.debug(f"Added item '{item.name}' to project '{self.name}'")
 
     @abstractmethod
     def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
@@ -90,7 +83,7 @@ class Project(ABC):
     def get_item(self, name: str) -> BaseEntity:
         """Retrieve an item from the project by its name."""
         item = self._items.get(name)
-        logger.info(f"Retrieved item '{name}' from project '{self.name}'")
+        logger.debug(f"Retrieved item '{name}' from project '{self.name}'")
         return item
 
     def get_items(self) -> Dict[str, BaseEntity]:
@@ -99,7 +92,7 @@ class Project(ABC):
 
     def get_name(self) -> str:
         """Retrieve the project's name."""
-        logger.info(f"Retrieved name '{self.name}' for project")
+        logger.debug(f"Retrieved name '{self.name}' for project")
         return self.name
 
     def set_name(self, name: str) -> None:
@@ -127,10 +120,42 @@ class Project(ABC):
         logger.info(f"Retrieved project configuration for '{self.name}' with {len(self._items)} items")
         return result
     
-    def clear(self) -> None:
-        "Clear all items from container."
-        self._items.clear()
-        logger.info(f"Removed from project '{self.name}' all {len(self._items)} items")
+    def clear(self):
+        """Clear all observations and their resources."""
+        try:
+            for obs in self._items.get_all().values():
+                try:
+                    obs.clear_calculated_data()
+                except Exception as e:
+                    logger.debug(f"Error clearing observation {obs.get_observation_code()}: {str(e)}")
+            self._items.clear()
+            logger.info(f"Cleared all observations from project '{self.name}'")
+        except Exception as e:
+            logger.error(f"Error clearing project '{self.name}': {str(e)}")
+
+    def activate_item(self, name: str) -> None:
+        """Activate an item in the project's container by its name.
+
+        Args:
+            name (str): The name of the item to activate.
+
+        Raises:
+            ValueError: If the item with the specified name does not exist.
+        """
+        self._items.activate_item(name)
+        logger.info(f"Activated item '{name}' in project '{self.name}'")
+
+    def deactivate_item(self, name: str) -> None:
+        """Deactivate an item in the project's container by its name.
+
+        Args:
+            name (str): The name of the item to deactivate.
+
+        Raises:
+            ValueError: If the item with the specified name does not exist.
+        """
+        self._items.deactivate_item(name)
+        logger.info(f"Deactivated item '{name}' in project '{self.name}'")
     
     def activate_all(self) -> None:
         """Activate all items in the container.
@@ -199,3 +224,11 @@ class Project(ABC):
     def __repr__(self) -> str:
         """Return a string representation of the Project."""
         return f"Project(name='{self.name}', items_count={len(self._items)})"
+    
+    def __del__(self) -> None:
+        """Ensure cleanup of references to prevent memory leaks."""
+        try:
+            self.clear()
+            logger.debug(f"ScheduleProject {id(self)} deleted")
+        except Exception as e:
+            logger.error(f"Error during cleanup of Project '{self.name}': {str(e)}")
