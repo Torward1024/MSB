@@ -1,10 +1,10 @@
 # /common/super/project.py
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Type, List, TypeVar
-from msb.utils.validation import check_non_empty_string
-from msb.utils.logging_setup import logger
-from msb.base.basecontainer import BaseContainer
-from msb.base.baseentity import BaseEntity
+from ..utils.validation import check_non_empty_string
+from ..utils.logging_setup import logger
+from ..base.basecontainer import BaseContainer
+from ..base.baseentity import BaseEntity
 T = TypeVar('T', bound=BaseEntity)
 
 class Project(ABC):

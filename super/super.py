@@ -1,9 +1,9 @@
 from abc import ABC
 from typing import Dict, Any, Callable, Type, Optional, Union
 from utils.logging_setup import logger
-from msb.mega.manipulator import Manipulator
-from msb.base.baseentity import BaseEntity
-from msb.base.basecontainer import BaseContainer
+from ..mega.manipulator import Manipulator
+from ..base.baseentity import BaseEntity
+from ..base.basecontainer import BaseContainer
 from collections import OrderedDict
 import inspect
 
