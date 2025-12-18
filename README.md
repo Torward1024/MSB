@@ -5,7 +5,7 @@ Mega-Super-Base (MSB) is a flexible and extensible architecture for Python appli
 ## Installation
 
 ```bash
-pip install msb
+pip install msb_arch
 ```
 
 ## Usage

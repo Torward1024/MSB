@@ -6,6 +6,19 @@ The Base module provides the fundamental building blocks for the MSB Framework: 
 
 `BaseEntity` is an abstract base class that provides attribute management, type validation, serialization, and common entity functionality.
 
+**Attributes:**
+
+- `name` (str): An identifier for the entity.
+- `isactive` (bool): Indicates whether the entity is active or inactive.
+- `_fields` (Dict[str, type]): Class-level mapping of attribute names to their expected types (from annotations).
+
+**Notes:**
+
+- Logging is integrated via `utils.logging_setup.logger` to track initialization and state changes.
+- This is an abstract base class and cannot be instantiated directly; it must be subclassed.
+- Attributes are validated against type annotations defined in `__annotations__`.
+- Serialization methods `to_dict` and `from_dict` automatically handle all annotated attributes, including nested entities.
+
 ### Key Features
 
 - **Type Validation**: Automatic validation of attributes against type annotations
@@ -76,6 +89,54 @@ except TypeError as e:
     print(e)  # "Attribute 'value' must be of type <class 'int'>, got <class 'str'>"
 ```
 
+#### Initialization (__init__)
+
+The `__init__` method initializes a new `BaseEntity` instance with a required name, optional activation status, and additional attributes.
+
+**Parameters:**
+
+- `name` (str): Required identifier for the entity.
+- `isactive` (bool, optional): Initial activation status. Defaults to True.
+- `use_cache` (bool, optional): Enable caching for serialization. Defaults to False.
+- `**kwargs`: Additional keyword arguments for annotated attributes.
+
+**Raises:**
+
+- `TypeError`: If an attribute value does not match its annotated type, or if 'name' is None.
+- `ValueError`: If an unknown attribute is provided.
+
+**Example:**
+
+```python
+# Valid initialization
+entity = MyEntity(name="example", value=42)
+
+# This will raise ValueError for unknown attribute
+try:
+    invalid_entity = MyEntity(name="test", unknown_attr="value")
+except ValueError as e:
+    print(e)  # "Unknown attributes provided for MyEntity: {'unknown_attr'}"
+```
+
+#### Type Validation (_validate_type)
+
+The `_validate_type` method validates that a given value matches the expected type from annotations.
+
+**Parameters:**
+
+- `key` (str): The attribute name being validated.
+- `value` (Any): The value to check.
+- `expected_type` (Any): The expected type from type annotations.
+
+**Raises:**
+
+- `TypeError`: If the value does not match the expected type, or if 'name' or 'value' is None.
+
+**Notes:**
+
+- Handles complex types including Union, Dict, List, and nested entities.
+- Allows None values except for 'name' and 'value' attributes.
+
 ## BaseContainer
 
 `BaseContainer` is a generic container class for managing collections of `BaseEntity` objects. It provides dictionary-like access with additional functionality.
@@ -118,7 +179,7 @@ print("Widget" in inventory)  # True
 electronics = inventory.get_by_value({"category": "Electronics"})
 print(len(electronics))  # 1
 
-expensive = inventory.get_by_value({"price": lambda x: x > 20})
+expensive = inventory.get_by_value({"price": 25.50})
 print(len(expensive))  # 1
 ```
 
@@ -164,6 +225,16 @@ new_inventory = BaseContainer[Product].from_dict(data)
 | `get_active_items()` | Get only active items |
 | `clear()` | Remove all items |
 | `clone()` | Create deep copy |
+| `__str__()` | Returns a string representation of the container |
+| `__repr__()` | Returns the official string representation of the container |
+| `__eq__(other)` | Compares two containers for equality |
+| `__hash__()` | Returns the hash value of the container |
+| `__len__()` | Returns the number of items in the container |
+| `__iter__()` | Returns an iterator over the container's items |
+| `__getitem__(key)` | Gets an item by key |
+| `__setitem__(key, value)` | Sets an item by key |
+| `__delitem__(key)` | Deletes an item by key |
+| `__contains__(key)` | Checks if an item is in the container |
 
 ### Entity Methods
 
@@ -176,6 +247,10 @@ new_inventory = BaseContainer[Product].from_dict(data)
 | `clone()` | Create deep copy |
 | `to_dict()` | Serialize to dictionary |
 | `from_dict(data)` | Deserialize from dictionary |
+| `__str__()` | Returns a string representation of the object |
+| `__repr__()` | Returns the official string representation of the object |
+| `__eq__(other)` | Compares two objects for equality |
+| `__hash__()` | Returns the hash value of the object |
 
 ## Best Practices
 

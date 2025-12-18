@@ -65,7 +65,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         """Initialize the BaseEntity with a name, activation status, and optional typed attributes.
 
         Args:
-            name (str, optional): An optional identifier for the entity. Defaults to None.
+            name (str): A required identifier for the entity.
             isactive (bool): Initial activation status of the entity. Defaults to True.
             **kwargs: Arbitrary keyword arguments to set initial attributes, validated against type annotations.
 
@@ -110,7 +110,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             expected_type (Any): The expected type from type annotations.
 
         Raises:
-            TypeError: If the value does not match the expected type and is not None.
+            TypeError: If the value does not match the expected type, or if 'name' or 'value' is None.
         """
         if key in ('name', 'value') and value is None:
             raise TypeError(f"Attribute '{key}' cannot be None")
