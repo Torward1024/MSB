@@ -1,6 +1,7 @@
 # tests/performance/test_performance.py
 import timeit
 import pytest
+from typing import Any
 from src.msb_arch.base.baseentity import BaseEntity
 from src.msb_arch.base.basecontainer import BaseContainer
 from src.msb_arch.mega.manipulator import Manipulator
