@@ -379,7 +379,16 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             if key not in cls._fields:
                 raise ValueError(f"Unknown attribute '{key}' for {cls.__name__}")
             expected_type = cls._resolve_type(cls._fields[key])
-            
+            if isinstance(value, dict) and "type" in value:
+                type_name = value["type"]
+                type_cls = None
+                if type_name == cls.__name__:
+                    type_cls = cls
+                else:
+                    type_cls = globals().get(type_name)
+                if type_cls and issubclass(type_cls, BaseEntity):
+                    kwargs[key] = type_cls.from_dict(value)
+                    continue
             if isinstance(expected_type, str):
                 from inspect import getmodule
                 module = getmodule(cls)
