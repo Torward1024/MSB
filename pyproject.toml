@@ -7,7 +7,7 @@ name = "msb_arch"
 version = "0.1.0"
 description = "Mega-Super-Base (MSB) architecture for flexible and extensible Python applications"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 license = {file = "LICENSE"}
 authors = [
     {name = "Alexey Rudnitskiy", email = "almax1024@gmail.com"}
