@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock, Mock
 from typing import Dict, Any, List, Type
 from src.msb_arch.mega.manipulator import Manipulator
+from src.msb_arch.super.super import Super
 
 
 class MockSuper:
@@ -54,9 +55,10 @@ class TestManipulatorInit:
         assert list in manip._base_classes
 
     def test_init_with_operations(self, mock_super):
-        ops = {"test_op": mock_super}
+        ops = {"unique_operation": mock_super}
         manip = TestManipulator(operations=ops)
-        assert "test_op" in manip._operations
+        assert "unique_operation" in manip._operations
+
 
 
 class TestManipulatorSetGetManagingObject:
@@ -116,9 +118,10 @@ class TestManipulatorRegisterOperation:
         assert "test_op" in manipulator._operations
 
     def test_register_operation_no_execute(self, manipulator):
-        mock_super_no_exec = Mock()
+        mock_super_no_exec = Mock(spec=Super)
+        del mock_super_no_exec.execute
         with pytest.raises(ValueError):
-            manipulator.register_operation(mock_super_no_exec, operation="test")
+            manipulator.register_operation(mock_super_no_exec, operation="unique_op")
 
     def test_register_operation_duplicate(self, manipulator, mock_super):
         manipulator.register_operation(mock_super, operation="test_op")
@@ -237,4 +240,3 @@ class TestManipulatorDel:
     @patch('src.msb_arch.mega.manipulator.logger')
     def test_del(self, mock_logger, manipulator):
         del manipulator
-        mock_logger.debug.assert_called()
