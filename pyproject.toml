@@ -23,7 +23,7 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/Torward1024/MSB"
-Documentation = "https://github.com/Torward1024/MSB/wiki"
+Documentation = "https://github.com/Torward1024/MSB/docs"
 Repository = "https://github.com/Torward1024/MSB"
 Issues = "https://github.com/Torward1024/MSB/issues"
 
