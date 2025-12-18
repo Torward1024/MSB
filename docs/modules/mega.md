@@ -2,9 +2,9 @@
 
 The Mega module provides the `Manipulator` class, which serves as the central orchestration component of the MSB Framework. It manages operations, processes requests, and coordinates interactions between objects and Super classes.
 
-## Manipulator Class
+## Abstract Manipulator Class
 
-`Manipulator` is the main class for managing and processing operations on objects. It acts as a registry for operations and provides a unified interface for executing complex workflows.
+`Manipulator` is an abstract class for managing and processing operations on objects. It acts as a registry for operations and provides a unified interface for executing complex workflows.
 
 ### Key Features
 

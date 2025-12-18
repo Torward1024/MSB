@@ -17,10 +17,11 @@ class Manipulator(ABC):
         _base_classes (List[Type]): List of base classes whose methods are registered.
         _operations (Dict[str, Callable]): Dictionary mapping operation names to super-instance handlers.
         _registry (Dict[Type, Dict[str, Callable]]): Registry of object types and their available methods.
+        _strict_type_check (bool): If True, enforces strict type checking for objects.
 
     Notes:
         - Uses `functools.lru_cache` to optimize method registry generation.
-        - Logging is integrated via `common.utils.logging_setup.logger`.
+        - Logging is integrated via `..utils.logging_setup.logger`.
         - Operations are executed via super-instances that must have an `execute` method.
         - Results are returned as dictionaries with keys: status (bool), object (Any), method (str | None),
           result (Any), error (str | None, included only if status=False).
@@ -182,12 +183,19 @@ class Manipulator(ABC):
         self._add_facade(operation)
     
     def _create_facades(self) -> None:
-        """Create facade methods for all registered operations."""
+        """Create facade methods for all registered operations.
+
+        Iterates through all registered operations and adds facade methods to the instance.
+        """
         for op in self._operations:
             self._add_facade(op)
     
     def _add_facade(self, operation: str) -> None:
-        """Dynamically add a facade method for the given operation."""
+        """Dynamically add a facade method for the given operation.
+
+        Args:
+            operation (str): The name of the operation to add a facade for.
+        """
         def facade_wrapper(self, obj: Optional[Any] = None, method: Optional[str] = None, raise_on_error: bool = True, **attributes) -> Any:
             """Facade for {operation}.
 
