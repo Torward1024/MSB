@@ -558,7 +558,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         attrs = [f"name={self.name!r}" if self.name else ""]
         attrs.append(f"isactive={self.isactive}")
         for k in self._fields:
-            if hasattr(self, k):
+            if k not in ('name', 'isactive') and hasattr(self, k):
                 value = getattr(self, k)
                 if isinstance(value, BaseEntity):
                     attrs.append(f"{k}=<{value.__class__.__name__} at {id(value)}>")
