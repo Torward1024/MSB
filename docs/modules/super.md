@@ -17,7 +17,7 @@ The Super module provides operation handling and project management capabilities
 ### Notes
 
 - Method resolution order: explicit method, prefixed method (`_<operation>_<method>`), type-specific method (`_<operation>_<type>`), default method (`_<operation>`).
-- Logging is integrated via `common.utils.logging_setup.logger`.
+- Logging is integrated via `utils.logging_setup.logger`.
 - Results are returned as dictionaries with keys: status (bool), object (str), method (str | None), result (Any), error (str | None, included only if status=False).
 
 ### Key Features

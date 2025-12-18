@@ -1,4 +1,4 @@
-# /common/super/project.py
+# super/project.py
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Type, List, TypeVar
 from ..utils.validation import check_non_empty_string

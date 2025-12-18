@@ -1,6 +1,8 @@
 # Utils Module
 
-The Utils module provides utility functions for logging and data validation. These utilities are used throughout the MSB Framework to ensure consistent behavior and error handling.
+Utility modules for the MSB architecture.
+
+This package contains utilities for logging setup and data validation. These utilities are used throughout the MSB Framework to ensure consistent behavior and error handling.
 
 ## Logging Setup
 

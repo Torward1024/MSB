@@ -1,5 +1,6 @@
+# super/super.py
 from abc import ABC
-from typing import Dict, Any, Callable, Type, Optional, Union
+from typing import Dict, Any, Callable, Type, Optional
 from ..utils.logging_setup import logger
 from ..mega.manipulator import Manipulator
 from ..base.baseentity import BaseEntity
@@ -23,7 +24,7 @@ class Super(ABC):
 
     Notes:
         - Method resolution order: explicit method, prefixed method (`_<operation>_<method>`), type-specific method (`_<operation>_<type>`), default method (`_<operation>`).
-        - Logging is integrated via `common.utils.logging_setup.logger`.
+        - Logging is integrated via `utils.logging_setup.logger`.
         - Results are returned as dictionaries with keys: status (bool), object (str), method (str | None),
           result (Any), error (str | None, included only if status=False).
     """
