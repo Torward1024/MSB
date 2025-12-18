@@ -11,7 +11,7 @@ from src.msb_arch.super.super import Super
 class TestEntity(BaseEntity):
     value: int
     data: list
-    nested: 'TestEntity' = None
+    nested: Any
 
 
 class TestContainer(BaseContainer[TestEntity]):
