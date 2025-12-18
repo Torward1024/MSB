@@ -12,5 +12,4 @@ FileContentIndex/
 __pycache__/
 *.py[cod]
 *$py.class
-docs/
 *.code-workspace
