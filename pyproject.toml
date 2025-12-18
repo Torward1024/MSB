@@ -28,4 +28,4 @@ Repository = "https://github.com/Torward1024/MSB"
 Issues = "https://github.com/Torward1024/MSB/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["msb_arch"]
+packages = ["src/msb_arch"]
