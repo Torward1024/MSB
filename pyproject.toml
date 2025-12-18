@@ -18,6 +18,7 @@ classifiers = [
     "Operating System :: OS Independent",
     "License :: Other/Proprietary License",
 ]
+
 dependencies = []
 
 [project.urls]
@@ -25,3 +26,6 @@ Homepage = "https://github.com/Torward1024/MSB"
 Documentation = "https://github.com/Torward1024/MSB/wiki"
 Repository = "https://github.com/Torward1024/MSB"
 Issues = "https://github.com/Torward1024/MSB/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["msb"]
