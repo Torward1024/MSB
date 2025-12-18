@@ -60,11 +60,12 @@ classDiagram
     direction TB
 
     %% Abstract Base Classes
-    ABC <|-- BaseEntity : inherits
-    ABC <|-- BaseContainer : inherits
-    ABC <|-- Super : inherits
-    ABC <|-- Project : inherits
-    ABC <|-- Manipulator : inherits
+     ABCMeta <|-- EntityMeta : inherits
+     EntityMeta <|-- BaseEntity : metaclass
+     ABC <|-- BaseContainer : inherits
+     ABC <|-- Super : inherits
+     ABC <|-- Project : inherits
+     ABC <|-- Manipulator : inherits
 
     %% Base Layer
     BaseEntity <|-- BaseContainer : contains

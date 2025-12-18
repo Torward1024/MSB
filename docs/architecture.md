@@ -37,50 +37,69 @@ The utility layer provides supporting functionality:
 
 ```mermaid
 classDiagram
-    ABC <|-- BaseEntity
-    ABC <|-- BaseContainer
-    BaseEntity <|-- BaseContainer
-    ABC <|-- Super
-    ABC <|-- Project
-    ABC <|-- Manipulator
+     ABCMeta <|-- EntityMeta
+     EntityMeta <|-- BaseEntity
+     ABC <|-- BaseContainer
+     BaseEntity <|-- BaseContainer
+     ABC <|-- Super
+     ABC <|-- Project
+     ABC <|-- Manipulator
 
-    class BaseEntity {
-        +name: str
-        +isactive: bool
-        +_fields: Dict[str, type]
-        +set(params)
-        +get(key)
-        +to_dict()
-        +from_dict(data)
-    }
+     class EntityMeta {
+         +_fields: Dict[str, type]
+     }
 
-    class BaseContainer {
-        +_items: Dict[str, T]
-        +add(item)
-        +remove(name)
-        +get(name)
-        +get_items()
-    }
+     class BaseEntity {
+         +name: str
+         +isactive: bool
+         +_fields: Dict[str, type]
+         +use_cache: bool
+         +set(params)
+         +get(key)
+         +to_dict()
+         +from_dict(data)
+         +has_attribute(key)
+         +clone()
+         +clear()
+     }
 
-    class Super {
-        +_manipulator: Manipulator
-        +_methods: Dict
-        +execute(obj, attributes, method)
-    }
+     class BaseContainer {
+         +_items: Dict[str, T]
+         +add(item)
+         +remove(name)
+         +get(name)
+         +get_all()
+         +get_items()
+         +set_items(items)
+         +clear()
+         +clone()
+     }
 
-    class Project {
-        +_items: BaseContainer
-        +add_item(item)
-        +get_item(name)
-        +create_item()*
-    }
+     class Super {
+         +_manipulator: Manipulator
+         +_methods: Dict
+         +execute(obj, attributes, method)
+         +register_method()
+         +clear_cache()
+     }
 
-    class Manipulator {
-        +_operations: Dict
-        +_registry: Dict
-        +register_operation(super_instance)
-        +process_request(request)
-    }
+     class Project {
+         +_items: BaseContainer
+         +add_item(item)
+         +get_item(name)
+         +create_item()*
+         +activate_all()
+         +deactivate_all()
+     }
+
+     class Manipulator {
+         +_operations: Dict
+         +_registry: Dict
+         +register_operation(super_instance)
+         +process_request(request)
+         +get_supported_operations()
+         +clear_cache()
+     }
 ```
 
 ## Data Flow
@@ -118,6 +137,10 @@ flowchart TD
 ### 5. Observer Pattern (Implicit)
 - Logging system observes operations and state changes
 - Validation functions observe data changes
+
+### 6. Facade Pattern
+- Manipulator provides simplified facade methods for registered operations
+- Project and Super classes provide high-level interfaces to complex subsystems
 
 ## Type System
 

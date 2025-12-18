@@ -221,8 +221,10 @@ new_inventory = BaseContainer[Product].from_dict(data)
 | `add(item)` | Add single item, list, or container |
 | `remove(name)` | Remove item by name |
 | `get(name)` | Get item by name |
+| `get_all()` | Get all items as dictionary |
 | `get_items()` | Get all items as list |
 | `get_active_items()` | Get only active items |
+| `set_items(items)` | Set or replace all items |
 | `clear()` | Remove all items |
 | `clone()` | Create deep copy |
 | `__str__()` | Returns a string representation of the container |
@@ -247,6 +249,11 @@ new_inventory = BaseContainer[Product].from_dict(data)
 | `clone()` | Create deep copy |
 | `to_dict()` | Serialize to dictionary |
 | `from_dict(data)` | Deserialize from dictionary |
+| `has_attribute(key)` | Check if attribute exists |
+| `clear()` | Clear all non-internal attributes |
+| `__getitem__(key)` | Access attribute using [] |
+| `__setitem__(key, value)` | Set attribute using [] |
+| `__contains__(key)` | Check attribute existence with 'in' |
 | `__str__()` | Returns a string representation of the object |
 | `__repr__()` | Returns the official string representation of the object |
 | `__eq__(other)` | Compares two objects for equality |

@@ -9,11 +9,11 @@ The Mega module provides the `Manipulator` class, which serves as the central or
 ### Key Features
 
 - **Operation Registry**: Register and manage multiple operation handlers
-- **Request Processing**: Handle single and batch requests
+- **Request Processing**: Handle single and batch requests with detailed error handling
 - **Method Discovery**: Automatic method registry generation for base classes
-- **Facade Methods**: Dynamic method creation for registered operations
-- **Caching**: Performance optimization through method caching
-- **Type Safety**: Optional strict type checking
+- **Facade Methods**: Dynamic facade method creation for simplified operation calls
+- **Caching**: LRU caching for method resolution and serialization
+- **Type Safety**: Optional strict type checking for objects
 
 ### Basic Usage
 

@@ -15,10 +15,12 @@ BaseEntity(name: str, isactive: bool = True, use_cache: bool = False, **kwargs)
 ```
 
 **Parameters:**
-- `name` (str): Entity identifier
+- `name` (str): Entity identifier (required, cannot be None)
 - `isactive` (bool): Activation status (default: True)
 - `use_cache` (bool): Enable caching for serialization (default: False)
 - `**kwargs`: Additional attributes defined in type annotations
+
+**Raises:** `TypeError`, `ValueError`
 
 #### Methods
 
@@ -40,6 +42,8 @@ Retrieve attribute(s).
 
 **Returns:** Attribute value, dict of values, or all public attributes
 
+**Raises:** `KeyError`
+
 ##### `activate() -> None`
 
 Set entity as active.
@@ -54,12 +58,9 @@ Create a deep copy of the entity.
 
 **Returns:** New entity instance
 
-##### `to_dict(handle_cyclic_refs: str = "mark") -> dict`
+##### `to_dict() -> dict`
 
 Serialize entity to dictionary.
-
-**Parameters:**
-- `handle_cyclic_refs` (str): How to handle cycles ("mark", "ignore", "raise")
 
 **Returns:** Serialized dictionary
 
@@ -72,6 +73,8 @@ Create entity from dictionary.
 
 **Returns:** New entity instance
 
+**Raises:** `TypeError`, `ValueError`
+
 ##### `has_attribute(key: str) -> bool`
 
 Check if attribute exists.
@@ -80,6 +83,40 @@ Check if attribute exists.
 - `key` (str): Attribute name
 
 **Returns:** True if attribute exists and is set
+
+##### `clear() -> None`
+
+Clear all non-internal attributes to release references.
+
+##### `__getitem__(key: str) -> Any`
+
+Access an attribute using dictionary-like syntax.
+
+**Parameters:**
+- `key` (str): Attribute name
+
+**Returns:** Attribute value
+
+**Raises:** `KeyError`
+
+##### `__setitem__(key: str, value: Any) -> None`
+
+Set an attribute using dictionary-like syntax.
+
+**Parameters:**
+- `key` (str): Attribute name
+- `value` (Any): Value to set
+
+**Raises:** `KeyError`, `TypeError`
+
+##### `__contains__(key: str) -> bool`
+
+Check if attribute exists using 'in' operator.
+
+**Parameters:**
+- `key` (str): Attribute name
+
+**Returns:** True if attribute exists
 
 ### BaseContainer[T]
 
@@ -131,6 +168,12 @@ Get item by name.
 
 **Returns:** Item or None
 
+##### `get_all() -> Dict[str, T]`
+
+Get all items as dictionary.
+
+**Returns:** Dictionary of all items
+
 ##### `get_items() -> List[T]`
 
 Get all items as list.
@@ -157,6 +200,15 @@ Query items by attribute values.
 - `conditions` (Dict[str, Any]): Attribute conditions
 
 **Returns:** Matching items
+
+##### `set_items(items: Dict[str, T]) -> None`
+
+Set or replace all items in the container.
+
+**Parameters:**
+- `items` (Dict[str, T]): Items to set
+
+**Raises:** `ValueError`, `TypeError`
 
 ##### `clear() -> None`
 
@@ -214,6 +266,9 @@ Check if item exists.
 
 Serialize container to dictionary.
 
+**Parameters:**
+- `handle_cyclic_refs` (str): How to handle cycles ("mark", "ignore", "raise")
+
 **Returns:** Serialized dictionary
 
 ##### `from_dict(data: dict) -> BaseContainer` (classmethod)
@@ -225,6 +280,8 @@ Create container from dictionary.
 
 **Returns:** New container
 
+**Raises:** `TypeError`, `ValueError`
+
 ## Super Module
 
 ### Super
@@ -234,12 +291,12 @@ Abstract base class for operation handlers.
 #### Constructor
 
 ```python
-Super(manipulator: Manipulator = None, methods: Dict[Type, Dict[str, Callable]] = None, cache_size: int = 2048)
+Super(manipulator: Manipulator = None, methods: Optional[Dict[Type, Dict[str, Callable]]] = None, cache_size: int = 2048)
 ```
 
 **Parameters:**
 - `manipulator` (Manipulator): Associated manipulator
-- `methods` (Dict): Custom method registry
+- `methods` (Optional[Dict]): Custom method registry
 - `cache_size` (int): Method cache size
 
 #### Methods
@@ -264,9 +321,13 @@ Register custom method for type.
 - `method_name` (str): Method name
 - `method` (Callable): Method function
 
+##### `clear_cache() -> None`
+
+Clear the method cache.
+
 ##### `clear() -> None`
 
-Clear references for cleanup.
+Clear all references for cleanup.
 
 ### Project
 
@@ -379,13 +440,13 @@ Central orchestrator for operations and objects.
 #### Constructor
 
 ```python
-Manipulator(managing_object: Any = None, base_classes: List[Type] = None, operations: Dict[str, Callable] = None, strict_type_check: bool = False)
+Manipulator(managing_object: Optional[Any] = None, base_classes: Optional[List[Type]] = None, operations: Optional[Dict[str, Callable]] = None, strict_type_check: bool = False)
 ```
 
 **Parameters:**
-- `managing_object` (Any): Default object for operations
-- `base_classes` (List[Type]): Base classes for method discovery
-- `operations` (Dict): Initial operations
+- `managing_object` (Optional[Any]): Default object for operations
+- `base_classes` (Optional[List[Type]]): Base classes for method discovery
+- `operations` (Optional[Dict]): Initial operations
 - `strict_type_check` (bool): Enforce strict typing
 
 #### Methods
@@ -403,22 +464,26 @@ Get current managing object.
 
 **Returns:** Managing object or None
 
-##### `register_operation(super_instance: Callable, operation: str = None) -> None`
+##### `register_operation(super_instance: Callable, operation: Optional[str] = None) -> None`
 
 Register operation handler.
 
 **Parameters:**
 - `super_instance` (Callable): Super instance with execute method
-- `operation` (str): Operation name (auto from OPERATION if None)
+- `operation` (Optional[str]): Operation name (auto from OPERATION if None)
 
-##### `process_request(request: Union[Dict, Dict[str, Dict]]) -> Any`
+**Raises:** `ValueError`
+
+##### `process_request(request: Dict[str, Any]) -> Any`
 
 Process single or batch request.
 
 **Parameters:**
-- `request` (Dict or Dict of Dicts): Request specification
+- `request` (Dict[str, Any]): Request specification
 
 **Returns:** Response dictionary
+
+**Raises:** `TypeError`, `ValueError`
 
 ##### `get_methods_for_type(obj_type: Type) -> Dict[str, Callable]`
 
@@ -429,12 +494,14 @@ Get methods for object type.
 
 **Returns:** Methods dictionary
 
-##### `update_registry(additional_classes: List[Type] = None, clear_operations: bool = False) -> None`
+**Raises:** `ValueError`
+
+##### `update_registry(additional_classes: Optional[List[Type]] = None, clear_operations: bool = False) -> None`
 
 Update method registry.
 
 **Parameters:**
-- `additional_classes` (List[Type]): Additional classes
+- `additional_classes` (Optional[List[Type]]): Additional classes
 - `clear_operations` (bool): Clear existing operations
 
 ##### `get_supported_operations() -> List[str]`
@@ -560,6 +627,21 @@ Validate non-zero value.
 - `name` (str): Parameter name
 
 **Raises:** `TypeError`, `ValueError`
+
+#### `update_logging_level(log_level: int) -> None`
+
+Update the logging level for the singleton logger.
+
+**Parameters:**
+- `log_level` (int): New logging level
+
+#### `update_logging_clear(log_file: str, clear_log: bool) -> None`
+
+Update logging configuration to clear the log file.
+
+**Parameters:**
+- `log_file` (str): Path to the log file
+- `clear_log` (bool): Whether to clear the log file
 
 ## Response Formats
 
