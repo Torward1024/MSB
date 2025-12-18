@@ -44,33 +44,43 @@ classDiagram
     ABC <|-- Project
     ABC <|-- Manipulator
 
-    BaseEntity : +name: str
-    BaseEntity : +isactive: bool
-    BaseEntity : +_fields: Dict[str, type]
-    BaseEntity : +set(params)
-    BaseEntity : +get(key)
-    BaseEntity : +to_dict()
-    BaseEntity : +from_dict(data)
+    class BaseEntity {
+        +name: str
+        +isactive: bool
+        +_fields: Dict[str, type]
+        +set(params)
+        +get(key)
+        +to_dict()
+        +from_dict(data)
+    }
 
-    BaseContainer : +_items: Dict[str, T]
-    BaseContainer : +add(item)
-    BaseContainer : +remove(name)
-    BaseContainer : +get(name)
-    BaseContainer : +get_items()
+    class BaseContainer {
+        +_items: Dict[str, T]
+        +add(item)
+        +remove(name)
+        +get(name)
+        +get_items()
+    }
 
-    Super : +_manipulator: Manipulator
-    Super : +_methods: Dict
-    Super : +execute(obj, attributes, method)
+    class Super {
+        +_manipulator: Manipulator
+        +_methods: Dict
+        +execute(obj, attributes, method)
+    }
 
-    Project : +_items: BaseContainer
-    Project : +add_item(item)
-    Project : +get_item(name)
-    Project : +create_item()*
+    class Project {
+        +_items: BaseContainer
+        +add_item(item)
+        +get_item(name)
+        +create_item()*
+    }
 
-    Manipulator : +_operations: Dict
-    Manipulator : +_registry: Dict
-    Manipulator : +register_operation(super_instance)
-    Manipulator : +process_request(request)
+    class Manipulator {
+        +_operations: Dict
+        +_registry: Dict
+        +register_operation(super_instance)
+        +process_request(request)
+    }
 ```
 
 ## Data Flow
