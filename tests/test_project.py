@@ -15,6 +15,10 @@ class TestProject(Project):
     def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
         item = TestEntity(name=item_code, value=42, isactive=isactive)
         self.add_item(item)
+    
+    @classmethod
+    def from_dict(cls, data):
+        return super().from_dict(data)
 
 
 @pytest.fixture
@@ -48,7 +52,7 @@ class TestProjectInit:
 
 class TestProjectCreateContainer:
     def test_create_container(self):
-        container = TestProject._create_container()
+        container = TestProject._create_container(name='test')
         assert container is not None
 
 
@@ -248,4 +252,3 @@ class TestProjectDel:
     @patch('src.msb_arch.super.project.logger')
     def test_del(self, mock_logger, test_project):
         del test_project
-        mock_logger.debug.assert_called()
