@@ -452,20 +452,6 @@ graph TD
     MAIN --> UI
 ```
 
-## Performance Metrics
-
-```mermaid
-pie title Performance Characteristics (Time in ms)
-    "Serialization (to_dict)" : 0.1
-    "Serialization (from_dict)" : 0.2
-    "Type checking" : 0.05
-    "Range validation" : 0.03
-    "Method resolution" : 0.1
-    "Cache lookup" : 0.01
-    "Add item" : 0.05
-    "Query items" : 0.02
-```
-
 ## Memory Management
 
 ```mermaid
