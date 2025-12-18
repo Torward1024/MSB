@@ -445,9 +445,6 @@ class Manipulator(ABC):
     def clear_ops(self):
         """Clear all registered operations and their handlers."""
         try:
-            for op_name, op_instance in self._operations.items():
-                if hasattr(op_instance, 'deleteLater'):
-                    op_instance.deleteLater()
             self._operations.clear()
         except Exception as e:
             logger.error(f"Error clearing operations: {str(e)}")
