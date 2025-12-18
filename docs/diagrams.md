@@ -68,42 +68,53 @@ classDiagram
 
     %% Base Layer
     BaseEntity <|-- BaseContainer : contains
-    BaseEntity : +name: str
-    BaseEntity : +isactive: bool
-    BaseEntity : +_fields: Dict[str, type]
-    BaseEntity : +set(params: Dict)
-    BaseEntity : +get(key: str)
-    BaseEntity : +to_dict()
-    BaseEntity : +from_dict(data)
-    BaseEntity : +activate()
-    BaseEntity : +deactivate()
 
-    BaseContainer : +_items: Dict[str, T]
-    BaseContainer : +add(item: T)
-    BaseContainer : +remove(name: str)
-    BaseContainer : +get(name: str)
-    BaseContainer : +get_items()
-    BaseContainer : +clear()
+    class BaseEntity {
+        +name: str
+        +isactive: bool
+        +_fields: Dict[str, type]
+        +set(params: Dict)
+        +get(key: str)
+        +to_dict()
+        +from_dict(data)
+        +activate()
+        +deactivate()
+    }
+
+    class BaseContainer {
+        +_items: Dict[str, T]
+        +add(item: T)
+        +remove(name: str)
+        +get(name: str)
+        +get_items()
+        +clear()
+    }
 
     %% Super Layer
-    Super : +_manipulator: Manipulator
-    Super : +_methods: Dict
-    Super : +execute(obj, attributes)
-    Super : +register_method()
+    class Super {
+        +_manipulator: Manipulator
+        +_methods: Dict
+        +execute(obj, attributes)
+        +register_method()
+    }
 
-    Project : +_items: BaseContainer
-    Project : +add_item(item)
-    Project : +get_item(name)
-    Project : +create_item()*
-    Project : +activate_all()
-    Project : +deactivate_all()
+    class Project {
+        +_items: BaseContainer
+        +add_item(item)
+        +get_item(name)
+        +create_item()*
+        +activate_all()
+        +deactivate_all()
+    }
 
     %% Mega Layer
-    Manipulator : +_operations: Dict
-    Manipulator : +_registry: Dict
-    Manipulator : +register_operation()
-    Manipulator : +process_request()
-    Manipulator : +get_methods_for_type()
+    class Manipulator {
+        +_operations: Dict
+        +_registry: Dict
+        +register_operation()
+        +process_request()
+        +get_methods_for_type()
+    }
 
     %% Relationships
     Super --> Manipulator : uses
@@ -444,26 +455,15 @@ graph TD
 ## Performance Metrics
 
 ```mermaid
-gantt
-    title Performance Characteristics
-    dateFormat x
-    axisFormat %s
-
-    section Serialization
-        to_dict() : done, t1, 0.1
-        from_dict() : done, t2, 0.2
-
-    section Validation
-        Type checking : done, v1, 0.05
-        Range validation : done, v2, 0.03
-
-    section Operations
-        Method resolution : done, m1, 0.1
-        Cache lookup : done, m2, 0.01
-
-    section Container Ops
-        Add item : done, c1, 0.05
-        Query items : done, c2, 0.02
+pie title Performance Characteristics (Time in ms)
+    "Serialization (to_dict)" : 0.1
+    "Serialization (from_dict)" : 0.2
+    "Type checking" : 0.05
+    "Range validation" : 0.03
+    "Method resolution" : 0.1
+    "Cache lookup" : 0.01
+    "Add item" : 0.05
+    "Query items" : 0.02
 ```
 
 ## Memory Management
