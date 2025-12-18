@@ -6,7 +6,7 @@ from src.msb_arch.base.baseentity import BaseEntity
 
 class TestEntity(BaseEntity):
     value: int
-    optional_value: str = None
+    optional_value: Any = None
 
 
 @pytest.fixture
@@ -189,8 +189,8 @@ class TestBaseEntityValidateType:
             test_entity._validate_type("value", "string", int)
 
     def test_validate_type_none_allowed(self, test_entity):
-        # None should be allowed
-        test_entity._validate_type("value", None, int)
+        with pytest.raises(TypeError):
+            test_entity._validate_type("value", None, int)
 
     @pytest.mark.parametrize("value,expected_type", [
         ([1, 2, 3], list),
@@ -222,7 +222,7 @@ class TestBaseEntityMagicMethods:
         assert "nonexistent" not in test_entity
 
     def test_eq(self, test_entity):
-        other = TestEntity(name="test_entity", value=42)
+        other = TestEntity(name="test_entity", value=42, optional_value="hello")
         assert test_entity == other
 
     def test_eq_different(self, test_entity):
