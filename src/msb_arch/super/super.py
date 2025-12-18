@@ -1,6 +1,6 @@
 from abc import ABC
 from typing import Dict, Any, Callable, Type, Optional, Union
-from utils.logging_setup import logger
+from ..utils.logging_setup import logger
 from ..mega.manipulator import Manipulator
 from ..base.baseentity import BaseEntity
 from ..base.basecontainer import BaseContainer

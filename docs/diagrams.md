@@ -451,23 +451,3 @@ graph TD
     MAIN --> MI
     MAIN --> UI
 ```
-
-## Memory Management
-
-```mermaid
-flowchart TD
-    A[Object Created] --> B[References held]
-    B --> C{Object deleted?}
-
-    C -->|No| D[Memory retained]
-    C -->|Yes| E[Clear called?]
-
-    E -->|No| F[Potential leaks]
-    E -->|Yes| G[References cleared]
-
-    G --> H[GC collects]
-    F --> I[Memory leak]
-
-    D --> C
-    I --> J[Memory usage grows]
-    H --> K[Memory freed]
