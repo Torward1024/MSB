@@ -11,6 +11,7 @@ class TestEntity(BaseEntity):
 
 class TestProject(Project):
     _item_type = TestEntity
+    name = 'TestProject'
 
     def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
         item = TestEntity(name=item_code, value=42, isactive=isactive)
