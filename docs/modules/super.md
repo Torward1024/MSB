@@ -4,7 +4,21 @@ The Super module provides operation handling and project management capabilities
 
 ## Super Class
 
-`Super` is an abstract base class that defines a framework for executing operations on objects. It provides method resolution, caching, and standardized response formatting.
+`Super` is an abstract super-class providing common functionality for operation handlers. Designed to work with a Manipulator, this class defines a framework for executing operations on objects based on attributes. Subclasses implement specific operations (e.g., configuration, inspection, calculation, etc.) by defining methods with naming conventions like `_<operation>_<type>` or `_<operation>`.
+
+### Attributes
+
+- `_manipulator` (Manipulator): The associated Manipulator instance for method lookup.
+- `_methods` (Dict[Type, Dict[str, Callable]]): Custom method registry for specific object types.
+- `_method_cache` (OrderedDict): Cache method.
+- `_cache_size` (int): Cache size.
+- `OPERATION` (str): The operation name, set by Manipulator during registration.
+
+### Notes
+
+- Method resolution order: explicit method, prefixed method (`_<operation>_<method>`), type-specific method (`_<operation>_<type>`), default method (`_<operation>`).
+- Logging is integrated via `common.utils.logging_setup.logger`.
+- Results are returned as dictionaries with keys: status (bool), object (str), method (str | None), result (Any), error (str | None, included only if status=False).
 
 ### Key Features
 

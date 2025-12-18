@@ -146,7 +146,18 @@ class Super(ABC):
 
     def _validate_and_apply_method(self, obj: Any, method_name: str, method_args: Any,
                                    valid_methods: Dict[str, Callable], extra_args: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Validate and apply a method to an object with given arguments."""
+        """Validate and apply a method to an object with given arguments.
+
+        Args:
+            obj (Any): The object to apply the method to.
+            method_name (str): The name of the method to apply.
+            method_args (Any): Arguments to pass to the method.
+            valid_methods (Dict[str, Callable]): Dictionary of valid methods for the object type.
+            extra_args (Dict[str, Any], optional): Additional arguments to include. Defaults to None.
+
+        Returns:
+            Dict[str, Any]: Response dictionary with status, object, method, result, and error if status is False.
+        """
         if method_name not in valid_methods:
             logger.error(f"Invalid method '{method_name}' for '{type(obj).__name__}'")
             return self._build_response(obj, False, method_name, None, f"Method '{method_name}' not found")
