@@ -6,7 +6,12 @@ from src.msb_arch.mega.manipulator import Manipulator
 
 
 class TestSuper(Super):
+
     OPERATION = "test_op"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._operation = self.OPERATION or "test_op"
 
     def _test_op(self, obj, attributes):
         return f"executed default on {obj}"
@@ -181,7 +186,7 @@ class TestSuperExecute:
 
     def test_execute_no_method(self, test_super):
         # Remove default method
-        delattr(test_super, '_test_op')
+        test_super._test_op = None
         result = test_super.execute("obj", {})
         assert result["status"] is False
 
