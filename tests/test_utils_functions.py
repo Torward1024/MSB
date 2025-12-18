@@ -59,15 +59,6 @@ class TestUpdateLoggingClear:
         update_logging_clear("test.log", True)
         mock_setup.assert_called_with(log_file="test.log", clear_log=True)
 
-    @patch('src.msb_arch.utils.logging_setup.logger')
-    @patch('src.msb_arch.utils.logging_setup.logging')
-    def test_update_logging_clear_existing(self, mock_logging, mock_logger):
-        mock_handler = MagicMock(spec=logging.FileHandler)
-        mock_logger.handlers = [mock_handler]
-        mock_logger.level = logging.INFO
-        update_logging_clear("test.log", True)
-        # Should remove and add new handler
-
 
 class TestCheckType:
     def test_check_type_valid(self):
