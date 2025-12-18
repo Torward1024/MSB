@@ -74,7 +74,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             ValueError: If an unknown attribute is provided.
         """
         
-        self._validate_type('_use_cache', isactive, bool)
+        self._validate_type('use_cache', isactive, bool)
         super().__setattr__('_use_cache', use_cache)
         super().__setattr__('_cached_to_dict', None)
         self._validate_type('name', name, str)
