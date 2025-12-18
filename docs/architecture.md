@@ -134,9 +134,9 @@ Entities support bidirectional serialization:
 
 ```mermaid
 flowchart LR
-    A[Python Object] --> B[to_dict()]
-    B --> C[Dict with 'type' field]
-    C --> D[from_dict()]
+    A["Python Object"] --> B["to_dict()"]
+    B --> C["Dict with 'type' field"]
+    C --> D["from_dict()"]
     D --> A
 ```
 
