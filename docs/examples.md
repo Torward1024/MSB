@@ -296,6 +296,15 @@ class Order(BaseEntity):
     total: float
     status: str = "pending"
 
+class Products(BaseContainer[Product]):
+    pass
+
+class Customers(BaseContainer[Customer]):
+    pass
+
+class Orders(BaseContainer[Order]):
+    pass
+
 # Define operations
 class OrderProcessor(Super):
     OPERATION = "order"
@@ -303,20 +312,19 @@ class OrderProcessor(Super):
     def _order_create(self, obj, attributes):
         customer_name = attributes["customer"]
         product_names = attributes["products"]
+        customer = obj["customers"].get(customer_name)
+        products = [obj["products"].get(name) for name in product_names]
 
-        # Find customer and products
-        customer = obj.get(customer_name) if hasattr(obj, 'get') else None
-        products = []
         for name in product_names:
             product = obj.get(name) if hasattr(obj, 'get') else None
             if product:
                 products.append(product)
 
         if not customer or len(products) != len(product_names):
-            return None
+            return False
 
         total = sum(p.price for p in products)
-        order = Order(customer=customer, products=products, total=total)
+        order = Order(name='test', customer=customer, products=products, total=total)
         return order
 
     def _order_process_payment(self, obj, attributes):
@@ -325,9 +333,9 @@ class OrderProcessor(Super):
         return f"Payment processed for order {order_id}"
 
 # Create system components
-products = BaseContainer[Product](name="products")
-customers = BaseContainer[Customer](name="customers")
-orders = BaseContainer[Order](name="orders")
+products = Products(name="products")
+customers = Customers(name="customers")
+orders = Orders(name="orders")
 
 # Add sample data
 products.add(Product(name="Laptop", price=999.99, category="Electronics", stock=10))
@@ -339,13 +347,15 @@ manipulator = Manipulator()
 manipulator.register_operation(OrderProcessor())
 
 # Set managing objects
-manipulator.set_managing_object(products)
+manipulator.set_managing_object({"products": products, "customers": customers, "orders": orders})
+
 
 # Create order
 order_result = manipulator.order(
     customer="John Doe",
     products=["Laptop", "Book"],
-    method="create"
+    method="create",
+    raise_on_error=False
 )
 
 if order_result["status"]:
@@ -353,7 +363,7 @@ if order_result["status"]:
     print(f"Order created: ${order.total}")
     orders.add(order)
 else:
-    print("Order creation failed")
+    print(f"Order creation failed: {order_result.get('error', 'Unknown error')}")
 ```
 
 ## Error Handling Examples
