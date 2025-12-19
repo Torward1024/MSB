@@ -40,8 +40,8 @@ alice = people["Alice"]
 print(alice.age)  # 30
 
 # Query items
-adults = people.get_by_value({"age": lambda x: x >= 18})
-print(len(adults))  # 2
+adults = people.get_by_value({"age": 25})
+print(len(adults))  # 1
 
 # Iterate over items
 for person in people:
@@ -316,7 +316,7 @@ class OrderProcessor(Super):
         products = [obj["products"].get(name) for name in product_names]
 
         for name in product_names:
-            product = obj.get(name) if hasattr(obj, 'get') else None
+            product = obj["products"].get(name)
             if product:
                 products.append(product)
 

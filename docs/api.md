@@ -118,6 +118,18 @@ Check if attribute exists using 'in' operator.
 
 **Returns:** True if attribute exists
 
+##### `_use_cache() -> bool`
+
+Get current cache usage setting.
+
+**Returns:** True if caching is enabled
+
+##### `_cached_to_dict() -> dict`
+
+Get cached dictionary representation if available.
+
+**Returns:** Cached dictionary or None
+
 ### BaseContainer[T]
 
 Generic container for managing collections of BaseEntity objects.
@@ -474,7 +486,7 @@ Register operation handler.
 
 **Raises:** `ValueError`
 
-##### `process_request(request: Dict[str, Any]) -> Any`
+##### `process_request(request: Dict[str, Any]) -> Dict[str, Any]`
 
 Process single or batch request.
 

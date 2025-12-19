@@ -68,7 +68,7 @@ classDiagram
      ABC <|-- Manipulator : inherits
 
     %% Base Layer
-    BaseEntity <|-- BaseContainer : contains
+    BaseEntity <|-- BaseContainer
 
     class BaseEntity {
         +name: str
@@ -80,6 +80,12 @@ classDiagram
         +from_dict(data)
         +activate()
         +deactivate()
+        +has_attribute(key)
+        +clone()
+        +clear()
+        +__getitem__(key)
+        +__setitem__(key, value)
+        +__contains__(key)
     }
 
     class BaseContainer {
@@ -87,8 +93,26 @@ classDiagram
         +add(item: T)
         +remove(name: str)
         +get(name: str)
+        +get_all()
         +get_items()
+        +get_active_items()
+        +get_inactive_items()
+        +get_by_value(conditions)
+        +set_items(items)
+        +activate_item(name)
+        +deactivate_item(name)
+        +activate_all()
+        +deactivate_all()
+        +drop_active()
+        +drop_inactive()
+        +has_item(name)
         +clear()
+        +clone()
+        +__getitem__(key)
+        +__setitem__(key, value)
+        +__contains__(key)
+        +__len__()
+        +__iter__()
     }
 
     %% Super Layer

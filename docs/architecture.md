@@ -58,9 +58,14 @@ classDiagram
          +get(key)
          +to_dict()
          +from_dict(data)
+         +activate()
+         +deactivate()
          +has_attribute(key)
          +clone()
          +clear()
+         +__getitem__(key)
+         +__setitem__(key, value)
+         +__contains__(key)
      }
 
      class BaseContainer {
@@ -70,9 +75,24 @@ classDiagram
          +get(name)
          +get_all()
          +get_items()
+         +get_active_items()
+         +get_inactive_items()
+         +get_by_value(conditions)
          +set_items(items)
+         +activate_item(name)
+         +deactivate_item(name)
+         +activate_all()
+         +deactivate_all()
+         +drop_active()
+         +drop_inactive()
+         +has_item(name)
          +clear()
          +clone()
+         +__getitem__(key)
+         +__setitem__(key, value)
+         +__contains__(key)
+         +__len__()
+         +__iter__()
      }
 
      class Super {
