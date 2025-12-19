@@ -483,7 +483,8 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         """Clear all non-internal attributes to release references."""
         for key in self._fields:
             if key not in {"name", "isactive", "_use_cache", "_cached_to_dict"}:
-                super().__setattr__(key, None)
+                if hasattr(self, key):
+                    super().__setattr__(key, None)
         self._invalidate_cache()
 
     def __getitem__(self, key: str) -> Any:

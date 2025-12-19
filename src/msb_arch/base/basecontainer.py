@@ -359,7 +359,8 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         Notes:
             - Logs an info message indicating the container has been cleared.
         """
-        self._items.clear()
+        if hasattr(self, '_items'):
+            self._items.clear()
         self._invalidate_cache()
         logger.info(f"Cleared all items from {self.__class__.__name__}")
 
