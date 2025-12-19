@@ -29,7 +29,10 @@ print(person2.email)     # "bob@example.com"
 from msb_arch.base import BaseContainer
 
 # Create typed container
-people = BaseContainer[Person](name="people")
+class MyContainer(BaseContainer[Person]):
+    pass
+
+people = MyContainer(name="people")
 
 # Add items
 people.add(person1)
@@ -53,6 +56,7 @@ for person in people:
 ### Nested Entities
 
 ```python
+from msb_arch.base import BaseEntity
 class Address(BaseEntity):
     street: str
     city: str
@@ -64,7 +68,7 @@ class Company(BaseEntity):
     employee_count: int
 
 # Create nested structure
-address = Address(street="123 Business St", city="Tech City", zip_code="12345")
+address = Address(name='address1', street="123 Business St", city="Tech City", zip_code="12345")
 company = Company(name="Tech Corp", address=address, employee_count=50)
 
 # Access nested properties
@@ -92,7 +96,7 @@ people_data = people.to_dict()
 print(people_data["items"]["Alice"]["age"])  # 30
 
 # Container deserialization
-people_copy = BaseContainer[Person].from_dict(people_data)
+people_copy = MyContainer.from_dict(people_data)
 ```
 
 ## Project Management
@@ -101,6 +105,7 @@ people_copy = BaseContainer[Person].from_dict(people_data)
 
 ```python
 from msb_arch.super import Project
+from msb_arch.base import BaseEntity
 
 class Task(BaseEntity):
     title: str
@@ -111,18 +116,21 @@ class TaskProject(Project):
     _item_type = Task
 
     def create_item(self, item_code="TASK"):
-        return Task(title=f"New {item_code}", priority=1)
+        self.add_item(Task(name=item_code, title=f"New {item_code}", priority=1))
+    
+    def from_dict():
+        pass
 
 # Create project
 project = TaskProject(name="my_tasks")
 
 # Add tasks
-task1 = Task(title="Design system", priority=3)
+task1 = Task(name='DesignSystemTask', title="Design system", priority=3)
 project.add_item(task1)
 project.create_item("Implement")  # Creates and adds automatically
 
 # Manage tasks
-project.activate_item("Design system")
+project.activate_item("DesignSystemTask")
 high_priority = project.get_active_items()
 print(len(high_priority))  # 2
 ```
@@ -136,7 +144,7 @@ inactive = project.get_inactive_items()
 print(len(inactive))  # 2
 
 # Query by attributes
-urgent_tasks = project.get_by_value({"priority": 3})
+urgent_tasks = project._items.get_by_value({"priority": 3})
 print(len(urgent_tasks))  # 1
 
 # Project serialization
@@ -153,7 +161,7 @@ print(len(project_data["items"]))  # 2
 from msb_arch.super import Super
 
 class Calculator(Super):
-    OPERATION = "calculate"
+    _operation = "calculate" # if you use without Manipulator
 
     def _calculate_add(self, obj, attributes):
         """Add two numbers"""
@@ -181,7 +189,11 @@ print(result2["result"])  # 8
 ### Data Processor
 
 ```python
+from msb_arch.super import Super
+
 class DataProcessor(Super):
+    _operation = 'process'
+    
     def _process_string_upper(self, obj, attributes):
         return str(obj).upper()
 
@@ -209,6 +221,36 @@ print(sort_result["result"])  # [1, 1, 3, 4, 5]
 
 ```python
 from msb_arch.mega import Manipulator
+from msb_arch.super import Super
+
+class DataProcessor(Super):
+    OPERATION = 'process' # if you Manipulator
+    
+    def _process_string_upper(self, obj, attributes):
+        return str(obj).upper()
+
+    def _process_string_lower(self, obj, attributes):
+        return str(obj).lower()
+
+    def _process_list_sort(self, obj, attributes):
+        if isinstance(obj, list):
+            return sorted(obj)
+        return obj
+    
+class Calculator(Super):
+    OPERATION = "calculate" # if you Manipulator
+
+    def _calculate_add(self, obj, attributes):
+        """Add two numbers"""
+        return attributes.get("a", 0) + attributes.get("b", 0)
+
+    def _calculate_multiply(self, obj, attributes):
+        """Multiply two numbers"""
+        return attributes.get("a", 1) * attributes.get("b", 1)
+
+    def _calculate_power(self, obj, attributes):
+        """Calculate power"""
+        return attributes.get("base", 1) ** attributes.get("exp", 1)
 
 # Create manipulator
 manipulator = Manipulator()
@@ -220,6 +262,7 @@ manipulator.register_operation(DataProcessor())
 # Process requests
 add_result = manipulator.process_request({
     "operation": "calculate",
+    "obj": int,
     "attributes": {"method": "add", "a": 10, "b": 20}
 })
 print(add_result["result"])  # 30
@@ -236,7 +279,7 @@ print(upper_result["result"])  # "WORLD"
 
 ```python
 # Facade methods are created automatically
-calc_result = manipulator.calculate(a=5, b=7, method="multiply")
+calc_result = manipulator.calculate(int, a=5, b=7, method="multiply")
 print(calc_result)  # 35
 
 process_result = manipulator.process(obj="hello world", method="string_lower")
@@ -250,10 +293,12 @@ print(process_result)  # "hello world"
 batch_request = {
     "calc1": {
         "operation": "calculate",
+        "obj": int,
         "attributes": {"method": "add", "a": 1, "b": 2}
     },
     "calc2": {
         "operation": "calculate",
+        "obj": int,
         "attributes": {"method": "multiply", "a": 3, "b": 4}
     },
     "process1": {
@@ -427,7 +472,7 @@ person._invalidate_cache()
 # Instead of multiple individual calls
 results = []
 for i in range(10):
-    result = manipulator.calculate(a=i, b=i+1, method="add")
+    result = manipulator.calculate(int, a=i, b=i+1, method="add")
     results.append(result)
 
 # Use batch processing
@@ -435,6 +480,7 @@ batch = {}
 for i in range(10):
     batch[f"calc_{i}"] = {
         "operation": "calculate",
+        "obj": int,
         "attributes": {"method": "add", "a": i, "b": i+1}
     }
 

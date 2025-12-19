@@ -33,14 +33,14 @@ pip install msb-arch
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.12+
 - No external dependencies (uses only standard library)
 
 ## Quick Start
 
 ```python
 from msb_arch.base import BaseEntity, BaseContainer
-from msb_arch.super import Super, Project
+from msb_arch.super import Super
 from msb_arch.mega import Manipulator
 
 # Define an entity
@@ -49,11 +49,14 @@ class MyEntity(BaseEntity):
     value: int
     description: str = "Default"
 
+class MyContainer(BaseContainer[MyEntity]):
+    pass
+
 # Create instances
 entity = MyEntity(name="test", value=42)
 
 # Create a container
-container = BaseContainer[MyEntity](name="my_container")
+container = MyContainer(name="my_container")
 container.add(entity)
 
 # Define an operation handler
@@ -61,21 +64,22 @@ class Calculator(Super):
     OPERATION = "calculate"
 
     def _calculate_add(self, obj, attributes):
-        return attributes.get("a", 0) + attributes.get("b", 0)
+        return obj.value  + attributes.get("a", 0)
 
 # Create manipulator and register operations
-manipulator = Manipulator()
+manipulator = Manipulator(entity)
 manipulator.register_operation(Calculator())
 
 # Process requests
 result = manipulator.process_request({
     "operation": "calculate",
-    "attributes": {"method": "add", "a": 5, "b": 3}
+    "object": entity,
+    "attributes": {"method": "add", "a": 5}
 })
 print(result["result"])  # 8
 
 # Use facade methods
-result = manipulator.calculate(a=10, b=4, method="add")
+result = manipulator.calculate(entity, a=10, method="add")
 print(result)  # 14
 ```
 
