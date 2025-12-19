@@ -39,6 +39,7 @@ manipulator.register_operation(MathOperations())
 # Process requests
 result = manipulator.process_request({
     "operation": "math",
+    "obj": int,
     "attributes": {"method": "add", "a": 5, "b": 3}
 })
 
@@ -46,7 +47,7 @@ print(result)
 # {"status": True, "object": None, "method": "_math_add", "result": 8}
 
 # Use facade method (created automatically)
-result = manipulator.math(a=10, b=4, method="multiply")
+result = manipulator.math(int, a=10, b=4, method="multiply")
 print(result)  # 40
 ```
 
@@ -62,7 +63,10 @@ class Item(BaseEntity):
     name: str
     value: int
 
-container = BaseContainer[Item](name="items")
+class ItemsContainer(BaseContainer[Item]):
+    pass
+
+container = ItemsContainer(name="items")
 manipulator.set_managing_object(container)
 
 # Now operations can work on the managing object implicitly
@@ -181,10 +185,11 @@ When you register an operation, Manipulator automatically creates a facade metho
 manipulator.register_operation(MathOperations(), operation="math")
 
 # This creates manipulator.math() method
-result = manipulator.math(a=1, b=2, method="add")
+result = manipulator.math(int, a=1, b=2, method="add")
 # Equivalent to:
 result = manipulator.process_request({
     "operation": "math",
+    "obj": int,
     "attributes": {"a": 1, "b": 2, "method": "add"}
 })
 ```
@@ -285,10 +290,13 @@ class UserManager(Super):
             obj.add(user)
         return user
 
+class Users(BaseContainer[User]):
+    pass
+
 manipulator = Manipulator()
 manipulator.register_operation(UserManager(), operation="user")
 
-users = BaseContainer[User](name="users")
+users = Users(name="users")
 manipulator.set_managing_object(users)
 
 # Create users

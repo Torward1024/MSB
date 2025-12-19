@@ -45,7 +45,7 @@ from msb_arch.super import Super
 from msb_arch.base import BaseEntity
 
 class Calculator(Super):
-    OPERATION = "calculate"
+    _operation = "calculate" # if you don't use manipulator
 
     def _calculate_add(self, obj, attributes):
         """Add two numbers"""
@@ -103,7 +103,10 @@ class Item(BaseEntity):
     name: str
     value: int
 
-container = BaseContainer[Item](name="items")
+class Items(BaseContainer[Item]):
+    pass
+
+container = Items(name="items")
 container.add(Item(name="item1", value=100))
 
 processor = NestedProcessor()
@@ -228,7 +231,7 @@ manipulator = Manipulator()
 
 # Register operations
 manipulator.register_operation(Calculator())
-manipulator.register_operation(TaskProject(name="tasks"))
+manipulator.set_managing_object(TaskProject(name="tasks"))
 
 # Process requests
 result = manipulator.process_request({

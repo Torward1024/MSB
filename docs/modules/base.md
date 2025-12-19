@@ -69,7 +69,7 @@ class Person(BaseEntity):
     age: int
     address: Address
 
-address = Address(street="123 Main St", city="Anytown")
+address = Address(name="Adress1", street="123 Main St", city="Anytown")
 person = Person(name="John", age=30, address=address)
 
 # Serialization handles nesting automatically
@@ -153,15 +153,17 @@ The `_validate_type` method validates that a given value matches the expected ty
 
 ```python
 from msb_arch.base import BaseEntity, BaseContainer
-from typing import List
 
 class Product(BaseEntity):
     name: str
     price: float
     category: str
 
+class MyContainer(BaseContainer[Product]):
+    pass
+
 # Create typed container
-inventory = BaseContainer[Product](name="product_inventory")
+inventory = MyContainer(name="product_inventory")
 
 # Add items
 product1 = Product(name="Widget", price=10.99, category="Tools")
@@ -189,7 +191,7 @@ print(len(expensive))  # 1
 
 ```python
 # Add from another container
-more_products = BaseContainer[Product](name="more_products")
+more_products = MyContainer(name="more_products")
 more_products.add(Product(name="Tool", price=5.99, category="Tools"))
 
 inventory.add(more_products)  # Merges containers
