@@ -91,4 +91,4 @@ For commercial use, a separate royalty-bearing license is required. Please conta
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 0.1.0
+- **Version**: 0.1.1
