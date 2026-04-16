@@ -20,7 +20,7 @@ T = TypeVar('T', bound=BaseEntity)
 class BaseContainer(BaseEntity, ABC, Generic[T]):
     """Abstract base class for managing collections of BaseEntity objects using a dictionary.
 
-    Provides a foundation for container classes in the MBS system. Manages a collection of entities
+    Provides a foundation for container classes in the MSB system. Manages a collection of entities
     indexed by their `name` attribute, with support for validation, activation state management,
     and universal serialization. Subclasses can extend validation logic or add specialized behavior.
 
@@ -631,11 +631,6 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         except Exception as e:
             logger.error(f"Failed to resolve type hint {type_hint}: {str(e)}")
             raise TypeError(f"Type resolution failed for {type_hint} in {field_path or cls.__name__}: {str(e)}") from e
-    
-    def clear(self) -> None:
-        """Clear all items from the container and release references."""
-        self._items.clear()
-        self._invalidate_cache()
 
     def __iter__(self) -> Iterator[T]:
         """Iterate over the items in the container.

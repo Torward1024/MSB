@@ -55,9 +55,7 @@ class Manipulator(ABC):
         if operations:
             for op_name, super_inst in operations.items():
                 self.register_operation(super_inst, operation=op_name)
-#        if self._operations:
-#            for op_name, super_inst in list(self._operations.items()):
-#                self.register_operation(super_inst, operation=op_name)
+        
         self._registry = self._get_method_registry()
         logger.debug(f"Initialized Manipulator with {len(self._operations)} initial operations")
         self._create_facades()

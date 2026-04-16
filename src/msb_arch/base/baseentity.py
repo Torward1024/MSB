@@ -32,7 +32,7 @@ class EntityMeta(ABCMeta):
 class BaseEntity(ABC, metaclass=EntityMeta):
     """Abstract base class for entities with attribute management, type validation, and universal serialization.
 
-    Provides a foundation for base entity classes in the MBS system. Defines common functionality
+    Provides a foundation for base entity classes in the MSB system. Defines common functionality
     for managing attributes with type checking, an active/inactive state, and universal serialization methods,
     including support for nested entities.
 
