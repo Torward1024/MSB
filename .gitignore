@@ -3,6 +3,7 @@
 *.suo
 *.user
 *.sln.docstates
+dist/
 bin/
 obj/
 *.exe
