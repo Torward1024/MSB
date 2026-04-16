@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "msb_arch"
-version = "0.1.1"
+version = "0.1.2"
 description = "Mega-Super-Base (MSB) architecture for flexible and extensible Python applications"
 readme = "README.md"
 requires-python = ">=3.12"
