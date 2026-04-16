@@ -220,7 +220,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             else:
                 raise ValueError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
         self._invalidate_cache()
-        logger.debug(f"Updated attributes of {self.__class__.__name__}: {params.keys}")
+        logger.debug(f"Updated attributes of {self.__class__.__name__}: {list(params.keys())}")
 
     def get(self, key: Union[str, List[str], None] = None) -> Union[Any, Dict[str, Any]]:
         """Retrieve one or more attributes of the entity.
