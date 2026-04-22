@@ -6,6 +6,7 @@
 dist/
 bin/
 obj/
+.vscode/
 *.exe
 *.dll
 *.log
