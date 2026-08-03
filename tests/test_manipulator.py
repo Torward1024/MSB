@@ -272,3 +272,23 @@ class TestManipulatorDel:
     @patch('src.msb_arch.mega.manipulator.logger')
     def test_del(self, mock_logger, manipulator):
         del manipulator
+
+class TestManipulatorOperationNames:
+    """An operation name becomes an attribute, so it must not collide with the API."""
+
+    @pytest.mark.parametrize("reserved", ["process_request", "register_operation",
+                                          "update_registry", "clear_cache",
+                                          "get_supported_operations"])
+    def test_an_operation_may_not_shadow_a_method(self, manipulator, mock_super, reserved):
+        with pytest.raises(ValueError, match="would shadow"):
+            manipulator.register_operation(mock_super, operation=reserved)
+        assert callable(getattr(manipulator, reserved))
+
+    @pytest.mark.parametrize("invalid", ["not a name", "with-dash", "1leading"])
+    def test_an_operation_name_must_be_an_identifier(self, manipulator, mock_super, invalid):
+        with pytest.raises(ValueError, match="not a valid identifier"):
+            manipulator.register_operation(mock_super, operation=invalid)
+
+    def test_a_free_name_is_still_accepted(self, manipulator, mock_super):
+        manipulator.register_operation(mock_super, operation="configure")
+        assert "configure" in manipulator.get_supported_operations()

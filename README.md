@@ -13,7 +13,7 @@ Mega-Super-Base (MSB) - a flexible and extensible architecture for Python applic
 - **Flexible Operation System**: Through Super-classes with method resolution.
 - **Projects as High-Level Containers**: High-level data organization.
 - **Universal Serialization**: Support for nested objects and cyclic references.
-- **Integrated Logging and Validation**: Full support for logging and data validation.
+- **Integrated Logging and Validation**: Logging through a dedicated `msb_arch` logger that stays silent until the application configures it, plus data validation.
 - **No External Dependencies**: Requires only Python >= 3.12.
 
 ## Installation
@@ -37,13 +37,15 @@ class MyProject(Project):
     def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
         item = MyEntity(name=item_code, isactive=isactive, value=42)
         self.add_item(item)
-    def from_dict():
-        pass
 
 project = MyProject(name="MyProject")
 project.create_item("item1")
 print(project.get_item("item1").to_dict())
 # Output: {'name': 'item1', 'isactive': True, 'type': 'MyEntity', 'value': 42}
+
+restored = MyProject.from_dict(project.to_dict())
+print(restored.get_item("item1").value)
+# Output: 42
 ```
 
 ## Architecture

@@ -1,6 +1,6 @@
 # super/super.py
 from abc import ABC
-from typing import Dict, Any, Callable, Type, Optional
+from typing import Dict, Any, Callable, List, Type, Optional
 from ..utils.logging_setup import logger
 from ..mega.manipulator import Manipulator
 from ..base.basecontainer import BaseContainer
@@ -17,12 +17,17 @@ class Super(ABC):
     Attributes:
         _manipulator (Manipulator): The associated Manipulator instance for method lookup.
         _methods (Dict[Type, Dict[str, Callable]]): Custom method registry for specific object types.
-        _method_cache (OrderedDict): Cache method.
-        _cache_size (int): Cache size.
-        OPERATION (str): The operation name, set by Manipulator during registration.
+        _method_cache (OrderedDict): LRU cache of resolved handler lookups, keyed by the
+            requested name and the type of the object.
+        _cache_size (int): Maximum number of remembered lookups.
+        OPERATION (str): The operation name. Used as the default for `_operation`, and
+            overwritten by Manipulator during registration.
 
     Notes:
-        - Method resolution order: explicit method, prefixed method (`_<operation>_<method>`), type-specific method (`_<operation>_<type>`), default method (`_<operation>`).
+        - Method resolution order: the requested name if it already denotes a handler, prefixed method (`_<operation>_<method>`), type-specific method (`_<operation>_<type>`), `_<operation>_basecontainer` for containers, default method (`_<operation>`).
+        - Only handlers of this operation can be reached from a request. The name arrives as
+          data, so anything else would let a request call arbitrary methods on the instance.
+        - Only the lookup is cached, never the outcome: operations have side effects.
         - Logging is integrated via `utils.logging_setup.logger`.
         - Results are returned as dictionaries with keys: status (bool), object (str), method (str | None),
           result (Any), error (str | None, included only if status=False).
@@ -37,12 +42,17 @@ class Super(ABC):
         Args:
             manipulator (Manipulator, optional): The Manipulator instance to associate with. Defaults to None.
             methods (Optional[Dict[Type, Dict[str, Callable]]]): Custom method registry. Defaults to None (empty dict).
-            cache_size (int): Maximum size of the method cache. Defaults to 2048.
+            cache_size (int): Maximum number of resolved handler lookups to remember. Defaults to 2048.
+
+        Notes:
+            - `_operation` starts from the class level `OPERATION`, so a Super that was never
+              registered with a Manipulator is still usable. Registration overwrites it.
         """
         self._manipulator = manipulator
         self._methods = methods or {}
         self._method_cache = OrderedDict()
         self._cache_size = cache_size
+        self._operation = self.OPERATION
 
     def _build_response(self, obj: Any, status: bool, method: str = None, result: Any = None,
                         error: str = None) -> Dict[str, Any]:
@@ -104,11 +114,11 @@ class Super(ABC):
         try:
             nested_obj = getter_method(key)
             if nested_obj is None:
-                logger.error(f"Item '{key}' not found in {type(obj).__name__}")
+                logger.error("Item '%s' not found in %s", key, type(obj).__name__)
                 return None
             return nested_obj
         except Exception as e:
-            logger.error(f"Invalid key {key} for {type(obj).__name__}: {str(e)}")
+            logger.error("Invalid key %s for %s: %s", key, type(obj).__name__, str(e))
             return None
 
     def _do_nested(self, obj: Any, attributes: Dict[str, Any], key: str, getter_method: Callable,
@@ -127,7 +137,7 @@ class Super(ABC):
         """
         index = attributes.get(key)
         if index is None:
-            logger.debug(f"No {key} provided for nested operation")
+            logger.debug("No %s provided for nested operation", key)
             return self._build_response(obj, False, None, None, "Operation not executed")
 
         try:
@@ -138,10 +148,10 @@ class Super(ABC):
             nested_attrs = {k: v for k, v in attributes.items() if k != key}
             result = nested_handler(nested_obj, nested_attrs)
             method_name = nested_handler.__name__ if hasattr(nested_handler, '__name__') else None
-            logger.info(f"Processed nested operation on {type(obj).__name__} with {key}={index}")
+            logger.info("Processed nested operation on %s with %s=%s", type(obj).__name__, key, index)
             return self._build_response(nested_obj, True, method_name, result)
         except Exception as e:
-            logger.error(f"Nested operation failed: {str(e)}")
+            logger.error("Nested operation failed: %s", str(e))
             return self._build_response(obj, False, None, None, str(e))
 
     def _validate_and_apply_method(self, obj: Any, method_name: str, method_args: Any,
@@ -159,7 +169,7 @@ class Super(ABC):
             Dict[str, Any]: Response dictionary with status, object, method, result, and error if status is False.
         """
         if method_name not in valid_methods:
-            logger.error(f"Invalid method '{method_name}' for '{type(obj).__name__}'")
+            logger.error("Invalid method '%s' for '%s'", method_name, type(obj).__name__)
             return self._build_response(obj, False, method_name, None, f"Method '{method_name}' not found")
 
         method = valid_methods[method_name]
@@ -180,7 +190,7 @@ class Super(ABC):
             ]
 
             if not expected_params:
-                logger.debug(f"Applying {method_name} to {type(obj).__name__} with no args")
+                logger.debug("Applying %s to %s with no args", method_name, type(obj).__name__)
                 result = method(obj)
             else:
                 if method_args is not None:
@@ -197,19 +207,19 @@ class Super(ABC):
 
                 for param in required_params:
                     if param not in final_args:
-                        logger.error(f"Missing required argument '{param}' for {method_name}")
+                        logger.error("Missing required argument '%s' for %s", param, method_name)
                         return self._build_response(obj, False, method_name, None, f"Missing required argument '{param}'")
 
                 valid_args = {k: v for k, v in final_args.items() if k in expected_params}
                 result = method(obj, **valid_args) if 'obj' not in expected_params else method(**valid_args)
 
-            logger.debug(f"Applied {method_name} to {type(obj).__name__}, result={result}")
+            logger.debug("Applied %s to %s, result=%s", method_name, type(obj).__name__, result)
             return self._build_response(obj, True, method_name, result)
         except TypeError as e:
-            logger.error(f"TypeError applying {method_name} to {type(obj).__name__}: {str(e)}")
+            logger.error("TypeError applying %s to %s: %s", method_name, type(obj).__name__, str(e))
             return self._build_response(obj, False, method_name, None, f"TypeError: {str(e)}")
         except Exception as e:
-            logger.error(f"Failed to apply {method_name} to {type(obj).__name__}: {str(e)}")
+            logger.error("Failed to apply %s to %s: %s", method_name, type(obj).__name__, str(e))
             return self._build_response(obj, False, method_name, None, f"Failed to apply {method_name}: {str(e)}")
     
     def register_method(self, obj_type: Type, method_name: str, method: Callable) -> None:
@@ -224,7 +234,88 @@ class Super(ABC):
             self._methods[obj_type] = {}
         self._methods[obj_type][method_name] = method
         self._method_cache.clear()
-        logger.info(f"Registered method '{method_name}' for {obj_type.__name__}")
+        logger.info("Registered method '%s' for %s", method_name, obj_type.__name__)
+
+    def _is_handler_name(self, name: str) -> bool:
+        """Report whether a name denotes a handler for this operation.
+
+        Args:
+            name (str): The attribute name to test.
+
+        Returns:
+            bool: True if the name is `_<operation>` or starts with `_<operation>_`.
+
+        Notes:
+            - Handler names are the only ones `execute` will call. The name arrives in a
+              request, so without this restriction a request could reach any attribute of
+              the instance, including `clear`, `execute` or `register_method`.
+        """
+        if not name or not self._operation:
+            return False
+        prefix = f"_{self._operation}"
+        return name == prefix or name.startswith(f"{prefix}_")
+
+    def _handler_candidates(self, obj: Any, method_name: Optional[str]) -> List[str]:
+        """List the handler names to try, most specific first.
+
+        Args:
+            obj (Any): The object the operation runs on.
+            method_name (Optional[str]): The handler requested by name, if any.
+
+        Returns:
+            List[str]: Candidate attribute names in resolution order.
+        """
+        candidates = []
+        if method_name:
+            if self._is_handler_name(method_name):
+                candidates.append(method_name)
+            candidates.append(f"_{self._operation}_{method_name}")
+        candidates.append(f"_{self._operation}_{type(obj).__name__.lower()}")
+        if isinstance(obj, BaseContainer):
+            candidates.append(f"_{self._operation}_basecontainer")
+        candidates.append(f"_{self._operation}")
+        return candidates
+
+    def _resolve_handler(self, obj: Any, method_name: Optional[str]) -> Optional[str]:
+        """Resolve the handler for an operation, remembering the outcome.
+
+        Args:
+            obj (Any): The object the operation runs on.
+            method_name (Optional[str]): The handler requested by name, if any.
+
+        Returns:
+            Optional[str]: The name of the handler to call, or None if nothing matches.
+
+        Notes:
+            - Only the lookup is cached, never the result of an operation: operations have
+              side effects, so replaying a stored response would be wrong.
+            - The cache is keyed by the requested name and the type of the object, and is
+              dropped by `register_method` and `clear_cache`. Attaching a handler to an
+              instance by any other route needs an explicit `clear_cache()`.
+        """
+        key = (method_name, type(obj))
+        if key in self._method_cache:
+            self._method_cache.move_to_end(key)
+            return self._method_cache[key]
+
+        resolved = None
+        for candidate in self._handler_candidates(obj, method_name):
+            if callable(getattr(self, candidate, None)):
+                resolved = candidate
+                break
+        self._update_cache(key, resolved)
+        return resolved
+
+    def _update_cache(self, key: tuple, value: Optional[str]) -> None:
+        """Store a resolved handler name, evicting the least recently used entry.
+
+        Args:
+            key (tuple): The cache key, a requested name paired with an object type.
+            value (Optional[str]): The resolved handler name, or None if nothing matched.
+        """
+        if len(self._method_cache) >= self._cache_size:
+            self._method_cache.popitem(last=False)
+        self._method_cache[key] = value
 
     def execute(self, obj: Any, attributes: Dict[str, Any] = None, method: str = None) -> Dict[str, Any]:
         """Execute an operation on an object based on attributes and an optional method.
@@ -236,70 +327,54 @@ class Super(ABC):
 
         Returns:
             Dict[str, Any]: Dictionary with status, object (name), method, result, and error (if status=False).
+
+        Notes:
+            - Resolution order: the requested name if it already denotes a handler, then
+              `_<operation>_<name>`, then `_<operation>_<type>`, then
+              `_<operation>_basecontainer` for containers, then `_<operation>`.
+            - Only handlers of this operation can be reached. A request naming anything else
+              fails with "No suitable method found" instead of calling it.
         """
         if attributes is None:
             attributes = {}
-        logger.debug(f"Executing operation '{self._operation}' on {type(obj).__name__} with attributes={attributes}, method={method}")
+        logger.debug("Executing operation '%s' on %s with attributes=%s, method=%s",
+                     self._operation, type(obj).__name__, attributes, method)
 
         try:
-            if method:
-                method_func = getattr(self, method, None)
-                if callable(method_func):
-                    result = method_func(obj, attributes)
-                    return self._build_response(obj, True, method, result)
+            if not self._operation:
+                raise ValueError(
+                    f"{self.__class__.__name__} has no operation name: set OPERATION or register "
+                    "it with a Manipulator"
+                )
 
-            method_name = attributes.get("method")
-            if not method_name and "attributes" in attributes and isinstance(attributes["attributes"], dict):
+            method_name = method or attributes.get("method")
+            if not method_name and isinstance(attributes.get("attributes"), dict):
                 nested_attrs = attributes["attributes"]
                 method_name = nested_attrs.get("method")
                 object_attributes = nested_attrs
             else:
                 object_attributes = {k: v for k, v in attributes.items() if k != 'method'}
 
-            if method_name:
-                method = getattr(self, method_name, None)
-                if callable(method):
-                    result = method(obj, object_attributes)
-                    return self._build_response(obj, True, method_name, result)
+            handler_name = self._resolve_handler(obj, method_name)
+            if handler_name is None:
+                raise ValueError(
+                    f"No suitable method found for operation '{self._operation}' and object "
+                    f"'{type(obj).__name__.lower()}' in {self.__class__.__name__}"
+                )
 
-                prefixed_method_name = f"_{self._operation}_{method_name}"
-                method = getattr(self, prefixed_method_name, None)
-                if callable(method):
-                    result = method(obj, object_attributes)
-                    return self._build_response(obj, True, prefixed_method_name, result)
-
-            obj_type_name = type(obj).__name__.lower()
-            auto_method_name = f"_{self._operation}_{obj_type_name}"
-            method = getattr(self, auto_method_name, None)
-            if callable(method):
-                result = method(obj, object_attributes)
-                return self._build_response(obj, True, auto_method_name, result)
-
-            if isinstance(obj, BaseContainer):
-                base_method_name = f"_{self._operation}_basecontainer"
-                method = getattr(self, base_method_name, None)
-                if callable(method):
-                    result = method(obj, object_attributes)
-                    return self._build_response(obj, True, base_method_name, result)
-
-            default_method_name = f"_{self._operation}"
-            method = getattr(self, default_method_name, None)
-            if callable(method):
-                result = method(obj, object_attributes)
-                return self._build_response(obj, True, default_method_name, result)
-
-            raise ValueError(f"No suitable method found for operation '{self._operation}' and object '{obj_type_name}' in {self.__class__.__name__}")
+            result = getattr(self, handler_name)(obj, object_attributes)
+            return self._build_response(obj, True, handler_name, result)
         except ValueError as e:
-            logger.error(f"Execution failed for operation '{self._operation}': {str(e)}")
+            logger.error("Execution failed for operation '%s': %s", self._operation, e)
             return self._build_response(obj, False, None, None, str(e))
         except Exception as e:
-            logger.error(f"Unexpected error in execute for '{self._operation}': {str(e)}")
+            logger.error("Unexpected error in execute for '%s': %s", self._operation, e)
             return self._build_response(obj, False, None, None, str(e))
         
     def clear_cache(self) -> None:
-        """Clear the method cache to free memory."""
+        """Clear the resolved handler lookups, forcing them to be resolved again."""
         self._method_cache.clear()
-        logger.debug(f"Cleared method cache for {self.__class__.__name__}")
+        logger.debug("Cleared method cache for %s", self.__class__.__name__)
 
     def clear(self) -> None:
         """Clear all references to prevent memory leaks.
@@ -310,7 +385,7 @@ class Super(ABC):
         self._manipulator = None
         self._methods.clear()
         self.clear_cache()
-        logger.debug(f"Cleared references for {self.__class__.__name__}")
+        logger.debug("Cleared references for %s", self.__class__.__name__)
 
     def _default_result(self, obj: Any) -> Dict[str, Any]:
         """Provide a default result when an operation cannot be executed.

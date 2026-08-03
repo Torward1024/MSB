@@ -32,7 +32,7 @@ class Project(ABC):
         check_non_empty_string(name, "Project name")
         self.name = name
         self._items = self._create_container(items=items, name=f"{name}_items")
-        logger.info(f"Initialized project '{name}' with {len(self._items)} items")
+        logger.info("Initialized project '%s' with %s items", name, len(self._items))
 
     @classmethod
     def _create_container(cls, items: Optional[Dict[str, BaseEntity]] = None, name: str = None) -> BaseContainer:
@@ -57,7 +57,7 @@ class Project(ABC):
                 pass
             container_type = TypedContainer
             Project._container_types[item_type] = container_type
-            logger.debug(f"Created container type for items of type '{item_type.__name__}'")
+            logger.debug("Created container type for items of type '%s'", item_type.__name__)
         return container_type(items=items, name=name)
 
     def add_item(self, item: BaseEntity) -> None:
@@ -75,7 +75,7 @@ class Project(ABC):
         if self._items.has_item(item.name):
             raise ValueError(f"Item with name '{item.name}' already exists in project '{self.name}'")
         self._items.add(item)
-        logger.debug(f"Added item '{item.name}' to project '{self.name}'")
+        logger.debug("Added item '%s' to project '%s'", item.name, self.name)
 
     @abstractmethod
     def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
@@ -95,7 +95,7 @@ class Project(ABC):
             item (BaseEntity): The BaseEntity item to set in the project.
         """
         self._items.set_item(name, item)
-        logger.info(f"Set item '{item.name}' in project '{self.name}'")
+        logger.info("Set item '%s' in project '%s'", item.name, self.name)
 
     def remove_item(self, name: str) -> None:
         """Remove an item from the project by its name.
@@ -104,7 +104,7 @@ class Project(ABC):
             name (str): The name of the item to remove from the project.
         """
         self._items.remove(name)
-        logger.info(f"Removed item '{name}' from project '{self.name}'")
+        logger.info("Removed item '%s' from project '%s'", name, self.name)
     
     def get_active_items(self) -> List[T]:
         """Retrieve all active items in the container.
@@ -132,7 +132,7 @@ class Project(ABC):
             BaseEntity: The BaseEntity item associated with the given name.
         """
         item = self._items.get(name)
-        logger.debug(f"Retrieved item '{name}' from project '{self.name}'")
+        logger.debug("Retrieved item '%s' from project '%s'", name, self.name)
         return item
 
     def get_items(self) -> Dict[str, BaseEntity]:
@@ -149,7 +149,7 @@ class Project(ABC):
         Returns:
             str: The name of the project.
         """
-        logger.debug(f"Retrieved name '{self.name}' for project")
+        logger.debug("Retrieved name '%s' for project", self.name)
         return self.name
 
     def set_name(self, name: str) -> None:
@@ -165,7 +165,7 @@ class Project(ABC):
         old_name = self.name
         self.name = name
         self._items.name = f"{name}_items"
-        logger.info(f"Project name changed from '{old_name}' to '{name}'")
+        logger.info("Project name changed from '%s' to '%s'", old_name, name)
 
     def set_project(self, name: str, items: Dict[str, BaseEntity]) -> None:
         """Set the entire project configuration, replacing name and items.
@@ -183,8 +183,7 @@ class Project(ABC):
         self.name = name
         self._items.set_items(items)
         self._items.name = f"{name}_items"
-        logger.info(f"Project updated: name changed from '{old_name}' to '{name}', "
-                    f"items count changed from {old_count} to {len(self._items)}")
+        logger.info("Project updated: name changed from '%s' to '%s', items count changed from %s to %s", old_name, name, old_count, len(self._items))
 
     def get_project(self) -> Dict[str, Any]:
         """Get the entire project configuration as a dictionary.
@@ -193,7 +192,7 @@ class Project(ABC):
             Dict[str, Any]: A dictionary with 'name' and 'items' keys representing the project configuration.
         """
         result = {"name": self.name, "items": self._items.to_dict()["items"]}
-        logger.info(f"Retrieved project configuration for '{self.name}' with {len(self._items)} items")
+        logger.info("Retrieved project configuration for '%s' with %s items", self.name, len(self._items))
         return result
     
     def clear(self):
@@ -203,9 +202,9 @@ class Project(ABC):
         """
         try:
             self._items.clear()
-            logger.info(f"Cleared project '{self.name}'")
+            logger.info("Cleared project '%s'", self.name)
         except Exception as e:
-            logger.error(f"Error clearing project '{self.name}': {str(e)}")
+            logger.error("Error clearing project '%s': %s", self.name, str(e))
 
     def activate_item(self, name: str) -> None:
         """Activate an item in the project's container by its name.
@@ -217,7 +216,7 @@ class Project(ABC):
             ValueError: If the item with the specified name does not exist.
         """
         self._items.activate_item(name)
-        logger.info(f"Activated item '{name}' in project '{self.name}'")
+        logger.info("Activated item '%s' in project '%s'", name, self.name)
 
     def deactivate_item(self, name: str) -> None:
         """Deactivate an item in the project's container by its name.
@@ -229,7 +228,7 @@ class Project(ABC):
             ValueError: If the item with the specified name does not exist.
         """
         self._items.deactivate_item(name)
-        logger.info(f"Deactivated item '{name}' in project '{self.name}'")
+        logger.info("Deactivated item '%s' in project '%s'", name, self.name)
     
     def activate_all(self) -> None:
         """Activate all items in the container.
@@ -272,7 +271,6 @@ class Project(ABC):
         return {"name": self.name, "items": self._items.to_dict()["items"]}
 
     @classmethod
-    @abstractmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Project':
         """Create a project instance from a dictionary.
 
@@ -284,6 +282,11 @@ class Project(ABC):
 
         Raises:
             ValueError: If the data is invalid or cannot be deserialized.
+
+        Notes:
+            - This used to be abstract while carrying a full implementation, which forced
+              every subclass to write a stub it could not meaningfully fill. Subclasses that
+              already override it are unaffected; the rest now inherit a working method.
         """
         try:
             check_non_empty_string(data["name"], "Project name")
@@ -292,11 +295,11 @@ class Project(ABC):
                 try:
                     items[k] = cls._item_type.from_dict(v)
                 except (TypeError, ValueError) as e:
-                    logger.error(f"Failed to deserialize item '{k}' for project: {str(e)}")
+                    logger.error("Failed to deserialize item '%s' for project: %s", k, str(e))
                     raise ValueError(f"Invalid data for item '{k}': {str(e)}") from e
             return cls(name=data["name"], items=items)
         except (KeyError, TypeError, ValueError) as e:
-            logger.error(f"Failed to deserialize Project from dict with name '{data.get('name', 'unknown')}': {str(e)}")
+            logger.error("Failed to deserialize Project from dict with name '%s': %s", data.get('name', 'unknown'), str(e))
             raise ValueError(f"Invalid project data: {str(e)}") from e
 
     def __repr__(self) -> str:

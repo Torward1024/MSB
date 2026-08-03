@@ -272,3 +272,25 @@ class TestProjectDel:
     @patch('src.msb_arch.super.project.logger')
     def test_del(self, mock_logger, test_project):
         del test_project
+
+class TestProjectFromDictIsConcrete:
+    """from_dict used to be abstract while carrying a full implementation."""
+
+    def test_a_subclass_need_not_override_from_dict(self):
+        class MinimalProject(Project):
+            _item_type = TestEntity
+
+            def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
+                self.add_item(TestEntity(name=item_code, value=42, isactive=isactive))
+
+        project = MinimalProject(name="Minimal")
+        project.create_item("item1")
+        restored = MinimalProject.from_dict(project.to_dict())
+        assert restored.get_item("item1").value == 42
+
+    def test_create_item_is_still_abstract(self):
+        class Incomplete(Project):
+            _item_type = TestEntity
+
+        with pytest.raises(TypeError):
+            Incomplete(name="Incomplete")

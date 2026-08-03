@@ -687,3 +687,30 @@ class TestBaseEntityLifetime:
         del entity
         gc.collect()
         assert alias.value == 42
+
+class TestBaseEntityHashing:
+    """Defining __eq__ without __hash__ used to make every entity unhashable."""
+
+    def test_entity_can_go_into_a_set(self, test_entity):
+        assert len({test_entity}) == 1
+
+    def test_equal_entities_hash_equal(self):
+        first = TestEntity(name="same", value=1)
+        second = TestEntity(name="same", value=1)
+        assert first == second
+        assert hash(first) == hash(second)
+        assert len({first, second}) == 1
+
+    def test_unequal_entities_stay_distinct(self):
+        first = TestEntity(name="same", value=1)
+        second = TestEntity(name="same", value=2)
+        assert first != second
+        assert len({first, second}) == 2
+
+    def test_entity_works_as_a_dictionary_key(self):
+        key = TestEntity(name="key", value=1)
+        lookup = TestEntity(name="key", value=1)
+        assert {key: "stored"}[lookup] == "stored"
+
+    def test_entities_of_different_classes_do_not_collide(self):
+        assert hash(TestEntity(name="x", value=1)) != hash(GenericEntity(name="x"))

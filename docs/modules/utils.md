@@ -8,11 +8,33 @@ This package contains utilities for logging setup and data validation. These uti
 
 The `logging_setup` module provides centralized logging configuration for the framework.
 
+### The package logger
+
+Everything MSB logs goes to a logger named `msb_arch`, which carries only a `NullHandler`.
+Importing the package configures nothing: it neither touches the root logger nor writes a
+file, so an application embedding MSB keeps full control of its own logging.
+
+To see MSB's output, either configure `logging` yourself:
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("msb_arch").setLevel(logging.DEBUG)
+```
+
+or opt in to the built-in configuration with `setup_logging()` below.
+
+Log calls pass their arguments lazily, so a message is only rendered when its level is
+enabled. Keep that style in subclasses: write `logger.debug("Added %s", item)` rather than
+`logger.debug(f"Added {item}")`, or the value is formatted even when nothing will read it.
+
 ### Functions
 
 #### `setup_logging(log_file="output.log", log_level=logging.INFO, clear_log=False)`
 
-Configures and returns a logger with file and console handlers.
+Attaches file and console handlers to the `msb_arch` logger and returns it. Optional; it is
+never called on import.
 
 **Parameters:**
 - `log_file` (str): Path to the log file (default: "output.log")
@@ -32,7 +54,7 @@ logger.info("Application started")
 
 #### `update_logging_level(log_level)`
 
-Updates the logging level for the singleton logger.
+Updates the logging level for the `msb_arch` logger and its handlers.
 
 **Parameters:**
 - `log_level` (int): New logging level
@@ -55,13 +77,17 @@ Updates logging configuration to clear the log file.
 
 ### Usage in Framework
 
-The framework automatically sets up logging when modules are imported:
+Importing the framework configures nothing. Until the application sets logging up, MSB's
+records are discarded by the `NullHandler`:
 
 ```python
-import msb_arch  # Logging is configured automatically
+import logging
+import msb_arch
+
+logging.basicConfig(level=logging.INFO)   # now MSB's records are visible
 ```
 
-All framework classes use the logger for debugging, info, warning, and error messages.
+All framework classes use the `msb_arch` logger for debugging, info, warning, and error messages.
 
 ## Validation Functions
 

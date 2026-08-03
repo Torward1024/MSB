@@ -546,7 +546,7 @@ Clear all operations.
 
 #### `setup_logging(log_file: str = "output.log", log_level: int = logging.INFO, clear_log: bool = False) -> logging.Logger`
 
-Configure logging system.
+Attach file and console handlers to the `msb_arch` logger.
 
 **Parameters:**
 - `log_file` (str): Log file path
@@ -554,6 +554,12 @@ Configure logging system.
 - `clear_log` (bool): Clear log file
 
 **Returns:** Logger instance
+
+**Notes:**
+- Optional and never called on import. MSB logs to a `msb_arch` logger carrying only a
+  `NullHandler`, so it neither writes files nor touches the root logger by itself.
+- Configuring `logging` in the application works just as well; this helper only exists for
+  the common case.
 
 #### `update_logging_level(log_level: int) -> None`
 
