@@ -1,59 +1,76 @@
-# MSB Fix Roadmap
+# MSB Roadmap
 
-Findings from the 0.1.3 MVP review, ordered by descending criticality. Cost is a rough
-estimate of effort plus regression risk: **S** is a contained change, **M** needs new tests,
-**L** reworks the public API. "Breaking" means downstream consumers have to adapt.
+Two things live here: what a review of the 0.1.3 MVP turned up and where each finding was
+resolved, and where the framework is going next.
 
-Status: `[x]` merged into main, `[ ]` open. The level tables list only what is still open;
-everything closed moves to the Done table.
+Nothing from the review is open. The sections after it are planning, not a backlog: each
+entry records what would have to be decided before it could be built, because guessing
+those answers is how two of the bugs below got in.
 
-## Done
+## Resolved, by release
 
-| # | Item | Breaking |
+Thirty-two findings, closed across five releases on 2026-08-03. Each release carries an
+upgrade table in [`CHANGELOG.md`](../CHANGELOG.md).
+
+### 0.2.0 — the review
+
+| # | Finding | Breaking |
 | --- | --- | --- |
-| F1 | `_validate_type` rewritten for parameterized type hints, nested to any depth | yes - `List[int]` no longer silently accepts foreign elements |
-| F2 | Removed the hardcoded `value` attribute guard | no - a loosening only |
-| R4 | Registry held per `Manipulator` instead of an `lru_cache` keyed on `self` | no |
-| R3 | Cache invalidation no longer walks the items; `add` is flat at ~12 us | no |
-| R2 | All five `__del__` methods removed; the container copies the incoming mapping | no |
-| R24 | `ScheduleManipulator` / `ScheduleProject` leftovers removed with those finalizers | no |
-| R8 | Underscore-prefixed fields kept out of `clear()`, `__eq__` and `__repr__` | `repr` output only |
-| R25 | Caching performance tests assert cache identity instead of racing micro-timings | no |
-| R14 | Generated container class cached per item type | no |
-| R18 | `_make_hashable`, `_update_cache` and `BaseContainer.__getattribute__` removed | no |
-| R20 | `py.typed` marker added and verified in the built wheel | no |
-| R21 | `MANIFEST.in` paths corrected for the `src/msb_arch` layout | no |
-| R22 | README version badge synchronised with pyproject | no |
-| R1 | `_type_cache` is per class; name lookup prefers the declaring module; the duplicated `_resolve_type` in `BaseContainer` is gone | no |
-| R7 | `EntityMeta` registers every class, so nested entities and container items restore as the class named in the payload | no |
-| R6 | `to_dict` threads its `seen` set through the recursion, so genuine cycles terminate | no |
-| R11 | Invalidation travels up a weak ownership chain; the cache-validation walk is gone | cached mapping is documented read-only |
-| R26 | Cyclic reference support is now real, so the documentation claim holds | no |
-| R23 | Tests import `msb_arch`; CI builds the wheel, installs it and runs the suite against it | no |
-| R13 | `Serializable` becomes the shared base; `BaseEntity` and `BaseContainer` are siblings | **yes** - `isinstance` against `BaseEntity` no longer matches a container |
-| R27 | The class registry holds classes weakly, so dynamically built classes are released | no |
-| R28 | Cache invalidation reaches every owner, not only the one that adopted last | no |
-| R29 | `Super`'s extension points are documented; its last two unused helpers removed | only the removals |
-| R19 | Shared state is guarded; the container-class and handler-cache races are fixed and covered by tests that fail without the guards | no |
-| R5 | Named logger with a NullHandler, no configuration on import, all 107 log calls lazy | **yes** - the application configures logging |
-| R9 | `_operation` defaults from `OPERATION`; dispatch restricted to `_<operation>*` handlers | **yes** - a request can no longer name any other method |
-| R10 | An operation name that is not an identifier, or that shadows a Manipulator attribute, is rejected | only already-broken registrations |
-| R12 | `__hash__` on `BaseEntity` and `BaseContainer`, keyed by class and name | no |
-| R15 | `Project.from_dict` is concrete; `create_item` stays abstract | no |
-| R16 | `remove()` raises `KeyError` naming the container instead of warning and failing bare | no |
-| R17 | `add()` keeps copying by default; the cost and the identity change are documented | no |
-| R18b | The leftover cache now remembers handler resolution, so `cache_size` and `clear_cache()` mean something | no |
+| F1 | `_validate_type` compared `get_origin()` against `typing.List`, so element types inside `List[T]` were never checked and nested generics raised on valid data | **yes** |
+| F2 | An attribute named `value` could not be None, so `clear()` produced objects that could not be restored | no |
+| R1 | `_type_cache` was shared across the hierarchy and keyed by name, so two modules declaring the same name collided | no |
+| R2 | `__del__` called `clear()`, and a container emptied the caller's dict on garbage collection | no |
+| R3 | Cache invalidation walked every item, making `add` quadratic: 4000 items took 1.4 s | no |
+| R4 | `@lru_cache` on an instance method meant no `Manipulator` was ever collected | no |
+| R5 | Importing the package seized the root logger and wrote `output.log` in the working directory | **yes** |
+| R6 | Cyclic references exhausted the stack despite being advertised as supported | no |
+| R7 | `from_dict` resolved types through the framework module's globals, so polymorphic restore never worked | no |
+| R8 | Internal fields leaked into `clear()`, `__eq__` and `__repr__` | `repr` only |
+| R9 | `Super.execute` resolved any attribute named in a request; `method="clear"` wiped the instance | **yes** |
+| R10 | An operation named after a `Manipulator` method shadowed it and recursed | only broken registrations |
+| R11 | Validating the cache re-serialized everything it was meant to save, and still missed the stale case | read-only mapping |
+| R12 | `__eq__` without `__hash__` made every entity unhashable | no |
+| R14 | `_create_container` built a class per call, so two projects held incomparable containers | no |
+| R15 | `Project.from_dict` was abstract with a body, forcing a stub nobody could fill | no |
+| R16 | `remove()` logged a warning and then failed with a bare `KeyError` | no |
+| R17 | `add()` deep copies by default; the cost and the identity change are now documented | no |
+| R18, R18b | Unreachable cache machinery removed; what remained now caches handler resolution | no |
+| R20–R22, R24–R26 | `py.typed`, `MANIFEST.in` paths, version badge, copy-paste leftovers, flaky timing assertions, a documentation claim that did not hold | no |
+| R23 | Tests imported from `src/`, so the built distribution was never exercised | no |
 
-## Level 3 - API design
+### 0.3.0 — the hierarchy
 
-| # | Item | Where | Cost | Breaking |
-| --- | --- | --- | --- | --- |
-| R30 | Downstream handlers can move onto `_apply_methods`: pAstroCORE has 22 handlers of about 800 lines that each reimplement the loop, and they disagree on what a failed method means -- `_inspect_*` raises, `_configure_*` ignores it as long as one method worked. Moving them collapses the code and settles the policy | consumer side | M | the failure policy has to be chosen |
+| # | Finding | Breaking |
+| --- | --- | --- |
+| R13 | `BaseContainer` inherited `BaseEntity` and gave fourteen members a different meaning. `Serializable` is now the shared base and the two are siblings | **yes** |
+| R27 | The class registry held strong references, so nothing declared was ever released | no |
+| R28 | Invalidation reached one owner, so an item shared by two containers left one stale | no |
+| R29 | `Super`'s extension points documented; its last unused helpers removed | only removals |
+
+### 0.3.1 — a break of our own making
+
+| # | Finding | Breaking |
+| --- | --- | --- |
+| R31 | Cycle detection threaded its state through a `_seen` parameter, so every downstream override written as `def to_dict(self)` failed. The state moved to a context variable | no, a repair |
+
+### 0.3.2 — concurrency
+
+| # | Finding | Breaking |
+| --- | --- | --- |
+| R19 | Shared state was unguarded: sixteen threads building the first project of a type produced up to fifteen competing container classes, and the handler cache lost entries. Both are covered by tests that fail without the guards | no |
+
+### 0.4.0 — the operation layer
+
+| # | Finding | Breaking |
+| --- | --- | --- |
+| R32 | Every handler wrote the same loop by hand. `Super._apply_methods` owns it, and a result now reports every method it ran rather than the last, which is what makes a request history replayable | no, opt-in |
+| R33 | The sequence form of `process_request` had no facade, hence no users and no coverage. `Manipulator.batch` is that facade | no |
+| R30 | Consumer side: the 22 handlers in pAstroCORE moved onto `_apply_methods`, 667 lines becoming 81, and the failure policy they disagreed on was settled | the policy changed for `configure` |
 
 ## Planned, not scheduled
 
-Two directions for the Manipulator that are wanted but deliberately not started. Both were
-raised on 2026-08-03 and left until there is a real case to design against.
+Four directions that are wanted and deliberately not started. Each was raised on 2026-08-03
+and left until there is a real case to design against.
 
 | # | Item | Notes |
 | --- | --- | --- |
@@ -90,30 +107,3 @@ necessarily built:
 
 **What 1.0 is not.** Not persistence, not a UI generator, not a plugin system. Those belong
 to whatever is built on MSB. A framework earns 1.0 by holding still, not by growing.
-
-## Working order
-
-Ordered by cost and regression risk rather than strictly by criticality.
-
-- [x] **Wave 1** - cheap, critical, leaves the API alone: R4, R3, R2, R8, R14, R18, plus R20, R21, R22, R24, R25
-- [x] **Wave 2** - critical, moderate cost, needs new tests: R1, R7, R6, R11. R1 and R7 both touch `_resolve_type`, so they belong together
-- [x] **Wave 3** - contract changes, each needs a decision before code: R5, R9, R10, R12, R15, R16, R17, R18b
-- [x] **Wave 4** - R13 shipped in 0.3.0, together with R27 to R29 found while re-assessing it
-- [x] **Wave 5** - the operation layer: `_apply_methods`, the uniform result protocol and `batch()` shipped; R19 in 0.3.2
-- [ ] **Later** - P1 pipelines and P2 an asynchronous Manipulator, once there is a real case to design against
-
-## Release notes
-
-Waves 1 to 3 and R23 shipped as **0.2.0** on 2026-08-03; see [`CHANGELOG.md`](../CHANGELOG.md)
-for the breaking changes and the upgrade table. pAstroCORE was verified against the release
-beforehand: 840 entities and 11729 fields re-validated with no violations, and its code paths
-behaved identically to 0.1.3.
-
-R13 shipped in **0.3.0** on 2026-08-03. Measuring it first was worth doing: the roadmap had
-it as "breaks widely", but the framework held only seven `isinstance` checks against
-`BaseEntity` and pAstroCORE none at all, so the split cost far less than the estimate.
-
-What remains is the operation layer. The base layer is now the best covered and best
-understood part of the framework, while `Super` and `Mega` -- the part that has no
-equivalent in pydantic or attrs, and therefore the actual reason to choose MSB -- have had
-only point fixes.

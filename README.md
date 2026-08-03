@@ -4,17 +4,34 @@
 [![License](https://img.shields.io/badge/license-MSB%20Software%20License-green.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.4.0-orange.svg)](https://github.com/Torward1024/MSB)
 
-Mega-Super-Base (MSB) - a flexible and extensible architecture for Python applications, providing a modular system for managing entities, containers, operations, and projects with built-in type safety, serialization, and logging.
+Mega-Super-Base (MSB) is an architecture for Python applications built around a single entry
+point. You describe your data as typed entities, you describe what may be done to them as
+operations, and everything reaches both through one orchestrator — a user, a GUI, another
+API, whatever drives the application.
+
+A request is data, not a call:
+
+```python
+{"operation": "configure", "obj": telescope, "attributes": {"set_diameter": 64.0}}
+```
+
+which is what lets the same code serve a dialog box, a script and a remote caller, and what
+lets a session be logged and replayed.
 
 ## Features
 
-- **Typed Entity Management**: Automatic attribute validation and serialization.
-- **Containers for Collections**: Support for queries and bulk operations on entities.
-- **Flexible Operation System**: Through Super-classes with method resolution.
-- **Projects as High-Level Containers**: High-level data organization.
-- **Universal Serialization**: Support for nested objects and cyclic references.
-- **Integrated Logging and Validation**: Logging through a dedicated `msb_arch` logger that stays silent until the application configures it, plus data validation.
-- **No External Dependencies**: Requires only Python >= 3.12.
+- **Typed entities**: attributes validated against their annotations, nested to any depth,
+  including `List`, `Dict`, `Tuple`, `Set`, `Union`, `Literal`, `Callable` and `Type[X]`.
+- **Containers for collections**: named, queryable, serializable, with bulk operations.
+- **One entry point**: a `Manipulator` registers operations and processes requests; the
+  per-operation facades are sugar so you rarely write a request dictionary by hand.
+- **Operations that write themselves**: a handler is usually one call to `_apply_methods`,
+  which applies everything a request names and reports each outcome.
+- **Universal serialization**: nested objects, cyclic references, and round trips through
+  JSON.
+- **Logging that behaves**: a dedicated `msb_arch` logger that stays silent until the
+  application configures it.
+- **No external dependencies**: Python >= 3.12 and nothing else.
 
 ## Installation
 
@@ -24,79 +41,135 @@ pip install msb_arch
 
 ## Quick Start
 
+Describe the data, describe the operations, drive both through the orchestrator.
+
 ```python
-from msb_arch.base.baseentity import BaseEntity
-from msb_arch.super.project import Project
+from msb_arch import BaseContainer, BaseEntity, Manipulator, Super
 
-class MyEntity(BaseEntity):
-    value: int
+# 1. the data
+class Telescope(BaseEntity):
+    diameter: float
 
-class MyProject(Project):
-    _item_type = MyEntity
+    def get_diameter(self) -> float:
+        return self.diameter
 
-    def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
-        item = MyEntity(name=item_code, isactive=isactive, value=42)
-        self.add_item(item)
+    def set_diameter(self, value: float) -> bool:
+        self.diameter = value
+        return True
 
-project = MyProject(name="MyProject")
-project.create_item("item1")
-print(project.get_item("item1").to_dict())
-# Output: {'name': 'item1', 'isactive': True, 'type': 'MyEntity', 'value': 42}
+class Telescopes(BaseContainer[Telescope]):
+    pass
 
-restored = MyProject.from_dict(project.to_dict())
-print(restored.get_item("item1").value)
-# Output: 42
+# 2. the operations
+class Inspector(Super):
+    OPERATION = "inspect"
+
+    def _inspect(self, obj, attributes):
+        return self._apply_methods(obj, attributes)
+
+class Configurator(Super):
+    OPERATION = "configure"
+
+    def _configure(self, obj, attributes):
+        return self._apply_methods(obj, attributes)
+
+# 3. the entry point
+class Observatory(Manipulator):
+    pass
+
+manipulator = Observatory(base_classes=[Telescope, Telescopes])
+manipulator.register_operation(Inspector(manipulator))
+manipulator.register_operation(Configurator(manipulator))
+
+dishes = Telescopes(name="array")
+dishes.add(Telescope(name="DSS14", diameter=70.0))
+dish = dishes.get("DSS14")
+
+manipulator.inspect(dish, get_diameter=None)      # 70.0
+manipulator.configure(dish, set_diameter=64.0)
+manipulator.inspect(dish, get_diameter=None)      # 64.0
+
+dishes.to_dict()["items"]["DSS14"]["diameter"]    # 64.0
+```
+
+Two handlers of one line each serve every type: the orchestrator dispatches by operation and
+by the type of the object, so adding an entity adds no code to the operation layer.
+
+Ask for several things at once and every outcome comes back, whatever the order:
+
+```python
+manipulator.inspect(dish, get_diameter=None, get=["name", "isactive"])
+# {'get_diameter': {'status': True, 'result': 64.0},
+#  'get':          {'status': True, 'result': {'name': 'DSS14', 'isactive': True}}}
+```
+
+Run several requests as one batch:
+
+```python
+manipulator.batch([
+    {"operation": "configure", "obj": dish, "attributes": {"set_diameter": 70.0}},
+    {"operation": "inspect", "obj": dish, "attributes": {"get_diameter": None}},
+])
 ```
 
 ## Architecture
 
-The project is divided into 4 modules:
+Four modules, three layers.
 
-- **Base**: [`src/msb_arch/base/serializable.py`](src/msb_arch/base/serializable.py), [`src/msb_arch/base/baseentity.py`](src/msb_arch/base/baseentity.py), [`src/msb_arch/base/basecontainer.py`](src/msb_arch/base/basecontainer.py) - shared machinery plus the entity and container surfaces.
-- **Super**: [`src/msb_arch/super/super.py`](src/msb_arch/super/super.py), [`src/msb_arch/super/project.py`](src/msb_arch/super/project.py) - operation handlers and project management.
-- **Mega**: [`src/msb_arch/mega/manipulator.py`](src/msb_arch/mega/manipulator.py) - central orchestrator for operations.
-- **Utils**: [`src/msb_arch/utils/logging_setup.py`](src/msb_arch/utils/logging_setup.py), [`src/msb_arch/utils/validation.py`](src/msb_arch/utils/validation.py) - utilities for logging and validation.
+| Layer | Module | What lives there |
+| --- | --- | --- |
+| **Base** — the data | [`serializable.py`](src/msb_arch/base/serializable.py), [`baseentity.py`](src/msb_arch/base/baseentity.py), [`basecontainer.py`](src/msb_arch/base/basecontainer.py) | Validation, serialization, caching, ownership |
+| **Super** — the operations | [`super.py`](src/msb_arch/super/super.py), [`project.py`](src/msb_arch/super/project.py) | Handlers, method resolution, projects |
+| **Mega** — the entry point | [`manipulator.py`](src/msb_arch/mega/manipulator.py) | Operation registry, request processing, facades, batches |
+| Shared | [`results.py`](src/msb_arch/results.py), [`utils/`](src/msb_arch/utils) | Result types, logging, validation helpers |
 
 Main classes:
-- **Serializable**: Shared base holding validation, serialization, caching and ownership.
-- **BaseEntity**: An object addressed by its attributes.
-- **BaseContainer[T]**: A named collection, sibling of BaseEntity rather than a subclass.
-- **Super**: Abstract class for operation handlers with method resolution.
-- **Project**: Class for managing projects as entity containers.
-- **Manipulator**: Central class for operation registration and request processing.
 
-## API
+- **`Serializable`** — what an entity and a container have in common: annotated fields and
+  their validation, `name` and `isactive`, `to_dict`, the cache. Use it in `isinstance`
+  checks that should accept either.
+- **`BaseEntity`** — an object addressed by its attributes.
+- **`BaseContainer[T]`** — a named collection addressed by its items. A sibling of
+  `BaseEntity`, not a subclass: an entity and a container mean different things by `get`,
+  `set` and `clear`.
+- **`Super`** — an operation. Subclass it, name the operation, and write handlers as
+  `_<operation>_<type>` or `_<operation>` for the fallback.
+- **`Project`** — a named collection of entities with a factory for creating them.
+- **`Manipulator`** — the entry point. Registers operations, processes requests, generates a
+  facade per operation.
+- **`MethodResults`** — what an operation reports: every method it ran, mapped to its
+  outcome.
 
-Complete API reference is available in [`docs/api.md`](docs/api.md).
+## Documentation
 
-## Examples
-
-Practical usage examples are available in [`docs/examples.md`](docs/examples.md).
+- [API reference](docs/api.md) — every public class and method
+- [Architecture](docs/architecture.md) and [diagrams](docs/diagrams.md)
+- [Base module](docs/modules/base.md) — the data model, the supported type hints, thread safety
+- [Super module](docs/modules/super.md) — **writing your own operation**
+- [Examples](docs/examples.md)
+- [Roadmap](docs/ROADMAP.md) — what is open, what is planned, and what 1.0.0 should mean
+- [Changelog](CHANGELOG.md) — release history and upgrade notes
 
 ## Testing
 
-The project includes a complete set of unit, integration, and performance tests using pytest. Tests are located in the `tests/` directory and cover all modules with high coverage rates.
+Unit, integration, performance and concurrency suites, run with pytest.
 
-The tests import `msb_arch` rather than the source tree, so they run against whatever is
+The tests import `msb_arch` rather than the source tree, so they exercise whatever is
 installed. Install the package first:
 
 ```bash
 pip install -e .
 ```
 
-Then run the tests:
+Then run them:
 
 ```bash
 pytest tests/
 ```
 
-CI builds the wheel and installs it before running the same suite, so the distribution that
-ships is the one that was tested.
-
-## Changelog
-
-Release history and upgrade notes are in [`CHANGELOG.md`](CHANGELOG.md). Known issues that
-have not been addressed yet are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+CI builds the wheel, installs it, checks that `msb_arch` resolves inside `site-packages`,
+and runs the same suites against it — so the distribution that ships is the one that was
+tested.
 
 ## License
 

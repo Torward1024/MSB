@@ -5,7 +5,13 @@ All notable changes to the MSB Framework are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Dates are ISO-8601.
 
-Open findings that have not been addressed yet are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Open findings, planned directions and what 1.0.0 should mean are in
+[`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+Every release from 0.2.0 onwards carries an upgrade table: the symptom you would see, what
+causes it, and what to do about it. Start there when moving between versions. An entry
+records what was true at the time of that release and is not rewritten afterwards; where a
+statement has since been overtaken, a note says where it was resolved.
 
 ## [0.4.0] - 2026-08-03
 
@@ -327,16 +333,17 @@ it is a minor version bump rather than a patch. Read
 
 ### Known issues
 
-The following were found during the review and are **not** fixed in this release. See
-[`docs/ROADMAP.md`](docs/ROADMAP.md) for the full list and the planned order.
+The following were found during the review and were **not** fixed in this release. All three
+have been resolved since; the entry is kept as it stood.
 
 - `BaseContainer` inherits from `BaseEntity` while giving `get`, `clear` and `set`
   incompatible meanings, which is an LSP violation and the root cause behind several of the
   fixes above (R13). Reworking it reshapes the base hierarchy, so it is deliberately left
-  for a later release.
-- Nothing is thread safe, and some state is held at class level (R19).
+  for a later release. — *resolved in 0.3.0.*
+- Nothing is thread safe, and some state is held at class level (R19). — *resolved in 0.3.2.*
 - The test suite imports from `src/` and CI never installs the package, so the built
-  distribution is never exercised (R23).
+  distribution is never exercised (R23). — *resolved in this release; the CI change landed
+  alongside it.*
 
 ### Upgrade notes: 0.1.3 to 0.2.0
 
