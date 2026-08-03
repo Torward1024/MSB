@@ -76,9 +76,10 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         if not hasattr(self.__class__, '_fields'):
             self.__class__._fields = get_type_hints(self.__class__)
     
-        initial_items = items or {}
-        if not isinstance(initial_items, dict):
-            raise TypeError(f"'items' must be a dict, got {type(initial_items)}")
+        if items is not None and not isinstance(items, dict):
+            raise TypeError(f"'items' must be a dict, got {type(items)}")
+        # Copy: the container owns its mapping, so clear() must not empty the caller's dict.
+        initial_items = dict(items) if items else {}
         
         if not (hasattr(self, '__orig_bases__') and self.__orig_bases__):
             raise TypeError(f"Cannot determine generic type for {self.__class__.__name__}. "
@@ -579,11 +580,17 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         return cls(items=items, name=data.get("name"), isactive=data.get("isactive", True))
     
     def _invalidate_cache(self) -> None:
-        """Invalidate the cache of the container."""
+        """Invalidate the cache of the container.
+
+        Notes:
+            - Only the container's own cache is dropped. Walking the items to clear their
+              caches would be quadratic in the number of items, and it invalidates the wrong
+              direction: an item is not stale because its container changed.
+            - A container whose item is mutated in place still serves a stale `to_dict`
+              result while `_use_cache` is enabled; propagating invalidation upwards
+              requires a parent reference and is tracked separately.
+        """
         super()._invalidate_cache()
-        for item in self._items.values():
-            if hasattr(item, '_invalidate_cache'):
-                item._invalidate_cache()
 
     @classmethod
     def _resolve_type(cls, type_hint, field_path=""):
@@ -704,10 +711,6 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         """
         self.set_item(key, item)
 
-    def __getattribute__(self, name: str) -> Any:
-        attr = super().__getattribute__(name)
-        return attr
-
     def __delitem__(self, name: str) -> None:
         """Remove an item from the container by its name using del operator.
 
@@ -773,10 +776,3 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         attrs.append(f"active={active_count}")
         attrs.append(f"inactive={len(self._items) - active_count}")
         return f"{self.__class__.__name__}({', '.join(attr for attr in attrs if attr)})"
-
-    def __del__(self) -> None:
-        """Ensure cleanup of references to prevent memory leaks."""
-        try:
-            self.clear()
-        except Exception as e:
-            logger.error(f"Error during cleanup of {self.__class__.__name__}: {str(e)}")

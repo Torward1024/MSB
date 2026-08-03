@@ -215,6 +215,38 @@ class TestManipulatorGetSupportedOperations:
         assert "test_op" in ops
 
 
+class TestManipulatorRegistryLifetime:
+    """The registry must be per instance and must not keep the instance alive."""
+
+    def test_instance_is_collected_when_dropped(self):
+        import gc
+        import weakref
+        manipulator = TestManipulator(base_classes=[list])
+        ref = weakref.ref(manipulator)
+        del manipulator
+        gc.collect()
+        assert ref() is None
+
+    def test_registry_is_not_shared_between_instances(self):
+        first = TestManipulator(base_classes=[list])
+        second = TestManipulator(base_classes=[dict])
+        assert list in first._registry and list not in second._registry
+        assert dict in second._registry and dict not in first._registry
+
+    def test_clear_cache_only_affects_its_own_instance(self):
+        first = TestManipulator(base_classes=[list])
+        second = TestManipulator(base_classes=[dict])
+        first.clear_cache()
+        assert first._registry == {}
+        assert dict in second._registry
+
+    def test_registry_is_rebuilt_after_clear(self):
+        manipulator = TestManipulator(base_classes=[list])
+        manipulator.clear_cache()
+        manipulator.update_registry()
+        assert list in manipulator._registry
+
+
 class TestManipulatorClearMethods:
     def test_clear_cache(self, manipulator):
         manipulator.clear_cache()

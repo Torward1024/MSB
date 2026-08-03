@@ -370,6 +370,31 @@ class TestBaseEntityClear:
         assert test_entity.clone().to_dict() == test_entity.to_dict()
 
 
+class TestBaseEntityInternalFields:
+    """Underscore-prefixed fields are framework state and must stay out of the public surface."""
+
+    def test_clear_keeps_internal_fields(self, test_entity):
+        # _type_cache used to be nulled on the instance, shadowing the class-level cache.
+        test_entity.clear()
+        assert isinstance(test_entity._type_cache, dict)
+        assert test_entity._use_cache is False
+
+    def test_equality_ignores_internal_fields(self, test_entity):
+        other = TestEntity.from_dict(test_entity.to_dict())
+        other._cached_to_dict = {"stale": True}
+        assert other == test_entity
+
+    def test_cleared_entities_compare_equal_after_a_round_trip(self, test_entity):
+        test_entity.clear()
+        assert TestEntity.from_dict(test_entity.to_dict()) == test_entity
+
+    def test_repr_shows_only_public_attributes(self, test_entity):
+        repr_str = repr(test_entity)
+        assert "value=42" in repr_str
+        for internal in ("_type_cache", "_cached_to_dict", "_use_cache"):
+            assert internal not in repr_str
+
+
 class TestBaseEntityInvalidateCache:
     def test_invalidate_cache(self, test_entity_with_cache):
         test_entity_with_cache._cached_to_dict = {"test": "data"}
@@ -403,9 +428,28 @@ class TestBaseEntitySetattr:
             test_entity.unknown = 123
 
 
-class TestBaseEntityDel:
+class TestBaseEntityLifetime:
     @patch('src.msb_arch.base.baseentity.logger')
     def test_del(self, mock_logger, test_entity):
         # Just ensure no error
         del test_entity
         mock_logger.error.assert_not_called()
+
+    def test_entity_is_collected_when_dropped(self):
+        import gc
+        import weakref
+        entity = TestEntity(name="temporary", value=1)
+        ref = weakref.ref(entity)
+        del entity
+        gc.collect()
+        assert ref() is None
+
+    def test_dropping_one_reference_leaves_the_other_usable(self):
+        # clear() used to run from __del__, so a shared entity could be wiped while a
+        # second reference to it was still live.
+        import gc
+        entity = TestEntity(name="shared", value=42)
+        alias = entity
+        del entity
+        gc.collect()
+        assert alias.value == 42

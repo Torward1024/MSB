@@ -334,11 +334,39 @@ class TestBaseContainerMagicMethods:
 
 
 class TestBaseContainerInvalidateCache:
-    def test_invalidate_cache(self, test_container):
-        test_container._invalidate_cache()
-        # Ensure items' cache is invalidated
-        for item in test_container.get_items():
-            assert item._cached_to_dict is None
+    def test_invalidate_cache_drops_the_containers_own_cache(self):
+        container = TestContainer(name="cached", use_cache=True)
+        container.add(TestEntity(name="item1", value=1))
+        assert container.to_dict() is container._cached_to_dict
+        container._invalidate_cache()
+        assert container._cached_to_dict is None
+
+    def test_invalidate_cache_leaves_items_untouched(self):
+        # Walking the items would be quadratic, and an item is not stale because its
+        # container changed. Adding must therefore not touch the caches already built.
+        container = TestContainer(name="cached")
+        items = [TestEntity(name=f"item{i}", value=i, use_cache=True) for i in range(5)]
+        for item in items:
+            container.add(item)
+        stored = container.get_items()
+        for item in stored:
+            item.to_dict()
+        assert all(item._cached_to_dict is not None for item in stored)
+
+        container.add(TestEntity(name="late", value=99, use_cache=True))
+        assert all(item._cached_to_dict is not None for item in stored)
+
+    def test_add_does_not_scale_with_container_size(self):
+        # Guards against reintroducing a per-item walk: adding must not read the
+        # attributes of the items already stored.
+        container = TestContainer(name="probe")
+        for i in range(50):
+            container.add(TestEntity(name=f"item{i}", value=i))
+        touched = []
+        for item in container.get_items():
+            item._invalidate_cache = lambda item=item: touched.append(item.name)
+        container.add(TestEntity(name="late", value=99))
+        assert touched == []
 
 
 class TestBaseContainerResolveType:
@@ -347,8 +375,35 @@ class TestBaseContainerResolveType:
         assert resolved == int
 
 
-class TestBaseContainerDel:
+class TestBaseContainerLifetime:
     @patch('src.msb_arch.base.basecontainer.logger')
     def test_del(self, mock_logger, test_container):
         del test_container
         mock_logger.error.assert_not_called()
+
+    def test_container_is_collected_when_dropped(self):
+        import gc
+        import weakref
+        container = TestContainer(name="temporary")
+        container.add(TestEntity(name="item1", value=1))
+        ref = weakref.ref(container)
+        del container
+        gc.collect()
+        assert ref() is None
+
+    def test_container_owns_its_mapping(self):
+        # The container used to keep the caller's dict by reference and empty it on
+        # garbage collection, destroying data the caller still owned.
+        import gc
+        caller_items = {"item1": TestEntity(name="item1", value=1)}
+        container = TestContainer(name="borrowing", items=caller_items)
+        del container
+        gc.collect()
+        assert set(caller_items) == {"item1"}
+
+    def test_clearing_the_container_leaves_the_callers_dict_alone(self):
+        caller_items = {"item1": TestEntity(name="item1", value=1)}
+        container = TestContainer(name="borrowing", items=caller_items)
+        container.clear()
+        assert len(container) == 0
+        assert set(caller_items) == {"item1"}

@@ -596,11 +596,18 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             raise TypeError(f"Type resolution failed for {type_hint} in {cls.__name__}: {str(e)}")
     
     def clear(self) -> None:
-        """Clear all non-internal attributes to release references."""
+        """Clear all public attributes to release references.
+
+        Notes:
+            - 'name' and 'isactive' are kept, and so is every underscore-prefixed field:
+              those hold framework state such as the shared type cache, and nulling them
+              on the instance would shadow the class-level value.
+        """
         for key in self._fields:
-            if key not in {"name", "isactive", "_use_cache", "_cached_to_dict"}:
-                if hasattr(self, key):
-                    super().__setattr__(key, None)
+            if key in ("name", "isactive") or key.startswith('_'):
+                continue
+            if hasattr(self, key):
+                super().__setattr__(key, None)
         self._invalidate_cache()
 
     def __getitem__(self, key: str) -> Any:
@@ -646,12 +653,17 @@ class BaseEntity(ABC, metaclass=EntityMeta):
 
         Returns:
             bool: True if the entities are equal, False otherwise.
+
+        Notes:
+            - Only public attributes take part: underscore-prefixed fields hold framework
+              state such as the cached serialization, which says nothing about equality.
         """
         if not isinstance(other, self.__class__):
             return False
         return (self.name == other.name and
                 self.isactive == other.isactive and
-                all(self.get(k) == other.get(k) for k in self._fields if k not in ("name", "isactive")))
+                all(self.get(k) == other.get(k) for k in self._fields
+                    if k not in ("name", "isactive") and not k.startswith('_')))
 
     def __contains__(self, key: str) -> bool:
         """Check if an attribute exists in the entity.
@@ -696,6 +708,8 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         attrs = [f"name={self.name!r}" if self.name else ""]
         attrs.append(f"isactive={self.isactive}")
         for k in self._fields:
+            if k.startswith('_'):
+                continue
             if k not in ('name', 'isactive') and hasattr(self, k):
                 value = getattr(self, k)
                 if isinstance(value, BaseEntity):
@@ -703,10 +717,3 @@ class BaseEntity(ABC, metaclass=EntityMeta):
                 else:
                     attrs.append(f"{k}={value!r}")
         return f"{self.__class__.__name__}({', '.join(attr for attr in attrs if attr)})"
-    
-    def __del__(self) -> None:
-        """Ensure cleanup of references to prevent memory leaks."""
-        try:
-            self.clear()
-        except Exception as e:
-            logger.error(f"Error during cleanup of {self.__class__.__name__}: {str(e)}")
