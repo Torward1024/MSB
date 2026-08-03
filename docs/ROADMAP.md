@@ -58,8 +58,38 @@ raised on 2026-08-03 and left until there is a real case to design against.
 | # | Item | Notes |
 | --- | --- | --- |
 | P1 | **Pipelines**: a request in a batch that depends on the result of an earlier one | `batch` runs independent requests. Feeding one result into the next must not be done with callables between steps: a request would stop being data, and with it go serialization, history and replay -- the properties the orchestrator exists for, and the reason an external caller can drive it at all. The shape that keeps them is a reference inside the request, `Ref("step_id", "method_name")`, substituted before the step runs. Three things need deciding first: how a reference addresses a result now that a step reports every method it ran, what happens to steps that depend on a failed one, and whether substitution belongs in the Manipulator or in a layer above it. None of that should be guessed: there is no dependent batch anywhere yet, so there is nothing to design against |
-| P3 | **Built-in `Inspector` and `Configurator`** | Requested by a downstream author on 2026-08-03, and the natural continuation of `_apply_methods`: the framework took the loop, and the handler around it turns out to be nearly empty too. Measured on pAstroCORE after that migration, 20 of its 21 handlers contain no domain logic at all -- six are literally a type check and one call, and the type check is redundant because dispatch already selected the handler by type. Shipping an `Inspector` and a `Configurator` would delete all of them but one, `_configure_scheduleproject`, which really does have domain logic. Three things decide whether it works: the nested descent is not uniform, since containers expose `get(name)` while a `Project` exposes `get_observation(name)`, so it needs a hook rather than a convention; a built-in `Configurator` returns `MethodResults` instead of the bespoke value each handler invents today, which touches 2 of 62 call sites because a configure result is almost never read; and the classes have to stay thin over `_apply_methods` with named hooks, or subclasses will override everything and end up worse off than with a hand-written handler. Only `inspect` and `configure` generalise -- they fall straight out of the request model, where an attribute names a method -- while operations such as `calculate` and `visualize` are domain work and stay bespoke. Those two cover 185 of the 194 facade calls downstream |
 | P2 | **Asynchronous Manipulator**: `await manipulator.calculate(...)` | The calculations in the downstream project are long, and the GUI blocks on them today. The awkward part is not the plumbing but the contract: whether an operation may be sync and async at once, whether `Super` handlers become coroutines or run in an executor, and what a batch means when its requests overlap in time. The thread-safety work in 0.3.2 is a prerequisite and is done |
+| P3 | **Built-in `Inspector` and `Configurator`** | Requested by a downstream author on 2026-08-03, and the natural continuation of `_apply_methods`: the framework took the loop, and the handler around it turns out to be nearly empty too. Measured on pAstroCORE after that migration, 20 of its 21 handlers contain no domain logic at all -- six are literally a type check and one call, and the type check is redundant because dispatch already selected the handler by type. Shipping an `Inspector` and a `Configurator` would delete all of them but one, `_configure_scheduleproject`, which really does have domain logic. Three things decide whether it works: the nested descent is not uniform, since containers expose `get(name)` while a `Project` exposes `get_observation(name)`, so it needs a hook rather than a convention; a built-in `Configurator` returns `MethodResults` instead of the bespoke value each handler invents today, which touches 2 of 62 call sites because a configure result is almost never read; and the classes have to stay thin over `_apply_methods` with named hooks, or subclasses will override everything and end up worse off than with a hand-written handler. Only `inspect` and `configure` generalise -- they fall straight out of the request model, where an attribute names a method -- while operations such as `calculate` and `visualize` are domain work and stay bespoke. Those two cover 185 of the 194 facade calls downstream |
+| P4 | **Generating an application from the data model** | The downstream author is building a WYSIWYG editor that lays out entities and their Super classes and emits Python skeletons. Measuring pAstroCORE shows where the leverage actually is: 74.5% of it is already generated, by Qt Designer, and of the rest the data model is 4.4% and the operations 7.5% -- of which the handlers this would scaffold are 81 lines, four each. Skeletons that small are faster to type than to find in an editor. The 11.7% written by hand is GUI wiring: tables over containers, dialogs over entity attributes, validation, saving back. MSB already holds everything that needs -- `_fields` with types, which attributes are optional, `Literal` as a ready list of choices, nested entities, containers, validation -- so the target worth aiming at is generating those forms and tables, not the handler stubs. One constraint to design in from the start: a template carrying "your logic here" cannot be regenerated once it has been edited. Generating only what follows from the model, into files nobody edits, and leaving user code in subclasses beside them, keeps regeneration possible. For the digital-twin and platform cases mentioned alongside this, two things are missing first: persistence beyond `to_dict`/`from_dict`, and P2 |
+
+## What 1.0.0 should mean
+
+A 1.0 is a promise rather than a feature count: that the contract will not break outside a
+major version. Four releases went out on 2026-08-03, three of them changing the contract, so
+the promise is not close yet. It becomes possible when there is nothing left that would
+force a break, which puts these in the way.
+
+**Decisions that must be made first.** Each of the three planned directions changes
+something a caller depends on, so 1.0 cannot precede them -- they have to be decided, not
+necessarily built:
+
+- P1 changes the shape of a request, by putting references to earlier results inside it.
+- P2 changes every signature, because retrofitting async is not additive.
+- P3 changes what a handler looks like, and therefore what a downstream author writes.
+
+**What must then hold:**
+
+| | |
+| --- | --- |
+| The request and response protocol is frozen | Including `MethodResults` and what a facade unwraps |
+| The extension contract is frozen | What a `Super` subclass implements and which helpers it may call |
+| The entity model is frozen | Settled in 0.3.0 when `Serializable` split the hierarchy |
+| A deprecation policy is written down | How long a name survives after it is superseded, and how it is announced |
+| There is a guide to building an application | The docs describe the API well and never show how to start a project on it |
+| More than one project depends on it in earnest | Already true: pAstroCORE and an observatory scheduling system |
+
+**What 1.0 is not.** Not persistence, not a UI generator, not a plugin system. Those belong
+to whatever is built on MSB. A framework earns 1.0 by holding still, not by growing.
 
 ## Working order
 
