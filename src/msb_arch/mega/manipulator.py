@@ -2,7 +2,6 @@
 from abc import ABC
 from typing import Dict, Any, Optional, Callable, List, Type
 from ..utils.logging_setup import logger
-from functools import lru_cache
 import inspect
 import types
 
@@ -21,7 +20,7 @@ class Manipulator(ABC):
         _strict_type_check (bool): If True, enforces strict type checking for objects.
 
     Notes:
-        - Uses `functools.lru_cache` to optimize method registry generation.
+        - The method registry is held per instance in `_registry` and rebuilt by `update_registry`.
         - Logging is integrated via `..utils.logging_setup.logger`.
         - Operations are executed via super-instances that must have an `execute` method.
         - Results are returned as dictionaries with keys: status (bool), object (Any), method (str | None),
@@ -131,7 +130,6 @@ class Manipulator(ABC):
             logger.info("Cleared all operations in registry")
         if additional_classes:
             self._base_classes.extend([cls for cls in additional_classes if cls not in self._base_classes])
-        self._get_method_registry.cache_clear()
         self._registry = self._get_method_registry()
         logger.info(f"Registry updated with {len(self._registry)} types")
 
@@ -229,9 +227,11 @@ class Manipulator(ABC):
         setattr(self, operation, bound_method)
         logger.debug(f"Added facade method '{operation}' to Manipulator with docstring: {bound_method.__doc__}")
 
-    @lru_cache(maxsize=2048)
     def _get_method_registry(self, validate_annotations: bool = False) -> Dict[Type, Dict[str, Callable]]:
-        """Generate and cache the method registry for registered operations and base classes.
+        """Generate the method registry for registered operations and base classes.
+
+        The result is stored by the caller in `self._registry`; this method always rebuilds
+        it from the current operations and base classes.
 
         Args:
             validate_annotations (bool): If True, validate method return annotations. Defaults to False.
@@ -437,8 +437,13 @@ class Manipulator(ABC):
         return list(self._operations.keys())
     
     def clear_cache(self) -> None:
-        """Clear the method registry cache to free memory."""
-        self._get_method_registry.cache_clear()
+        """Drop the method registry so that it is rebuilt on the next update.
+
+        Notes:
+            - The registry is rebuilt by `update_registry`; this only releases the
+              references it holds to the currently registered types and methods.
+        """
+        self._registry = {}
     
     def clear_base_classes(self) -> None:
         """Clear the list of base classes and update the method registry.
