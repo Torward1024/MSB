@@ -579,11 +579,17 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         return cls(items=items, name=data.get("name"), isactive=data.get("isactive", True))
     
     def _invalidate_cache(self) -> None:
-        """Invalidate the cache of the container."""
+        """Invalidate the cache of the container.
+
+        Notes:
+            - Only the container's own cache is dropped. Walking the items to clear their
+              caches would be quadratic in the number of items, and it invalidates the wrong
+              direction: an item is not stale because its container changed.
+            - A container whose item is mutated in place still serves a stale `to_dict`
+              result while `_use_cache` is enabled; propagating invalidation upwards
+              requires a parent reference and is tracked separately.
+        """
         super()._invalidate_cache()
-        for item in self._items.values():
-            if hasattr(item, '_invalidate_cache'):
-                item._invalidate_cache()
 
     @classmethod
     def _resolve_type(cls, type_hint, field_path=""):
