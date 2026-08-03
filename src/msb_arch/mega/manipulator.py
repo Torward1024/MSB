@@ -1,7 +1,8 @@
 # mega/manipulator.py
 from abc import ABC
-from typing import Dict, Any, Optional, Callable, List, Type
+from typing import Dict, Any, Optional, Callable, List, Sequence, Type, Union
 from ..utils.logging_setup import logger
+from ..results import MethodResults
 import inspect
 import types
 
@@ -213,10 +214,18 @@ class Manipulator(ABC):
                 raise_on_error (bool): If True, raise Exception on error; if False, return dict with {{status: bool, result: Any, error: str}}.
 
             Returns:
-                Any: If raise_on_error=True, returns the result or raises Exception. If False, returns dict {{status: bool, result: Any, error: str}}.
+                Any: If raise_on_error=True, the result, or the value itself when the
+                    request named exactly one method. If False, the whole response.
 
             Raises:
                 Exception: If raise_on_error=True and operation fails.
+
+            Notes:
+                - The protocol does not change with the shape of the request: a handler
+                  built on `_apply_methods` always reports every method it ran, which is
+                  what makes a request history replayable.
+                - This facade is sugar over `process_request`, so it unwraps the common
+                  case: one method named, its value returned rather than a mapping of one.
             """
             request_attributes = attributes.copy()
             if method:
@@ -231,12 +240,30 @@ class Manipulator(ABC):
                 return result
             if not result["status"]:
                 raise Exception(result.get("error", "Unknown error"))
-            return result["result"]
+            return self._unwrap_single(result["result"])
 
         facade_wrapper.__doc__ = facade_wrapper.__doc__.format(operation=operation)
         bound_method = types.MethodType(facade_wrapper, self)
         setattr(self, operation, bound_method)
         logger.debug("Added facade method '%s' to Manipulator with docstring: %s", operation, bound_method.__doc__)
+
+    @staticmethod
+    def _unwrap_single(result: Any) -> Any:
+        """Reduce a one-method result mapping to the value it holds.
+
+        Args:
+            result (Any): Whatever the handler returned.
+
+        Returns:
+            Any: The single value if `result` reports exactly one method, `result` otherwise.
+
+        Notes:
+            - Only `MethodResults` is unwrapped, never a plain dictionary a handler happens
+              to return, so a handler producing real data of its own is left alone.
+        """
+        if isinstance(result, MethodResults) and len(result) == 1:
+            return next(iter(result.values()))["result"]
+        return result
 
     def _get_method_registry(self, validate_annotations: bool = False) -> Dict[Type, Dict[str, Callable]]:
         """Generate the method registry for registered operations and base classes.
@@ -438,6 +465,59 @@ class Manipulator(ABC):
         except Exception as e:
             logger.error("Failed to process request '%s' via execute: %s", operation, str(e))
             return {"status": False, "object": effective_obj, "method": None, "result": None, "error": str(e)}
+
+    def batch(self, requests: Union[Sequence[Dict[str, Any]], Dict[str, Dict[str, Any]]],
+              raise_on_error: bool = False) -> Dict[str, Any]:
+        """Run several requests in order and report the outcome of each.
+
+        Args:
+            requests: Either a sequence of request dictionaries, which are numbered from
+                zero, or a mapping of an identifier of your choosing to a request.
+            raise_on_error (bool): If True, raise as soon as a request fails. If False, the
+                default, every request is attempted and the report carries the failures.
+
+        Returns:
+            Dict[str, Any]: Identifier mapped to the response of that request.
+
+        Raises:
+            TypeError: If `requests` is neither a sequence nor a mapping of requests.
+            Exception: If `raise_on_error` and a request fails.
+
+        Notes:
+            - This is sugar over the sequence form of `process_request`, in the same way the
+              per-operation facades are sugar over its single form.
+            - Requests run in the order given and are independent of one another: nothing
+              here feeds the result of one into the next.
+
+        Examples:
+            >>> manipulator.batch([
+            ...     {"operation": "configure", "obj": telescope, "attributes": {"set_diameter": 30.0}},
+            ...     {"operation": "inspect", "obj": telescope, "attributes": {"get_code": None}},
+            ... ])
+            {'0': {'status': True, ...}, '1': {'status': True, ...}}
+        """
+        if isinstance(requests, dict):
+            numbered = {str(key): value for key, value in requests.items()}
+        elif isinstance(requests, Sequence) and not isinstance(requests, (str, bytes)):
+            numbered = {str(index): request for index, request in enumerate(requests)}
+        else:
+            raise TypeError(f"Requests must be a sequence or a mapping, got {type(requests).__name__}")
+
+        if not numbered:
+            return {}
+
+        invalid = [key for key, value in numbered.items() if not isinstance(value, dict)]
+        if invalid:
+            raise TypeError(f"Requests {invalid} are not dictionaries")
+
+        logger.debug("Batch of %s request(s)", len(numbered))
+        results = self.process_request(numbered)
+
+        if raise_on_error:
+            for key, response in results.items():
+                if not response.get("status"):
+                    raise Exception(f"Request '{key}' failed: {response.get('error', 'Unknown error')}")
+        return results
 
     def get_supported_operations(self) -> List[str]:
         """Retrieve the list of supported operation names.

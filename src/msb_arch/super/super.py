@@ -4,12 +4,14 @@ from typing import Dict, Any, Callable, List, Type, Optional
 from ..utils.logging_setup import logger
 from ..mega.manipulator import Manipulator
 from ..base.basecontainer import BaseContainer
+from ..results import MethodResults
 from collections import OrderedDict
 from threading import Lock
 import inspect
 
 # Sentinel: None is a legitimate cached outcome, meaning "no handler matches".
 _MISSING = object()
+
 
 class Super(ABC):
     """Abstract super-class providing common functionality for operation handlers.
@@ -256,6 +258,61 @@ class Super(ABC):
         self._methods[obj_type][method_name] = method
         self._method_cache.clear()
         logger.info("Registered method '%s' for %s", method_name, obj_type.__name__)
+
+    def _apply_methods(self, obj: Any, attributes: Dict[str, Any],
+                       valid_methods: Optional[Dict[str, Callable]] = None,
+                       extra_args: Optional[Dict[str, Any]] = None,
+                       strict: bool = True) -> "MethodResults":
+        """Apply every method named in `attributes` to an object.
+
+        This is the loop a handler would otherwise write itself: look the allowed methods
+        up, apply each requested one, and decide what a failure means. Handlers call it and
+        return what it produces.
+
+        Args:
+            obj (Any): The object to apply the methods to.
+            attributes (Dict[str, Any]): Method names mapped to their arguments. A value of
+                None means the method takes no arguments beyond the object.
+            valid_methods (Optional[Dict[str, Callable]]): The methods the request may name.
+                Defaults to those registered for the type of `obj`.
+            extra_args (Optional[Dict[str, Any]]): Arguments merged into every call.
+            strict (bool): If True, the first failure raises. If False, every method is
+                attempted and its outcome recorded.
+
+        Returns:
+            MethodResults: Method name mapped to `{"status", "result"}`, plus `"error"` for
+                the ones that failed.
+
+        Raises:
+            ValueError: If `strict` and a method fails, or if the request named no methods.
+
+        Notes:
+            - Every method that ran is reported, so nothing is lost when a request names
+              several. A handler that returned only the last result made the outcome depend
+              on the order of the keys in the request.
+            - `strict=True` reproduces what a hand-written handler loop did: stop at the
+              first failure and let `execute` turn it into a failed response.
+        """
+        if not attributes:
+            raise ValueError(f"No methods requested for {type(obj).__name__}")
+
+        if valid_methods is None:
+            valid_methods = self._get_methods(type(obj))
+
+        results = MethodResults()
+        for method_name, method_args in attributes.items():
+            outcome = self._validate_and_apply_method(obj, method_name, method_args,
+                                                     valid_methods, extra_args)
+            results[method_name] = {key: outcome[key] for key in ("status", "result")}
+            if not outcome["status"]:
+                results[method_name]["error"] = outcome["error"]
+                if strict:
+                    logger.warning("Method '%s' failed for %s: %s",
+                                   method_name, type(obj).__name__, outcome["error"])
+                    raise ValueError(outcome["error"])
+
+        logger.debug("Applied %s method(s) to %s", len(results), type(obj).__name__)
+        return results
 
     def _is_handler_name(self, name: str) -> bool:
         """Report whether a name denotes a handler for this operation.
