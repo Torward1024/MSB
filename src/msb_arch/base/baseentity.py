@@ -1,11 +1,13 @@
 # base/baseentity.py
 from abc import ABC, ABCMeta
-from typing import (Dict, 
-                    Union, 
-                    List, 
-                    Any, 
-                    Union, 
-                    get_origin, 
+from collections.abc import Callable as AbcCallable, Mapping as AbcMapping
+from types import UnionType
+from typing import (Dict,
+                    Union,
+                    List,
+                    Any,
+                    Literal,
+                    get_origin,
                     get_args)
 from ..utils.logging_setup import logger
 
@@ -117,85 +119,197 @@ class BaseEntity(ABC, metaclass=EntityMeta):
 
         Raises:
             TypeError: If the value does not match the expected type, or if 'name' or 'value' is None.
+
+        Notes:
+            - `None` is accepted for every attribute except 'name' and 'value', because unset
+              annotated attributes are initialized to None by `__init__`.
+            - The structural check is delegated to `_check_type`, which walks nested generics.
         """
         if key in ('name', 'value') and value is None:
             raise TypeError(f"Attribute '{key}' cannot be None")
         if value is None:
             return
-        
-        if value is None:
-            return
 
-        from typing import Union, Dict, List
+        self._check_type(key, value, expected_type, f"Attribute '{key}'")
 
-        resolved_type = self._resolve_type(expected_type)
+    @classmethod
+    def _check_type(cls, key: str, value: Any, expected_type: Any, subject: str) -> None:
+        """Recursively check a non-None value against a (possibly generic) type hint.
+
+        Supports plain classes, `Any`, `Union`/`Optional` (both `Union[X, Y]` and `X | Y`),
+        `Literal`, `Callable`, `Type[X]`, and the parameterized builtin collections
+        `list`, `set`, `frozenset`, `tuple` and `dict`, nested to any depth.
+
+        Args:
+            key (str): The attribute name being validated, used in error messages.
+            value (Any): The value to check. Must not be None.
+            expected_type (Any): The type hint to check against.
+            subject (str): Human readable description of what is being checked, used as the
+                prefix of error messages (e.g. "Attribute 'tags'", "Item in list 'tags'").
+
+        Raises:
+            TypeError: If the value does not match the expected type.
+
+        Notes:
+            - `None` elements inside collections are skipped, mirroring the top-level rule.
+            - Type hints whose origin is an abstract collection (e.g. `Sequence[int]`) are
+              checked with `isinstance` against the origin only; their elements are left
+              unchecked so that arbitrary iterables are never consumed during validation.
+            - Unresolvable or non-class hints are accepted rather than raising, so that an
+              exotic annotation never blocks a valid assignment.
+        """
+        resolved_type = cls._resolve_type(expected_type)
+
+        # Unwrap Annotated[X, ...] down to X.
+        while hasattr(resolved_type, '__metadata__'):
+            resolved_type = cls._resolve_type(resolved_type.__origin__)
+
         if resolved_type is Any:
             return
+        if resolved_type is None or resolved_type is type(None):
+            raise TypeError(f"{subject} must be None, got {type(value)}")
 
-        base_type = get_origin(resolved_type) or resolved_type
+        origin = get_origin(resolved_type)
         type_args = get_args(resolved_type)
 
-        if base_type is Union:
+        if origin is None:
+            if isinstance(resolved_type, (type, tuple)):
+                if not isinstance(value, resolved_type):
+                    raise TypeError(f"{subject} must be of type {resolved_type}, got {type(value)}")
+            else:
+                logger.debug("Skipping unenforceable type hint %r for '%s'", resolved_type, key)
+            return
+
+        if origin is Union or origin is UnionType:
             for union_type in type_args:
-                resolved_union_type = self._resolve_type(union_type)
-                if resolved_union_type is type(None):
+                if cls._resolve_type(union_type) is type(None):
                     continue
                 try:
-                    self._validate_type(key, value, resolved_union_type)
+                    cls._check_type(key, value, union_type, subject)
                     return
                 except TypeError:
                     continue
-            raise TypeError(f"Attribute '{key}' does not match any type in {resolved_type}, got {type(value)}")
+            raise TypeError(f"{subject} does not match any type in {resolved_type}, got {type(value)}")
 
-        if base_type in (dict, Dict):
-            if not isinstance(value, dict):
-                raise TypeError(f"Attribute '{key}' must be a dict, got {type(value)}")
-            if type_args:
-                key_type, value_type = type_args
-                resolved_key_type = self._resolve_type(key_type)
-                resolved_value_type = self._resolve_type(value_type)
-                if resolved_value_type is Any:
+        if origin is Literal:
+            for literal_value in type_args:
+                if type(value) is type(literal_value) and value == literal_value:
                     return
-                value_type_origin = get_origin(resolved_value_type)
-                value_type_args = get_args(resolved_value_type)
-                for k, v in value.items():
-                    if not isinstance(k, resolved_key_type):
-                        raise TypeError(f"Key in '{key}' must be {resolved_key_type}, got {type(k)}")
-                    if v is None:
-                        continue
-                    if value_type_origin is Union:
-                        valid = False
-                        for union_type in value_type_args:
-                            resolved_union_type = self._resolve_type(union_type)
-                            if isinstance(v, resolved_union_type):
-                                valid = True
-                                break
-                        if not valid:
-                            raise TypeError(f"Value in '{key}' must match one of {value_type_args}, got {type(v)}")
-                    elif value_type_origin is List:
-                        if not isinstance(v, list):
-                            raise TypeError(f"Value in '{key}' must be a list, got {type(v)}")
-                        list_item_type = self._resolve_type(value_type_args[0]) if value_type_args else Any
-                        for item in v:
-                            if item is None:
-                                continue
-                            if list_item_type is not Any and not isinstance(item, list_item_type):
-                                raise TypeError(f"Item in list '{key}' must be {list_item_type}, got {type(item)}")
-                    elif not isinstance(v, resolved_value_type):
-                        raise TypeError(f"Value in '{key}' must be {resolved_value_type}, got {type(v)}")
-        elif base_type is List:
-            if not isinstance(value, list):
-                raise TypeError(f"Attribute '{key}' must be a list, got {type(value)}")
+            raise TypeError(f"{subject} must be one of {list(type_args)}, got {value!r}")
+
+        if origin is type:
+            if not isinstance(value, type):
+                raise TypeError(f"{subject} must be a class, got {type(value)}")
             if type_args:
-                item_type = self._resolve_type(type_args[0])
-                if item_type is not Any:
-                    for item in value:
-                        if item is None:
-                            continue
-                        if not isinstance(item, item_type):
-                            raise TypeError(f"Item in list '{key}' must be {item_type}, got {type(item)}")
-        elif not isinstance(value, base_type):
-            raise TypeError(f"Attribute '{key}' must be of type {resolved_type}, got {type(value)}")
+                bound = cls._resolve_type(type_args[0])
+                if isinstance(bound, type) and not issubclass(value, bound):
+                    raise TypeError(f"{subject} must be a subclass of {bound}, got {value}")
+            return
+
+        if origin is AbcCallable:
+            if not callable(value):
+                raise TypeError(f"{subject} must be callable, got {type(value)}")
+            return
+
+        if origin is dict or (isinstance(origin, type) and issubclass(origin, AbcMapping)):
+            if not isinstance(value, origin):
+                raise TypeError(f"{subject} must be a {origin.__name__}, got {type(value)}")
+            if origin is dict and len(type_args) == 2:
+                cls._check_mapping(key, value, type_args[0], type_args[1], subject)
+            return
+
+        if origin in (list, set, frozenset):
+            if not isinstance(value, origin):
+                raise TypeError(f"{subject} must be a {origin.__name__}, got {type(value)}")
+            if type_args:
+                cls._check_elements(key, value, type_args[0], f"Item in {origin.__name__} '{key}'")
+            return
+
+        if origin is tuple:
+            if not isinstance(value, tuple):
+                raise TypeError(f"{subject} must be a tuple, got {type(value)}")
+            cls._check_tuple(key, value, type_args, subject)
+            return
+
+        # Any other generic alias (user generics, abstract collections): check the origin only.
+        if isinstance(origin, type) and not isinstance(value, origin):
+            raise TypeError(f"{subject} must be of type {resolved_type}, got {type(value)}")
+
+    @classmethod
+    def _check_elements(cls, key: str, values: Any, item_type: Any, subject: str) -> None:
+        """Check every element of a homogeneous collection against an item type.
+
+        Args:
+            key (str): The attribute name being validated, used in error messages.
+            values (Any): The iterable whose elements are checked.
+            item_type (Any): The expected type of each element.
+            subject (str): Description of an element, used as the error message prefix.
+
+        Raises:
+            TypeError: If any element does not match `item_type`.
+        """
+        resolved_item_type = cls._resolve_type(item_type)
+        if resolved_item_type is Any:
+            return
+        for item in values:
+            if item is None:
+                continue
+            cls._check_type(key, item, resolved_item_type, subject)
+
+    @classmethod
+    def _check_mapping(cls, key: str, value: Dict[Any, Any], key_type: Any, value_type: Any,
+                       subject: str) -> None:
+        """Check the keys and values of a mapping against their declared types.
+
+        Args:
+            key (str): The attribute name being validated, used in error messages.
+            value (Dict[Any, Any]): The mapping to check.
+            key_type (Any): The expected type of every key.
+            value_type (Any): The expected type of every value.
+            subject (str): Description of the mapping, used for context in error messages.
+
+        Raises:
+            TypeError: If any key or value does not match its declared type.
+        """
+        resolved_key_type = cls._resolve_type(key_type)
+        resolved_value_type = cls._resolve_type(value_type)
+        check_keys = resolved_key_type is not Any
+        check_values = resolved_value_type is not Any
+        if not check_keys and not check_values:
+            return
+        for k, v in value.items():
+            if check_keys:
+                cls._check_type(key, k, resolved_key_type, f"Key in '{key}'")
+            if check_values and v is not None:
+                cls._check_type(key, v, resolved_value_type, f"Value in '{key}'")
+
+    @classmethod
+    def _check_tuple(cls, key: str, value: tuple, type_args: tuple, subject: str) -> None:
+        """Check a tuple against either a variadic or a fixed-length type hint.
+
+        Handles both `Tuple[X, ...]` (any number of X) and `Tuple[X, Y]` (exact arity).
+        A bare `tuple` or `Tuple[()]` places no constraint on the elements.
+
+        Args:
+            key (str): The attribute name being validated, used in error messages.
+            value (tuple): The tuple to check.
+            type_args (tuple): The arguments of the tuple type hint.
+            subject (str): Description of the tuple, used as the error message prefix.
+
+        Raises:
+            TypeError: If the arity or any element type does not match.
+        """
+        if not type_args or type_args == ((),):
+            return
+        if len(type_args) == 2 and type_args[1] is Ellipsis:
+            cls._check_elements(key, value, type_args[0], f"Item in tuple '{key}'")
+            return
+        if len(value) != len(type_args):
+            raise TypeError(f"{subject} must have {len(type_args)} items, got {len(value)}")
+        for index, (item, item_type) in enumerate(zip(value, type_args)):
+            if item is None:
+                continue
+            cls._check_type(key, item, item_type, f"Item {index} in tuple '{key}'")
 
 
     def set(self, params: Dict[str, Any]) -> None:

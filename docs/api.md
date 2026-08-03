@@ -695,11 +695,17 @@ Batch operations return dictionaries mapping request IDs to responses:
 The framework uses comprehensive type hints:
 
 - `T`: Generic type variable for BaseEntity subclasses
-- `Union[A, B]`: Alternative types
+- `Union[A, B]`, `A | B`: Alternative types
 - `Optional[T]`: Optional types (Union[T, None])
-- `List[T]`: Lists of specific types
+- `List[T]`, `Set[T]`, `FrozenSet[T]`: Collections of specific types
+- `Tuple[A, B]`, `Tuple[T, ...]`: Fixed-length and variadic tuples
 - `Dict[K, V]`: Dictionaries with key/value types
+- `Literal[...]`: A fixed set of allowed values
+- `Type[T]`: Class objects constrained to a subclass of T
 - `Callable`: Function types
+
+Entity attributes are validated structurally against these hints, nested to any depth.
+See [Type Validation](modules/base.md#type-validation-_validate_type) for the full table.
 
 ## Constants
 

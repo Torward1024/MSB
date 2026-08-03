@@ -137,6 +137,32 @@ The `_validate_type` method validates that a given value matches the expected ty
 - Handles complex types including Union, Dict, List, and nested entities.
 - Allows None values except for 'name' and 'value' attributes.
 
+**Supported type hints:**
+
+Parameterized hints are checked structurally and nested to any depth, so
+`Dict[str, List[Dict[str, int]]]` validates every key, every list element and every leaf value.
+
+| Hint | Checked |
+| --- | --- |
+| `int`, `str`, custom classes | `isinstance` against the class |
+| `Any` | accepted unconditionally |
+| `Union[X, Y]`, `Optional[X]`, `X \| Y` | value must match at least one member |
+| `List[X]`, `Set[X]`, `FrozenSet[X]` | container type plus every element |
+| `Tuple[X, Y]` | exact arity plus each position |
+| `Tuple[X, ...]` | tuple type plus every element |
+| `Dict[K, V]` | dict type plus every key and value |
+| `Literal[...]` | value equals one of the literals, with a matching type |
+| `Callable[...]` | value is callable |
+| `Type[X]` | value is a class and a subclass of X |
+| `Sequence[X]`, `Mapping[K, V]` and other abstract collections | `isinstance` against the origin only |
+| `Annotated[X, ...]` | unwrapped to X |
+
+- `None` elements inside collections are skipped, mirroring the top-level rule for attributes.
+- Elements of abstract collections are deliberately left unchecked so that validation never
+  consumes an arbitrary iterable.
+- A hint that cannot be resolved to a class is accepted rather than raising, so an exotic
+  annotation never blocks an otherwise valid assignment.
+
 ## BaseContainer
 
 `BaseContainer` is a generic container class for managing collections of `BaseEntity` objects. It provides dictionary-like access with additional functionality.
