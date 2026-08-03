@@ -711,10 +711,6 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         """
         self.set_item(key, item)
 
-    def __getattribute__(self, name: str) -> Any:
-        attr = super().__getattribute__(name)
-        return attr
-
     def __delitem__(self, name: str) -> None:
         """Remove an item from the container by its name using del operator.
 

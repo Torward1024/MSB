@@ -3,7 +3,6 @@ from abc import ABC
 from typing import Dict, Any, Callable, Type, Optional
 from ..utils.logging_setup import logger
 from ..mega.manipulator import Manipulator
-from ..base.baseentity import BaseEntity
 from ..base.basecontainer import BaseContainer
 from collections import OrderedDict
 import inspect
@@ -226,39 +225,6 @@ class Super(ABC):
         self._methods[obj_type][method_name] = method
         self._method_cache.clear()
         logger.info(f"Registered method '{method_name}' for {obj_type.__name__}")
-
-    def _make_hashable(self, obj: Any) -> Any:
-        """Convert an object into a hashable form for caching.
-
-        Args:
-            obj (Any): The object to convert.
-
-        Returns:
-            Any: A hashable representation of the object.
-        """
-        if isinstance(obj, dict):
-            return tuple(sorted((k, self._make_hashable(v)) for k, v in obj.items()))
-        elif isinstance(obj, (list, tuple)):
-            return tuple(self._make_hashable(item) for item in obj)
-        elif isinstance(obj, BaseEntity | BaseContainer):
-            name = getattr(obj, 'name', None)
-            if name is None:
-                logger.debug(f"Object {obj} has no 'name' attribute, using str(obj) for hashing")
-                return str(obj)
-            return name
-        return obj
-
-    def _update_cache(self, key: tuple, value: Dict[str, Any]) -> None:
-        """Update the cache with a new key-value pair, respecting the size limit.
-
-        Args:
-            key (tuple): The cache key.
-            value (Dict[str, Any]): The result to cache.
-        """
-        if len(self._method_cache) >= self._cache_size:
-            self._method_cache.popitem(last=False)
-        self._method_cache[key] = value
-        logger.debug(f"Cache updated with key {key}")
 
     def execute(self, obj: Any, attributes: Dict[str, Any] = None, method: str = None) -> Dict[str, Any]:
         """Execute an operation on an object based on attributes and an optional method.

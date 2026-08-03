@@ -45,6 +45,7 @@ Status: `[x]` merged into main, `[ ]` open.
 | R16 | `remove()` logs a warning for a missing key and then raises `KeyError` anyway | `basecontainer.py` | S | **yes** |
 | R17 | `add(copy_items=True)` deep-copies by default, so `container.get(x) is item` is False | `basecontainer.py` | S | **yes** |
 | R18 | Dead code: `_method_cache`, `_make_hashable` and `_update_cache` are never reached from `execute`; `__getattribute__` is an identity wrapper | `super.py`, `basecontainer.py` | S | no |
+| R18b | Leftover from R18: `Super` still carries `_method_cache`, `_cache_size`, the `cache_size` constructor argument and `clear_cache()`, none of which cache anything now that the only writer is gone. Removing them changes the public signature, so it needs a decision | `super.py` | S | **yes** |
 | R19 | No thread safety, with mutable state held at class level | package-wide | L | no |
 
 ## Level 4 - hygiene and packaging

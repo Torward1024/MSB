@@ -134,28 +134,6 @@ class TestSuperRegisterMethod:
         mock_logger.info.assert_called()
 
 
-class TestSuperMakeHashable:
-    def test_make_hashable_dict(self, test_super):
-        d = {"a": 1, "b": 2}
-        result = test_super._make_hashable(d)
-        assert isinstance(result, tuple)
-
-    def test_make_hashable_list(self, test_super):
-        l = [1, 2, 3]
-        result = test_super._make_hashable(l)
-        assert isinstance(result, tuple)
-
-
-class TestSuperUpdateCache:
-    @patch('src.msb_arch.super.super.logger')
-    def test_update_cache(self, mock_logger, test_super):
-        key = ("key",)
-        value = {"result": "value"}
-        test_super._update_cache(key, value)
-        assert key in test_super._method_cache
-        mock_logger.debug.assert_called()
-
-
 class TestSuperExecute:
     def test_execute_explicit_method(self, test_super):
         # Add a method to the instance
