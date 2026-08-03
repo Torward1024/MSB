@@ -21,7 +21,7 @@ The framework consists of the following modules:
 - **Projects** for organizing complex data structures with abstract factory patterns
 - **Manipulator orchestration** for processing requests and managing operations
 - **Bidirectional serialization** with support for nested objects and cyclic references
-- **Configurable logging** with file and console handlers
+- **Configurable logging** through a dedicated `msb_arch` logger, silent until the application opts in
 - **Comprehensive validation** with detailed error messages and logging
 - **Performance optimization** through caching and lazy loading
 

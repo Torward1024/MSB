@@ -29,30 +29,20 @@ everything closed moves to the Done table.
 | R6 | `to_dict` threads its `seen` set through the recursion, so genuine cycles terminate | no |
 | R11 | Invalidation travels up a weak ownership chain; the cache-validation walk is gone | cached mapping is documented read-only |
 | R26 | Cyclic reference support is now real, so the documentation claim holds | no |
-
-## Level 1 - data loss, leaks, wrong results
-
-| # | Item | Where | Cost | Breaking |
-| --- | --- | --- | --- | --- |
-| R5 | Importing the package seizes the **root logger**, creates `output.log` in the working directory and reroutes the host application's logging. Every `logger.debug(f"...")` formats its f-string unconditionally | `logging_setup.py` plus ~100 call sites | M | **yes** |
-
-## Level 2 - documented behaviour that does not hold
-
-| # | Item | Where | Cost | Breaking |
-| --- | --- | --- | --- | --- |
-| R9 | `Super.execute` resolves `getattr(self, method)` from a request string with no allowlist. `_operation` is never initialized from `OPERATION`, so an unregistered `Super` raises `AttributeError` before the `try` block | `super.py` | M | **yes** |
-| R10 | Facades are installed with `setattr(self, operation, ...)` without checking the name, so an operation called `process_request` shadows the method and recurses | `manipulator.py` | S | **yes** |
-| R12 | `__eq__` without `__hash__` makes entities unhashable, so they cannot go into a set or be used as dict keys | `baseentity.py` | S | no |
+| R5 | Named logger with a NullHandler, no configuration on import, all 107 log calls lazy | **yes** - the application configures logging |
+| R9 | `_operation` defaults from `OPERATION`; dispatch restricted to `_<operation>*` handlers | **yes** - a request can no longer name any other method |
+| R10 | An operation name that is not an identifier, or that shadows a Manipulator attribute, is rejected | only already-broken registrations |
+| R12 | `__hash__` on `BaseEntity` and `BaseContainer`, keyed by class and name | no |
+| R15 | `Project.from_dict` is concrete; `create_item` stays abstract | no |
+| R16 | `remove()` raises `KeyError` naming the container instead of warning and failing bare | no |
+| R17 | `add()` keeps copying by default; the cost and the identity change are documented | no |
+| R18b | The leftover cache now remembers handler resolution, so `cache_size` and `clear_cache()` mean something | no |
 
 ## Level 3 - API design
 
 | # | Item | Where | Cost | Breaking |
 | --- | --- | --- | --- | --- |
 | R13 | `BaseContainer(BaseEntity)` violates LSP: `get`, `clear` and `set` carry incompatible semantics. This is the root cause behind R2, and composition would fix it | `basecontainer.py` | **L** | **yes, widely** |
-| R15 | `Project.from_dict` is `@classmethod @abstractmethod` **with a body**, forcing subclasses to write a stub - the README's has a broken signature | `project.py` | S | no |
-| R16 | `remove()` logs a warning for a missing key and then raises `KeyError` anyway | `basecontainer.py` | S | **yes** |
-| R17 | `add(copy_items=True)` deep-copies by default, so `container.get(x) is item` is False | `basecontainer.py` | S | **yes** |
-| R18b | Leftover from R18: `Super` still carries `_method_cache`, `_cache_size`, the `cache_size` constructor argument and `clear_cache()`, none of which cache anything now that the only writer is gone. Removing them changes the public signature, so it needs a decision | `super.py` | S | **yes** |
 | R19 | No thread safety, with mutable state held at class level | package-wide | L | no |
 
 ## Level 4 - hygiene and packaging
@@ -67,7 +57,7 @@ Ordered by cost and regression risk rather than strictly by criticality.
 
 - [x] **Wave 1** - cheap, critical, leaves the API alone: R4, R3, R2, R8, R14, R18, plus R20, R21, R22, R24, R25
 - [x] **Wave 2** - critical, moderate cost, needs new tests: R1, R7, R6, R11. R1 and R7 both touch `_resolve_type`, so they belong together
-- [ ] **Wave 3** - contract changes, each needs a decision before code: R5, R9, R10, R12, R15, R16, R17, R18b
+- [x] **Wave 3** - contract changes, each needs a decision before code: R5, R9, R10, R12, R15, R16, R17, R18b
 - [ ] **Wave 4** - separate minor release: R13, R19, R23
 
 ## Release notes

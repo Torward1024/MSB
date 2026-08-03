@@ -13,7 +13,7 @@ Mega-Super-Base (MSB) - a flexible and extensible architecture for Python applic
 - **Flexible Operation System**: Through Super-classes with method resolution.
 - **Projects as High-Level Containers**: High-level data organization.
 - **Universal Serialization**: Support for nested objects and cyclic references.
-- **Integrated Logging and Validation**: Full support for logging and data validation.
+- **Integrated Logging and Validation**: Logging through a dedicated `msb_arch` logger that stays silent until the application configures it, plus data validation.
 - **No External Dependencies**: Requires only Python >= 3.12.
 
 ## Installation
