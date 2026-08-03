@@ -80,6 +80,11 @@ To run tests:
 pytest tests/
 ```
 
+## Changelog
+
+Release history and upgrade notes are in [`CHANGELOG.md`](CHANGELOG.md). Known issues that
+have not been addressed yet are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
 ## License
 
 MSB is licensed under the [MSB Software License](LICENSE) for non-commercial and research use, allowing free use, modification, and distribution for non-commercial purposes with attribution.

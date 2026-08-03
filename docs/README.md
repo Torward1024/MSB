@@ -89,6 +89,8 @@ print(result)  # 14
 - [Diagrams](diagrams.md) - Mermaid diagrams of classes and interactions
 - [Examples](examples.md) - Comprehensive usage examples
 - [API Reference](api.md) - Complete API reference with parameters and types
+- [Roadmap](ROADMAP.md) - Known issues from the code review, ordered by criticality
+- [Changelog](../CHANGELOG.md) - Release history and upgrade notes
 
 ## Version
 
