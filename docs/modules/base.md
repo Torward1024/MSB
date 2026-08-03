@@ -130,12 +130,14 @@ The `_validate_type` method validates that a given value matches the expected ty
 
 **Raises:**
 
-- `TypeError`: If the value does not match the expected type, or if 'name' or 'value' is None.
+- `TypeError`: If the value does not match the expected type, or if 'name' is None.
 
 **Notes:**
 
 - Handles complex types including Union, Dict, List, and nested entities.
-- Allows None values except for 'name' and 'value' attributes.
+- Allows None values for every attribute except 'name', which containers use as the item key.
+  Unset annotated attributes are initialized to None by `__init__`, so a mandatory attribute
+  cannot be expressed through its annotation; enforce it in the subclass instead.
 
 **Supported type hints:**
 

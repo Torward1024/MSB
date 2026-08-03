@@ -70,10 +70,17 @@ class TestBaseEntityInit:
         with pytest.raises(ValueError, match="Unknown attributes"):
             TestEntity(name="test", value=42, unknown=123)
 
-    @pytest.mark.parametrize("invalid_value", ["string", None])
+    @pytest.mark.parametrize("invalid_value", ["string", 1.5, []])
     def test_init_invalid_value_type(self, invalid_value):
         with pytest.raises(TypeError):
             TestEntity(name="test", value=invalid_value)
+
+    def test_init_none_is_allowed_for_any_attribute_but_name(self):
+        # 'value' used to be rejected purely because of its name; only 'name' is mandatory.
+        entity = TestEntity(name="test", value=None)
+        assert entity.value is None
+        with pytest.raises(TypeError):
+            TestEntity(name=None, value=42)
 
     def test_init_with_kwargs(self):
         entity = TestEntity(name="test", value=42, optional_value="world")
@@ -218,8 +225,12 @@ class TestBaseEntityValidateType:
             test_entity._validate_type("value", "string", int)
 
     def test_validate_type_none_allowed(self, test_entity):
-        with pytest.raises(TypeError):
-            test_entity._validate_type("value", None, int)
+        # Should not raise: None is accepted for every attribute except 'name'.
+        test_entity._validate_type("value", None, int)
+
+    def test_validate_type_none_rejected_for_name(self, test_entity):
+        with pytest.raises(TypeError, match="cannot be None"):
+            test_entity._validate_type("name", None, str)
 
     @pytest.mark.parametrize("value,expected_type", [
         ([1, 2, 3], list),
@@ -346,6 +357,17 @@ class TestBaseEntityClear:
         test_entity.clear()
         assert test_entity.value is None
         assert test_entity.optional_value is None
+
+    def test_cleared_entity_can_still_be_serialized_and_restored(self, test_entity):
+        # clear() nulls every attribute, so a None-valued payload must round-trip.
+        test_entity.clear()
+        restored = TestEntity.from_dict(test_entity.to_dict())
+        assert restored.value is None
+        assert restored.to_dict() == test_entity.to_dict()
+
+    def test_cleared_entity_can_still_be_cloned(self, test_entity):
+        test_entity.clear()
+        assert test_entity.clone().to_dict() == test_entity.to_dict()
 
 
 class TestBaseEntityInvalidateCache:

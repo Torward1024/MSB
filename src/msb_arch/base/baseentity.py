@@ -118,14 +118,16 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             expected_type (Any): The expected type from type annotations.
 
         Raises:
-            TypeError: If the value does not match the expected type, or if 'name' or 'value' is None.
+            TypeError: If the value does not match the expected type, or if 'name' is None.
 
         Notes:
-            - `None` is accepted for every attribute except 'name' and 'value', because unset
-              annotated attributes are initialized to None by `__init__`.
+            - `None` is accepted for every attribute except 'name', because unset annotated
+              attributes are initialized to None by `__init__`. Requiring a value therefore
+              cannot be expressed through the annotation alone; enforce it in the subclass.
+            - 'name' is the only mandatory attribute: containers index their items by it.
             - The structural check is delegated to `_check_type`, which walks nested generics.
         """
-        if key in ('name', 'value') and value is None:
+        if key == 'name' and value is None:
             raise TypeError(f"Attribute '{key}' cannot be None")
         if value is None:
             return

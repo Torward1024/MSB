@@ -16,3 +16,4 @@ __pycache__/
 *$py.class
 *.code-workspace
 *.pytest_cache
+.claude/
