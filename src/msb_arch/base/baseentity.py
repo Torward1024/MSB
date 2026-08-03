@@ -25,7 +25,7 @@ class EntityMeta(ABCMeta):
     Attributes:
         _fields (Dict[str, type]): Dictionary of annotated attribute names and their expected types.
         _type_cache (Dict[Any, Any]): Per-class cache of resolved type hints.
-        _entity_registry (Dict[str, List[type]]): Every class built by this metaclass, grouped
+        _entity_registry (Dict[str, WeakSet]): Every class built by this metaclass, grouped
             by class name, used to reconstruct nested entities from their serialized 'type'.
 
     Notes:
@@ -34,9 +34,13 @@ class EntityMeta(ABCMeta):
           defining a class of the same name would resolve to whichever was seen first.
         - The registry deliberately groups by name rather than overwriting, so a name used in
           two modules is reported as ambiguous instead of silently resolving to one of them.
+        - Classes are held weakly. A registry of strong references would keep every class
+          ever declared alive for the lifetime of the process, which matters for code that
+          builds classes dynamically. A class nothing else refers to cannot be a
+          deserialization target anyway, so dropping it loses nothing.
     """
 
-    _entity_registry: Dict[str, List[type]] = {}
+    _entity_registry: Dict[str, weakref.WeakSet] = {}
 
     def __new__(cls, name, bases, attrs):
         new_class = super().__new__(cls, name, bases, attrs)
@@ -48,10 +52,24 @@ class EntityMeta(ABCMeta):
         annotations.update(attrs.get('__annotations__', {}))
         new_class._fields = annotations
         new_class._type_cache = {}
-        registered = EntityMeta._entity_registry.setdefault(name, [])
-        if new_class not in registered:
-            registered.append(new_class)
+        EntityMeta._entity_registry.setdefault(name, weakref.WeakSet()).add(new_class)
         return new_class
+
+    @classmethod
+    def registered_classes(mcs, type_name: str) -> List[type]:
+        """Return the live classes declared under a given name.
+
+        Args:
+            type_name (str): The class name to look up.
+
+        Returns:
+            List[type]: Matching classes, ordered by module and name so that error messages
+                and single-candidate resolution stay deterministic.
+        """
+        entry = mcs._entity_registry.get(type_name)
+        if not entry:
+            return []
+        return sorted(entry, key=lambda c: (c.__module__ or "", c.__qualname__))
 
 class BaseEntity(ABC, metaclass=EntityMeta):
     """Abstract base class for entities with attribute management, type validation, and universal serialization.
@@ -107,7 +125,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         self._validate_type('use_cache', use_cache, bool)
         super().__setattr__('_use_cache', use_cache)
         super().__setattr__('_cached_to_dict', None)
-        super().__setattr__('_parent', None)
+        super().__setattr__('_parents', None)
         self._validate_type('name', name, str)
         super().__setattr__('name', name)
         self._validate_type('isactive', isactive, bool)
@@ -138,19 +156,29 @@ class BaseEntity(ABC, metaclass=EntityMeta):
                 structure is adopted once rather than endlessly.
 
         Notes:
-            - The owner is held weakly, so an entity never keeps it alive.
+            - Owners are held weakly, so an entity never keeps one alive.
             - The whole subtree is walked, not just this node: `deepcopy` treats a weak
               reference as atomic, so the copies made by `add` would otherwise keep pointing
               at the originals and invalidation would never reach the new owner.
-            - An entity tracks a single owner. Containers deep copy on `add` by default, so
-              each container holds its own copy and the two do not compete for the slot.
+            - An entity can have several owners. Storing only the latest was enough while
+              `add` deep copied, but `copy_items=False` puts one object into two containers,
+              and then every one of them has to be invalidated, not just the last.
+            - Owners are keyed by identity rather than kept in a set: a set would hash and
+              compare them, and comparing entities walks their fields, which never returns
+              on a cyclic structure.
+            - The mapping is created on first adoption, so an entity that belongs to nothing
+              carries no extra state.
         """
         seen = set() if _seen is None else _seen
         if id(self) in seen:
             return
         seen.add(id(self))
         if owner is not None:
-            super().__setattr__('_parent', weakref.ref(owner))
+            owners = self.__dict__.get('_parents')
+            if owners is None:
+                owners = {}
+                super().__setattr__('_parents', owners)
+            owners[id(owner)] = weakref.ref(owner)
         for key in self._fields:
             if key.startswith('_'):
                 continue
@@ -163,18 +191,37 @@ class BaseEntity(ABC, metaclass=EntityMeta):
 
         Notes:
             - A container serializes its items, so a mutated item makes every ancestor
-              stale. Invalidation therefore walks up the ownership chain rather than down
+              stale. Invalidation therefore walks up the ownership graph rather than down
               into the children, which is both correct and cheap.
-            - The walk is guarded against a cycle in the ownership chain.
+            - Every owner is visited, not just one: an item added with `copy_items=False`
+              belongs to each container that holds it, and all of them go stale together.
+            - The walk is guarded against a cycle in the ownership graph.
         """
-        node = self
+        if not self.__dict__.get('_parents'):
+            # Overwhelmingly the common case: nothing owns this entity, so there is no graph
+            # to walk and no reason to allocate one.
+            if self.__dict__.get('_use_cache') and '_cached_to_dict' in self.__dict__:
+                super().__setattr__('_cached_to_dict', None)
+            return
+
+        pending = [self]
         visited = set()
-        while node is not None and id(node) not in visited:
+        while pending:
+            node = pending.pop()
+            if id(node) in visited:
+                continue
             visited.add(id(node))
             if getattr(node, '_use_cache', False) and hasattr(node, '_cached_to_dict'):
                 super(BaseEntity, node).__setattr__('_cached_to_dict', None)
-            parent_ref = getattr(node, '_parent', None)
-            node = parent_ref() if parent_ref is not None else None
+            owners = node.__dict__.get('_parents')
+            if not owners:
+                continue
+            for key, ref in list(owners.items()):
+                owner = ref()
+                if owner is None:
+                    del owners[key]          # the owner is gone; stop tracking it
+                else:
+                    pending.append(owner)
 
     def _validate_type(self, key: str, value: Any, expected_type: Any) -> None:
         """Validate that a value matches the expected type.
@@ -607,7 +654,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         if isinstance(expected_type, type) and expected_type.__name__ == type_name:
             return expected_type
 
-        candidates = EntityMeta._entity_registry.get(type_name, [])
+        candidates = EntityMeta.registered_classes(type_name)
         if not candidates:
             return None
         if len(candidates) == 1:
@@ -660,7 +707,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         if resolved is None:
             resolved = globals().get(type_name)
         if resolved is None:
-            candidates = EntityMeta._entity_registry.get(type_name, [])
+            candidates = EntityMeta.registered_classes(type_name)
             if len(candidates) == 1:
                 resolved = candidates[0]
             elif len(candidates) > 1:

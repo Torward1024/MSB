@@ -714,3 +714,82 @@ class TestBaseEntityHashing:
 
     def test_entities_of_different_classes_do_not_collide(self):
         assert hash(TestEntity(name="x", value=1)) != hash(GenericEntity(name="x"))
+
+
+class TestBaseEntityRegistryLifetime:
+    """The class registry must not keep classes alive on its own."""
+
+    def test_a_dynamic_class_is_released(self):
+        import gc
+        from msb_arch.base.baseentity import EntityMeta
+
+        created = type("EphemeralEntity", (BaseEntity,), {"__annotations__": {"v": int}})
+        assert EntityMeta.registered_classes("EphemeralEntity") == [created]
+        del created
+        gc.collect()
+        assert EntityMeta.registered_classes("EphemeralEntity") == []
+
+    def test_a_live_class_stays_resolvable(self):
+        import gc
+        from msb_arch.base.baseentity import EntityMeta
+
+        gc.collect()
+        assert TestEntity in EntityMeta.registered_classes("TestEntity")
+
+    def test_registry_lookup_is_ordered(self):
+        from msb_arch.base.baseentity import EntityMeta
+
+        names = EntityMeta.registered_classes("TestEntity")
+        assert names == sorted(names, key=lambda c: (c.__module__ or "", c.__qualname__))
+
+
+class TestBaseEntityMultipleOwners:
+    """An entity stored without copying belongs to every container holding it."""
+
+    def test_every_owner_is_invalidated(self):
+        from msb_arch.base.basecontainer import BaseContainer
+
+        class Owned(BaseEntity):
+            v: int
+
+        class Box(BaseContainer[Owned]):
+            pass
+
+        item = Owned(name="shared", v=1)
+        first = Box(name="first", use_cache=True)
+        second = Box(name="second", use_cache=True)
+        first.add(item, copy_items=False)
+        second.add(item, copy_items=False)
+        assert first.to_dict()["items"]["shared"]["v"] == 1
+        assert second.to_dict()["items"]["shared"]["v"] == 1
+
+        item.v = 99
+        assert first.to_dict()["items"]["shared"]["v"] == 99
+        assert second.to_dict()["items"]["shared"]["v"] == 99
+
+    def test_a_dead_owner_is_forgotten(self):
+        import gc
+        from msb_arch.base.basecontainer import BaseContainer
+
+        class Owned(BaseEntity):
+            v: int
+
+        class Box(BaseContainer[Owned]):
+            pass
+
+        item = Owned(name="shared", v=1)
+        keeper = Box(name="keeper")
+        temporary = Box(name="temporary")
+        keeper.add(item, copy_items=False)
+        temporary.add(item, copy_items=False)
+        assert len(item._parents) == 2
+
+        del temporary
+        gc.collect()
+        item.v = 2                      # invalidation prunes the dead reference
+        assert len(item._parents) == 1
+
+    def test_an_unowned_entity_tracks_nothing(self):
+        entity = TestEntity(name="orphan", value=1)
+        entity.value = 2
+        assert entity.__dict__.get("_parents") is None
