@@ -2,8 +2,8 @@ import pytest
 import logging
 import os
 from unittest.mock import patch, MagicMock
-from src.msb_arch.utils.logging_setup import setup_logging, update_logging_level, update_logging_clear, logger
-from src.msb_arch.utils.validation import (
+from msb_arch.utils.logging_setup import setup_logging, update_logging_level, update_logging_clear, logger
+from msb_arch.utils.validation import (
     check_type, check_range, check_positive, check_list_type,
     check_non_negative, check_non_empty_string, check_non_zero
 )
@@ -33,12 +33,10 @@ class TestLibraryLoggingHygiene:
     def _import_in_clean_interpreter(self, tmp_path, probe):
         import subprocess
         import sys
-        import os
         script = (
             "import logging, os, sys\n"
-            f"sys.path.insert(0, {os.path.dirname(os.path.dirname(os.path.abspath(__file__)))!r})\n"
             "before = list(logging.getLogger().handlers)\n"
-            "import src.msb_arch\n"
+            "import msb_arch\n"
             f"{probe}\n"
         )
         result = subprocess.run([sys.executable, "-c", script], capture_output=True,

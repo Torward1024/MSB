@@ -1,11 +1,11 @@
 import pytest
 from unittest.mock import patch, MagicMock, Mock
 from typing import Dict, Any, List
-from src.msb_arch.mega.manipulator import Manipulator
-from src.msb_arch.super.super import Super
-from src.msb_arch.super.project import Project
-from src.msb_arch.base.basecontainer import BaseContainer
-from src.msb_arch.base.baseentity import BaseEntity
+from msb_arch.mega.manipulator import Manipulator
+from msb_arch.super.super import Super
+from msb_arch.super.project import Project
+from msb_arch.base.basecontainer import BaseContainer
+from msb_arch.base.baseentity import BaseEntity
 
 
 class TestEntity(BaseEntity):

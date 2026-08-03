@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import patch, MagicMock, Mock
 from typing import Dict, Any, List, Type
-from src.msb_arch.mega.manipulator import Manipulator
-from src.msb_arch.super.super import Super
+from msb_arch.mega.manipulator import Manipulator
+from msb_arch.super.super import Super
 
 
 class MockSuper:
@@ -41,7 +41,7 @@ def manipulator_with_ops(mock_super):
 
 
 class TestManipulatorInit:
-    @patch('src.msb_arch.mega.manipulator.logger')
+    @patch('msb_arch.mega.manipulator.logger')
     def test_init_basic(self, mock_logger):
         manip = TestManipulator()
         assert manip._managing_object is None
@@ -62,7 +62,7 @@ class TestManipulatorInit:
 
 
 class TestManipulatorSetGetManagingObject:
-    @patch('src.msb_arch.mega.manipulator.logger')
+    @patch('msb_arch.mega.manipulator.logger')
     def test_set_managing_object(self, mock_logger, manipulator):
         obj = {"key": "value"}
         manipulator.set_managing_object(obj)
@@ -105,7 +105,7 @@ class TestManipulatorGetMethodsForType:
 
 
 class TestManipulatorUpdateRegistry:
-    @patch('src.msb_arch.mega.manipulator.logger')
+    @patch('msb_arch.mega.manipulator.logger')
     def test_update_registry(self, mock_logger, manipulator):
         manipulator.update_registry(additional_classes=[list])
         assert list in manipulator._base_classes
@@ -137,7 +137,7 @@ class TestManipulatorRegisterOperation:
         with pytest.raises(ValueError):
             manipulator.register_operation(mock_super, operation="")
 
-    @patch('src.msb_arch.mega.manipulator.logger')
+    @patch('msb_arch.mega.manipulator.logger')
     def test_register_operation_logs(self, mock_logger, manipulator, mock_super):
         manipulator.register_operation(mock_super, operation="test_op")
         mock_logger.debug.assert_called()
@@ -269,7 +269,7 @@ class TestManipulatorRepr:
 
 
 class TestManipulatorDel:
-    @patch('src.msb_arch.mega.manipulator.logger')
+    @patch('msb_arch.mega.manipulator.logger')
     def test_del(self, mock_logger, manipulator):
         del manipulator
 

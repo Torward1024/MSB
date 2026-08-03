@@ -11,7 +11,7 @@ from typing import (Callable,
                     Tuple,
                     Type,
                     Union)
-from src.msb_arch.base.baseentity import BaseEntity, CYCLIC_REFERENCE
+from msb_arch.base.baseentity import BaseEntity, CYCLIC_REFERENCE
 
 
 class TestEntity(BaseEntity):
@@ -49,7 +49,7 @@ def test_entity_with_cache():
 
 
 class TestBaseEntityInit:
-    @patch('src.msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.baseentity.logger')
     def test_init_valid(self, mock_logger):
         entity = TestEntity(name="test", value=42)
         assert entity.name == "test"
@@ -100,7 +100,7 @@ class TestBaseEntitySet:
         with pytest.raises(TypeError):
             test_entity.set({"value": "invalid"})
 
-    @patch('src.msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.baseentity.logger')
     def test_set_logs(self, mock_logger, test_entity):
         test_entity.set({"value": 100})
         mock_logger.debug.assert_called()
@@ -127,21 +127,21 @@ class TestBaseEntityGet:
         with pytest.raises(TypeError):
             test_entity.get(123)
 
-    @patch('src.msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.baseentity.logger')
     def test_get_logs(self, mock_logger, test_entity):
         test_entity.get("value")
         mock_logger.debug.assert_called()
 
 
 class TestBaseEntityActivateDeactivate:
-    @patch('src.msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.baseentity.logger')
     def test_activate(self, mock_logger, test_entity):
         test_entity.deactivate()
         test_entity.activate()
         assert test_entity.isactive is True
         mock_logger.debug.assert_called()
 
-    @patch('src.msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.baseentity.logger')
     def test_deactivate(self, mock_logger, test_entity):
         test_entity.deactivate()
         assert test_entity.isactive is False
@@ -559,7 +559,7 @@ class TestBaseEntityResolveType:
         # A cache shared across the hierarchy and keyed by name used to make the second
         # module's class fail validation against the first module's class of the same name.
         source = (
-            "from src.msb_arch.base.baseentity import BaseEntity\n"
+            "from msb_arch.base.baseentity import BaseEntity\n"
             "class Node(BaseEntity):\n"
             "    tag: str\n"
             "class Holder(BaseEntity):\n"
@@ -574,7 +574,7 @@ class TestBaseEntityResolveType:
 
     def test_a_type_hint_naming_a_framework_symbol_prefers_the_local_class(self):
         source = (
-            "from src.msb_arch.base.baseentity import BaseEntity\n"
+            "from msb_arch.base.baseentity import BaseEntity\n"
             "class Any(BaseEntity):\n"
             "    tag: str\n"
             "class Uses(BaseEntity):\n"
@@ -618,7 +618,7 @@ class TestBaseEntityPolymorphicFromDict:
 
     def test_ambiguous_type_name_is_reported(self):
         source = (
-            "from src.msb_arch.base.baseentity import BaseEntity\n"
+            "from msb_arch.base.baseentity import BaseEntity\n"
             "class Duplicated(BaseEntity):\n"
             "    v: int\n"
         )
@@ -647,7 +647,7 @@ class TestBaseEntityPolymorphicFromDict:
 
 
 class TestBaseEntitySetattr:
-    @patch('src.msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.baseentity.logger')
     def test_setattr_valid(self, mock_logger, test_entity):
         test_entity.value = 100
         assert test_entity.value == 100
@@ -663,7 +663,7 @@ class TestBaseEntitySetattr:
 
 
 class TestBaseEntityLifetime:
-    @patch('src.msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.baseentity.logger')
     def test_del(self, mock_logger, test_entity):
         # Just ensure no error
         del test_entity

@@ -20,8 +20,21 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pytest
-        
+        pip install build pytest
+
+    # The tests import msb_arch, never src/, so they run against whatever is installed.
+    # Building and installing the wheel here means CI exercises the distribution that
+    # actually ships, including whether py.typed and every subpackage made it in.
+    - name: Build the distribution
+      run: python -m build
+
+    - name: Install the built wheel
+      run: pip install dist/*.whl
+
+    - name: Check the installed package is the one under test
+      run: |
+        python -c "import msb_arch, os; p = os.path.dirname(msb_arch.__file__); print(p); assert 'site-packages' in p, 'tests would run against the source tree'"
+
     - name: Run unit tests
       run: pytest tests/ -v --ignore=tests/integration --ignore=tests/performance
 

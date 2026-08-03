@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from typing import Dict, Any
-from src.msb_arch.super.project import Project
-from src.msb_arch.base.baseentity import BaseEntity
+from msb_arch.super.project import Project
+from msb_arch.base.baseentity import BaseEntity
 
 
 class TestEntity(BaseEntity):
@@ -34,7 +34,7 @@ def test_project():
 
 
 class TestProjectInit:
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_init_valid(self, mock_logger):
         project = TestProject(name="test")
         assert project.name == "test"
@@ -92,7 +92,7 @@ class TestProjectAddItem:
         with pytest.raises(ValueError):
             test_project.add_item(duplicate)
 
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_add_item_logs(self, mock_logger, test_project):
         item = TestEntity(name="new", value=1)
         test_project.add_item(item)
@@ -108,7 +108,7 @@ class TestProjectCreateItem:
 
 
 class TestProjectSetItem:
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_set_item(self, mock_logger, test_project):
         new_item = TestEntity(name="set_item", value=99)
         test_project.set_item("set_item", new_item)
@@ -117,7 +117,7 @@ class TestProjectSetItem:
 
 
 class TestProjectRemoveItem:
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_remove_item(self, mock_logger, test_project):
         test_project.remove_item("item1")
         assert not test_project._items.has_item("item1")
@@ -136,7 +136,7 @@ class TestProjectGetActiveInactive:
 
 
 class TestProjectGetItem:
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_get_item(self, mock_logger, test_project):
         item = test_project.get_item("item1")
         assert item.value == 1
@@ -150,13 +150,13 @@ class TestProjectGetItems:
 
 
 class TestProjectGetSetName:
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_get_name(self, mock_logger, test_project):
         name = test_project.get_name()
         assert name == "test_project"
         mock_logger.debug.assert_called()
 
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_set_name(self, mock_logger, test_project):
         test_project.set_name("new_name")
         assert test_project.name == "new_name"
@@ -168,7 +168,7 @@ class TestProjectGetSetName:
 
 
 class TestProjectSetGetProject:
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_set_project(self, mock_logger, test_project):
         new_items = {"new1": TestEntity(name="new1", value=10)}
         test_project.set_project("new_proj", new_items)
@@ -176,7 +176,7 @@ class TestProjectSetGetProject:
         assert len(test_project._items) == 1
         mock_logger.info.assert_called()
 
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_get_project(self, mock_logger, test_project):
         proj = test_project.get_project()
         assert "name" in proj
@@ -185,7 +185,7 @@ class TestProjectSetGetProject:
 
 
 class TestProjectClear:
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_clear(self, mock_logger, test_project):
         test_project.clear()
         assert len(test_project._items) == 0
@@ -193,14 +193,14 @@ class TestProjectClear:
 
 
 class TestProjectActivateDeactivate:
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_activate_item(self, mock_logger, test_project):
         test_project.deactivate_item("item1")
         test_project.activate_item("item1")
         assert test_project.get_item("item1").isactive is True
         mock_logger.info.assert_called()
 
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_deactivate_item(self, mock_logger, test_project):
         test_project.deactivate_item("item1")
         assert test_project.get_item("item1").isactive is False
@@ -269,7 +269,7 @@ class TestProjectRepr:
 
 
 class TestProjectDel:
-    @patch('src.msb_arch.super.project.logger')
+    @patch('msb_arch.super.project.logger')
     def test_del(self, mock_logger, test_project):
         del test_project
 
