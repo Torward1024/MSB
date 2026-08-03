@@ -1,12 +1,41 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from typing import Dict, Any
+from typing import (Callable,
+                    Dict,
+                    Any,
+                    List,
+                    Literal,
+                    Optional,
+                    Sequence,
+                    Set,
+                    Tuple,
+                    Type,
+                    Union)
 from src.msb_arch.base.baseentity import BaseEntity
 
 
 class TestEntity(BaseEntity):
     value: int
     optional_value: Any = None
+
+
+class GenericEntity(BaseEntity):
+    """Entity covering every generic form supported by `_validate_type`."""
+    tags: List[int]
+    mapping: Dict[str, List[int]]
+    deep: Dict[str, List[Dict[str, int]]]
+    pair: Tuple[str, int]
+    many: Tuple[int, ...]
+    labels: Set[str]
+    optional_text: Optional[str]
+    number_or_text: Union[int, str]
+    piped: int | str
+    mode: Literal["fast", "slow"]
+    handler: Callable[[int], str]
+    entity_class: Type[BaseEntity]
+    sequence: Sequence[int]
+    plain_list: list
+    anything: Any
 
 
 @pytest.fixture
@@ -199,6 +228,83 @@ class TestBaseEntityValidateType:
     ])
     def test_validate_type_complex(self, test_entity, value, expected_type):
         test_entity._validate_type("test", value, expected_type)
+
+
+class TestBaseEntityValidateTypeGenerics:
+    """Structural validation of parameterized type hints, nested to any depth."""
+
+    @pytest.mark.parametrize("field,value", [
+        ("tags", [1, 2, 3]),
+        ("tags", []),
+        ("tags", [1, None, 3]),
+        ("mapping", {"a": [1, 2]}),
+        ("mapping", {}),
+        ("deep", {"a": [{"b": 1}]}),
+        ("pair", ("a", 1)),
+        ("many", (1, 2, 3)),
+        ("many", ()),
+        ("labels", {"a", "b"}),
+        ("optional_text", "text"),
+        ("number_or_text", 5),
+        ("number_or_text", "five"),
+        ("piped", "text"),
+        ("mode", "fast"),
+        ("handler", len),
+        ("entity_class", TestEntity),
+        ("sequence", [1, 2]),
+        ("plain_list", [1, "mixed", None]),
+        ("anything", object()),
+    ])
+    def test_accepts_matching_value(self, field, value):
+        entity = GenericEntity(name="generic", **{field: value})
+        assert entity.get(field) == value or entity.get(field) is value
+
+    @pytest.mark.parametrize("field,value", [
+        ("tags", ["a"]),
+        ("tags", [1, 3.5]),
+        ("tags", "not_a_list"),
+        ("mapping", {"a": ["x"]}),
+        ("mapping", {1: [1]}),
+        ("deep", {"a": [{"b": "x"}]}),
+        ("pair", ("a", "b")),
+        ("pair", ("a", 1, 2)),
+        ("many", (1, "x")),
+        ("labels", {1}),
+        ("optional_text", 5),
+        ("number_or_text", 1.5),
+        ("piped", []),
+        ("mode", "medium"),
+        ("handler", 5),
+        ("entity_class", int),
+        ("sequence", 5),
+        ("plain_list", "not_a_list"),
+    ])
+    def test_rejects_mismatching_value(self, field, value):
+        with pytest.raises(TypeError):
+            GenericEntity(name="generic", **{field: value})
+
+    def test_none_is_accepted_for_every_generic_field(self):
+        entity = GenericEntity(name="generic")
+        assert entity.tags is None
+        assert entity.mapping is None
+        assert entity.mode is None
+
+    def test_error_message_points_at_the_nested_element(self):
+        with pytest.raises(TypeError, match="Item in list 'tags'"):
+            GenericEntity(name="generic", tags=["a"])
+        with pytest.raises(TypeError, match="Key in 'mapping'"):
+            GenericEntity(name="generic", mapping={1: [1]})
+
+    def test_validation_applies_on_assignment_and_set(self):
+        entity = GenericEntity(name="generic", tags=[1])
+        with pytest.raises(TypeError):
+            entity.tags = ["a"]
+        with pytest.raises(TypeError):
+            entity.set({"tags": ["a"]})
+        with pytest.raises(TypeError):
+            entity["tags"] = ["a"]
+        entity.tags = [7]
+        assert entity.tags == [7]
 
 
 class TestBaseEntityMagicMethods:
