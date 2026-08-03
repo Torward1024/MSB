@@ -646,3 +646,19 @@ class TestSubclassOverridesToDict:
         data = first.to_dict()
         assert data["marker"] is True
         assert data["peer"]["peer"] == CYCLIC_REFERENCE
+
+
+class TestContainerAttributeIntrospection:
+    """A container has annotated attributes of its own, so it keeps has_attribute."""
+
+    def test_container_has_attribute(self):
+        container = TestContainer(name="box")
+        assert container.has_attribute("name") is True
+        assert container.has_attribute("nonexistent") is False
+
+    def test_has_attribute_and_has_item_are_distinct(self):
+        container = TestContainer(name="box")
+        container.add(TestEntity(name="item1", value=1))
+        assert container.has_item("item1") is True
+        assert container.has_attribute("item1") is False
+        assert container.has_attribute("isactive") is True

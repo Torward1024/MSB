@@ -434,6 +434,22 @@ class Serializable(ABC, metaclass=EntityMeta):
         self.isactive = False
         self._invalidate_cache()
         logger.debug("Deactivated %s instance", self.__class__.__name__)
+    def has_attribute(self, key: str) -> bool:
+        """Check whether an annotated attribute exists and is set.
+
+        Args:
+            key (str): The name of the attribute to check.
+
+        Returns:
+            bool: True if the attribute is declared on the class and set on the instance.
+
+        Notes:
+            - Lives here rather than on `BaseEntity` because a container has annotated
+              attributes too. Splitting the hierarchy moved it off containers by accident;
+              its counterpart for items is `BaseContainer.has_item`.
+        """
+        return key in self._fields and hasattr(self, key)
+
     def to_dict(self) -> dict:
         """Convert the entity to a dictionary for serialization.
 

@@ -99,16 +99,6 @@ class BaseEntity(Serializable):
             return result
         
         raise TypeError(f"Argument 'key' must be str, list of str, or None, got {type(key)}")
-    def has_attribute(self, key: str) -> bool:
-        """Check if the entity has a specific attribute.
-
-        Args:
-            key (str): The name of the attribute to check.
-
-        Returns:
-            bool: True if the attribute exists in the entity's fields and is set, False otherwise.
-        """
-        return key in self._fields and hasattr(self, key)
     def clone(self) -> 'BaseEntity':
         """Create a deep copy of the entity.
 
