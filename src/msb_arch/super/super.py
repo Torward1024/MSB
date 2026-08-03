@@ -31,6 +31,22 @@ class Super(ABC):
         - Logging is integrated via `utils.logging_setup.logger`.
         - Results are returned as dictionaries with keys: status (bool), object (str), method (str | None),
           result (Any), error (str | None, included only if status=False).
+
+    Extension points:
+        The following carry a single underscore in the sense the language intends: protected
+        rather than private. The framework itself never calls them; they exist for the
+        handlers a subclass writes, and they are part of the contract even though they are
+        not part of the public surface. Changing their signatures breaks subclasses.
+
+        - `_build_response(obj, status, method, result, error)`: produce the response
+          dictionary every handler is expected to return.
+        - `_get_methods(obj_type)`: the methods registered for a type, from this instance
+          first and from the Manipulator otherwise.
+        - `_validate_and_apply_method(obj, name, args, valid_methods, extra_args)`: check a
+          method name against a set of allowed ones, bind the arguments and call it.
+        - `_do_nested(obj, attributes, key, getter, handler)`: descend into a member of a
+          container and run a handler against it.
+        - `register_method(obj_type, name, method)`: add a method for a type at run time.
     """
 
     OPERATION: Optional[str] = None # Default operation name for auto-registration
@@ -386,28 +402,6 @@ class Super(ABC):
         self._methods.clear()
         self.clear_cache()
         logger.debug("Cleared references for %s", self.__class__.__name__)
-
-    def _default_result(self, obj: Any) -> Dict[str, Any]:
-        """Provide a default result when an operation cannot be executed.
-
-        Args:
-            obj (Any): The object associated with the operation.
-
-        Returns:
-            Dict[str, Any]: Dictionary with status, object (name), method, result, and error.
-        """
-        return self._build_response(obj, False, None, None, "Operation not executed")
-
-    def _default_nested_result(self, obj: Any) -> Dict[str, Any]:
-        """Provide a default result for nested operations.
-
-        Args:
-            obj (Any): The object associated with the operation.
-
-        Returns:
-            Dict[str, Any]: Dictionary with status, object (name), method, result, and error.
-        """
-        return self._build_response(obj, False, None, None, "Operation not executed")
 
     def __repr__(self) -> str:
         """Return a string representation of the Super instance.

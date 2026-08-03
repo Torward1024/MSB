@@ -267,14 +267,41 @@ class TestSuperClear:
         mock_logger.debug.assert_called()
 
 
-class TestSuperDefaultResults:
-    def test_default_result(self, test_super):
-        result = test_super._default_result("obj")
+class TestSuperExtensionPoints:
+    """The helpers a Super subclass builds its handlers from.
+
+    They carry a single underscore, meaning protected rather than private: the framework
+    never calls them, subclasses do. Downstream code relies on all three, so they are part
+    of the contract even though they are not part of the public surface.
+    """
+
+    def test_get_methods_reaches_the_manipulator(self, test_super):
+        assert "append" in test_super._get_methods(list)
+
+    def test_apply_method_validates_the_name(self, test_super):
+        valid = {"known": lambda obj: "done"}
+        assert test_super._validate_and_apply_method("obj", "known", None, valid)["status"] is True
+        rejected = test_super._validate_and_apply_method("obj", "unknown", None, valid)
+        assert rejected["status"] is False
+        assert "not found" in rejected["error"]
+
+    def test_do_nested_dispatches_to_the_nested_object(self, test_super):
+        store = {"child": "value"}
+        result = test_super._do_nested(store, {"index": "child"}, "index",
+                                       store.get, lambda obj, attrs: f"handled {obj}")
+        assert result["status"] is True
+        assert result["result"] == "handled value"
+
+    def test_do_nested_reports_a_missing_key(self, test_super):
+        result = test_super._do_nested({}, {"index": "absent"}, "index",
+                                       {}.get, lambda obj, attrs: None)
         assert result["status"] is False
 
-    def test_default_nested_result(self, test_super):
-        result = test_super._default_nested_result("obj")
-        assert result["status"] is False
+    def test_build_response_shape(self, test_super):
+        ok = test_super._build_response("obj", True, "m", 1)
+        assert set(ok) == {"status", "object", "method", "result"}
+        failed = test_super._build_response("obj", False, "m", None, "boom")
+        assert failed["error"] == "boom"
 
 
 class TestSuperRepr:
