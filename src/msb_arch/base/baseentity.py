@@ -802,6 +802,23 @@ class BaseEntity(ABC, metaclass=EntityMeta):
                 all(self.get(k) == other.get(k) for k in self._fields
                     if k not in ("name", "isactive") and not k.startswith('_')))
 
+    def __hash__(self) -> int:
+        """Return a hash consistent with `__eq__`.
+
+        Returns:
+            int: A hash derived from the concrete class and the entity name.
+
+        Notes:
+            - Defining `__eq__` without this made every entity unhashable, so entities could
+              not be put in a set or used as a dictionary key.
+            - Only the class and the name take part. Equal entities therefore always hash
+              equal, as the data model requires, while two entities sharing a name simply
+              collide and are separated by `__eq__`.
+            - Entities are mutable. Changing `name` while the entity sits in a set or is used
+              as a key makes it unreachable, exactly as for any mutable key.
+        """
+        return hash((type(self), self.name))
+
     def __contains__(self, key: str) -> bool:
         """Check if an attribute exists in the entity.
 

@@ -37,13 +37,15 @@ class MyProject(Project):
     def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
         item = MyEntity(name=item_code, isactive=isactive, value=42)
         self.add_item(item)
-    def from_dict():
-        pass
 
 project = MyProject(name="MyProject")
 project.create_item("item1")
 print(project.get_item("item1").to_dict())
 # Output: {'name': 'item1', 'isactive': True, 'type': 'MyEntity', 'value': 42}
+
+restored = MyProject.from_dict(project.to_dict())
+print(restored.get_item("item1").value)
+# Output: 42
 ```
 
 ## Architecture

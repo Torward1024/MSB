@@ -164,6 +164,17 @@ class Manipulator(ABC):
             logger.error(f"Operation '{operation}' already registered")
             raise ValueError(f"Operation '{operation}' already registered")
 
+        if not operation.isidentifier():
+            logger.error(f"Operation name '{operation}' is not a valid identifier")
+            raise ValueError(f"Operation name '{operation}' is not a valid identifier")
+
+        if hasattr(type(self), operation):
+            logger.error(f"Operation '{operation}' would shadow {type(self).__name__}.{operation}")
+            raise ValueError(
+                f"Operation '{operation}' would shadow the existing "
+                f"{type(self).__name__}.{operation}; choose another name"
+            )
+
         super_instance._operation = operation
         self._operations[operation] = super_instance
 

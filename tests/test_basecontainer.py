@@ -493,3 +493,28 @@ class TestBaseContainerLifetime:
         container.clear()
         assert len(container) == 0
         assert set(caller_items) == {"item1"}
+
+class TestBaseContainerHashing:
+    def test_container_is_hashable(self, test_container):
+        assert len({test_container}) == 1
+
+    def test_equal_containers_hash_equal(self):
+        first = TestContainer(name="same")
+        second = TestContainer(name="same")
+        assert first == second
+        assert hash(first) == hash(second)
+
+
+class TestBaseContainerAddCopySemantics:
+    def test_add_copies_by_default(self, empty_container, test_entity):
+        empty_container.add(test_entity)
+        stored = empty_container.get("item1")
+        assert stored is not test_entity
+        test_entity.value = 99
+        assert stored.value == 42
+
+    def test_add_can_store_the_object_itself(self, empty_container, test_entity):
+        empty_container.add(test_entity, copy_items=False)
+        assert empty_container.get("item1") is test_entity
+        test_entity.value = 99
+        assert empty_container.get("item1").value == 99

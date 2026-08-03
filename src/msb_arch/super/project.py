@@ -272,7 +272,6 @@ class Project(ABC):
         return {"name": self.name, "items": self._items.to_dict()["items"]}
 
     @classmethod
-    @abstractmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Project':
         """Create a project instance from a dictionary.
 
@@ -284,6 +283,11 @@ class Project(ABC):
 
         Raises:
             ValueError: If the data is invalid or cannot be deserialized.
+
+        Notes:
+            - This used to be abstract while carrying a full implementation, which forced
+              every subclass to write a stub it could not meaningfully fill. Subclasses that
+              already override it are unaffected; the rest now inherit a working method.
         """
         try:
             check_non_empty_string(data["name"], "Project name")
