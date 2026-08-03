@@ -703,10 +703,3 @@ class BaseEntity(ABC, metaclass=EntityMeta):
                 else:
                     attrs.append(f"{k}={value!r}")
         return f"{self.__class__.__name__}({', '.join(attr for attr in attrs if attr)})"
-    
-    def __del__(self) -> None:
-        """Ensure cleanup of references to prevent memory leaks."""
-        try:
-            self.clear()
-        except Exception as e:
-            logger.error(f"Error during cleanup of {self.__class__.__name__}: {str(e)}")

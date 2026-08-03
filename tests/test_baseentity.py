@@ -403,9 +403,28 @@ class TestBaseEntitySetattr:
             test_entity.unknown = 123
 
 
-class TestBaseEntityDel:
+class TestBaseEntityLifetime:
     @patch('src.msb_arch.base.baseentity.logger')
     def test_del(self, mock_logger, test_entity):
         # Just ensure no error
         del test_entity
         mock_logger.error.assert_not_called()
+
+    def test_entity_is_collected_when_dropped(self):
+        import gc
+        import weakref
+        entity = TestEntity(name="temporary", value=1)
+        ref = weakref.ref(entity)
+        del entity
+        gc.collect()
+        assert ref() is None
+
+    def test_dropping_one_reference_leaves_the_other_usable(self):
+        # clear() used to run from __del__, so a shared entity could be wiped while a
+        # second reference to it was still live.
+        import gc
+        entity = TestEntity(name="shared", value=42)
+        alias = entity
+        del entity
+        gc.collect()
+        assert alias.value == 42

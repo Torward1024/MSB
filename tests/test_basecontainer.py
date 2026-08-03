@@ -375,8 +375,35 @@ class TestBaseContainerResolveType:
         assert resolved == int
 
 
-class TestBaseContainerDel:
+class TestBaseContainerLifetime:
     @patch('src.msb_arch.base.basecontainer.logger')
     def test_del(self, mock_logger, test_container):
         del test_container
         mock_logger.error.assert_not_called()
+
+    def test_container_is_collected_when_dropped(self):
+        import gc
+        import weakref
+        container = TestContainer(name="temporary")
+        container.add(TestEntity(name="item1", value=1))
+        ref = weakref.ref(container)
+        del container
+        gc.collect()
+        assert ref() is None
+
+    def test_container_owns_its_mapping(self):
+        # The container used to keep the caller's dict by reference and empty it on
+        # garbage collection, destroying data the caller still owned.
+        import gc
+        caller_items = {"item1": TestEntity(name="item1", value=1)}
+        container = TestContainer(name="borrowing", items=caller_items)
+        del container
+        gc.collect()
+        assert set(caller_items) == {"item1"}
+
+    def test_clearing_the_container_leaves_the_callers_dict_alone(self):
+        caller_items = {"item1": TestEntity(name="item1", value=1)}
+        container = TestContainer(name="borrowing", items=caller_items)
+        container.clear()
+        assert len(container) == 0
+        assert set(caller_items) == {"item1"}

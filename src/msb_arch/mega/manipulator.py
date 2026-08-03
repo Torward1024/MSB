@@ -469,15 +469,3 @@ class Manipulator(ABC):
         """
         obj_type = type(self._managing_object).__name__ if self._managing_object else "None"
         return f"Manipulator(managing_object='{obj_type}', operations={list(self._operations.keys())})"
-    
-    def __del__(self):
-        """Ensure cleanup of all resources to prevent memory leaks."""
-        try:
-            self.clear_ops()
-            self.clear_cache()
-            self.clear_base_classes()
-            self._managing_object = None
-            logger.debug(f"ScheduleManipulator {id(self)} deleted")
-        except Exception as e:
-            logger.error(f"Error during cleanup of ScheduleManipulator: {str(e)}")
-        
