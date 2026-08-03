@@ -38,9 +38,9 @@ The utility layer provides supporting functionality:
 ```mermaid
 classDiagram
      ABCMeta <|-- EntityMeta
-     EntityMeta <|-- BaseEntity
-     ABC <|-- BaseContainer
-     BaseEntity <|-- BaseContainer
+     EntityMeta <|-- Serializable
+     Serializable <|-- BaseEntity
+     Serializable <|-- BaseContainer
      ABC <|-- Super
      ABC <|-- Project
      ABC <|-- Manipulator
@@ -139,7 +139,7 @@ flowchart TD
 ## Key Design Patterns
 
 ### 1. Template Method Pattern
-- BaseEntity and BaseContainer use template methods for serialization and validation
+- Serializable defines serialization and validation; BaseEntity and BaseContainer specialise them
 - Super classes define operation templates that subclasses implement
 
 ### 2. Strategy Pattern

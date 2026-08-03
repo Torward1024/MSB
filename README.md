@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MSB%20Software%20License-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.2.0-orange.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-0.3.0-orange.svg)](https://github.com/Torward1024/MSB)
 
 Mega-Super-Base (MSB) - a flexible and extensible architecture for Python applications, providing a modular system for managing entities, containers, operations, and projects with built-in type safety, serialization, and logging.
 
@@ -52,14 +52,15 @@ print(restored.get_item("item1").value)
 
 The project is divided into 4 modules:
 
-- **Base**: [`src/msb_arch/base/baseentity.py`](src/msb_arch/base/baseentity.py), [`src/msb_arch/base/basecontainer.py`](src/msb_arch/base/basecontainer.py) - base classes for entities and containers.
+- **Base**: [`src/msb_arch/base/serializable.py`](src/msb_arch/base/serializable.py), [`src/msb_arch/base/baseentity.py`](src/msb_arch/base/baseentity.py), [`src/msb_arch/base/basecontainer.py`](src/msb_arch/base/basecontainer.py) - shared machinery plus the entity and container surfaces.
 - **Super**: [`src/msb_arch/super/super.py`](src/msb_arch/super/super.py), [`src/msb_arch/super/project.py`](src/msb_arch/super/project.py) - operation handlers and project management.
 - **Mega**: [`src/msb_arch/mega/manipulator.py`](src/msb_arch/mega/manipulator.py) - central orchestrator for operations.
 - **Utils**: [`src/msb_arch/utils/logging_setup.py`](src/msb_arch/utils/logging_setup.py), [`src/msb_arch/utils/validation.py`](src/msb_arch/utils/validation.py) - utilities for logging and validation.
 
 Main classes:
-- **BaseEntity**: Abstract class for entities with type validation, serialization, and caching.
-- **BaseContainer[T]**: Generic container for BaseEntity collections with query and operation support.
+- **Serializable**: Shared base holding validation, serialization, caching and ownership.
+- **BaseEntity**: An object addressed by its attributes.
+- **BaseContainer[T]**: A named collection, sibling of BaseEntity rather than a subclass.
 - **Super**: Abstract class for operation handlers with method resolution.
 - **Project**: Class for managing projects as entity containers.
 - **Manipulator**: Central class for operation registration and request processing.
@@ -108,4 +109,4 @@ For commercial use, a separate royalty-bearing license is required. Please conta
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 0.2.0
+- **Version**: 0.3.0

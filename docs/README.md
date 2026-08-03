@@ -94,7 +94,7 @@ print(result)  # 14
 
 ## Version
 
-Current version: 0.2.0
+Current version: 0.3.0
 
 ## License
 

@@ -68,7 +68,8 @@ classDiagram
      ABC <|-- Manipulator : inherits
 
     %% Base Layer
-    BaseEntity <|-- BaseContainer
+    Serializable <|-- BaseEntity
+    Serializable <|-- BaseContainer
 
     class BaseEntity {
         +name: str
