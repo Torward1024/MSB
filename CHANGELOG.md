@@ -7,6 +7,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Dates are
 
 Open findings that have not been addressed yet are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
+## [0.3.2] - 2026-08-03
+
+Makes the state MSB shares between objects safe to use from several threads, and restores a
+method the 0.3.0 split dropped by accident.
+
+### Fixed
+
+- **Two projects of the same item type could end up with unrelated container classes.**
+  `_create_container` looked the generated class up and built one on a miss without holding
+  a lock, so concurrent first use of a type produced a class per thread: sixteen threads
+  yielded up to fifteen competing classes. Their containers then compared unequal, which is
+  the defect 0.2.0 fixed for the sequential case and this reopened for the concurrent one.
+- **The handler cache could lose entries or outgrow its limit.** A lookup that interleaved
+  with an eviction could miss a live entry, and two threads passing the size check together
+  could both skip an eviction. Reads are a single lookup now and no longer reorder entries,
+  and eviction is guarded.
+- **`has_attribute` is back on containers.** Splitting the hierarchy in 0.3.0 left it on
+  `BaseEntity`, so containers lost a method they had inherited since 0.1.0. It asks about
+  annotated attributes, which a container has as much as an entity, so it now sits on
+  `Serializable`; its counterpart for items is `has_item`.
+
+### Added
+
+- `tests/test_concurrency.py`, which shortens the interpreter's thread switch interval and
+  hammers each shared structure from sixteen threads. The two defects above fail it on every
+  run against the unguarded code.
+- A thread-safety section in the `Serializable` docstring and the base module guide, stating
+  what is guarded and what is not: shared structures are, a single object is not, exactly as
+  for any plain Python object.
+
 ## [0.3.1] - 2026-08-03
 
 Fixes a break that 0.2.0 introduced and 0.3.0 carried: a subclass overriding `to_dict`

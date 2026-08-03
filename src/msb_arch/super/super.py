@@ -5,7 +5,11 @@ from ..utils.logging_setup import logger
 from ..mega.manipulator import Manipulator
 from ..base.basecontainer import BaseContainer
 from collections import OrderedDict
+from threading import Lock
 import inspect
+
+# Sentinel: None is a legitimate cached outcome, meaning "no handler matches".
+_MISSING = object()
 
 class Super(ABC):
     """Abstract super-class providing common functionality for operation handlers.
@@ -68,6 +72,7 @@ class Super(ABC):
         self._methods = methods or {}
         self._method_cache = OrderedDict()
         self._cache_size = cache_size
+        self._cache_lock = Lock()
         self._operation = self.OPERATION
 
     def _build_response(self, obj: Any, status: bool, method: str = None, result: Any = None,
@@ -310,9 +315,12 @@ class Super(ABC):
               instance by any other route needs an explicit `clear_cache()`.
         """
         key = (method_name, type(obj))
-        if key in self._method_cache:
-            self._method_cache.move_to_end(key)
-            return self._method_cache[key]
+        # A single lookup, so eviction on another thread cannot land between a membership
+        # test and the read. Entries are not reordered on access either: that would make
+        # every hit a write, and eviction order is immaterial for handler resolution.
+        cached = self._method_cache.get(key, _MISSING)
+        if cached is not _MISSING:
+            return cached
 
         resolved = None
         for candidate in self._handler_candidates(obj, method_name):
@@ -329,9 +337,10 @@ class Super(ABC):
             key (tuple): The cache key, a requested name paired with an object type.
             value (Optional[str]): The resolved handler name, or None if nothing matched.
         """
-        if len(self._method_cache) >= self._cache_size:
-            self._method_cache.popitem(last=False)
-        self._method_cache[key] = value
+        with self._cache_lock:
+            while len(self._method_cache) >= self._cache_size:
+                self._method_cache.popitem(last=False)
+            self._method_cache[key] = value
 
     def execute(self, obj: Any, attributes: Dict[str, Any] = None, method: str = None) -> Dict[str, Any]:
         """Execute an operation on an object based on attributes and an optional method.
