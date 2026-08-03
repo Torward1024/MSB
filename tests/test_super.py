@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from typing import Dict, Any, Type
-from src.msb_arch.super.super import Super
-from src.msb_arch.mega.manipulator import Manipulator
+from msb_arch.super.super import Super
+from msb_arch.mega.manipulator import Manipulator
 
 
 class TestSuper(Super):
@@ -122,7 +122,7 @@ class TestSuperValidateAndApplyMethod:
 
 
 class TestSuperRegisterMethod:
-    @patch('src.msb_arch.super.super.logger')
+    @patch('msb_arch.super.super.logger')
     def test_register_method(self, mock_logger, test_super):
         test_super.register_method(str, "test", lambda: None)
         assert str in test_super._methods
@@ -249,7 +249,7 @@ class TestSuperHandlerResolutionCache:
 
 
 class TestSuperClearCache:
-    @patch('src.msb_arch.super.super.logger')
+    @patch('msb_arch.super.super.logger')
     def test_clear_cache(self, mock_logger, test_super):
         test_super._method_cache["key"] = "value"
         test_super.clear_cache()
@@ -258,7 +258,7 @@ class TestSuperClearCache:
 
 
 class TestSuperClear:
-    @patch('src.msb_arch.super.super.logger')
+    @patch('msb_arch.super.super.logger')
     def test_clear(self, mock_logger, test_super):
         test_super._methods["type"] = {}
         test_super.clear()
@@ -284,7 +284,7 @@ class TestSuperRepr:
 
 
 class TestSuperDel:
-    @patch('src.msb_arch.super.super.logger')
+    @patch('msb_arch.super.super.logger')
     def test_del(self, mock_logger, test_super):
         del test_super
         mock_logger.error.assert_not_called()

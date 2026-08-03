@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from typing import Dict, Any
-from src.msb_arch.base.baseentity import BaseEntity, CYCLIC_REFERENCE
-from src.msb_arch.base.basecontainer import BaseContainer
+from msb_arch.base.baseentity import BaseEntity, CYCLIC_REFERENCE
+from msb_arch.base.basecontainer import BaseContainer
 
 
 class TestEntity(BaseEntity):
@@ -34,7 +34,7 @@ def empty_container():
 
 
 class TestBaseContainerInit:
-    @patch('src.msb_arch.base.basecontainer.logger')
+    @patch('msb_arch.base.basecontainer.logger')
     def test_init_valid(self, mock_logger):
         items = {"item1": TestEntity(name="item1", value=1)}
         container = TestContainer(items=items, name="test")
@@ -85,7 +85,7 @@ class TestBaseContainerAdd:
         with pytest.raises(TypeError):
             empty_container.add("invalid")
 
-    @patch('src.msb_arch.base.basecontainer.logger')
+    @patch('msb_arch.base.basecontainer.logger')
     def test_add_logs(self, mock_logger, empty_container, test_entity):
         empty_container.add(test_entity)
         mock_logger.debug.assert_called()
@@ -115,7 +115,7 @@ class TestBaseContainerRemove:
             test_container.remove("nonexistent")
 
 
-    @patch('src.msb_arch.base.basecontainer.logger')
+    @patch('msb_arch.base.basecontainer.logger')
     def test_remove_logs(self, mock_logger, test_container):
         test_container.remove("item1")
         mock_logger.debug.assert_called()
@@ -130,7 +130,7 @@ class TestBaseContainerGet:
         item = test_container.get("nonexistent")
         assert item is None
 
-    @patch('src.msb_arch.base.basecontainer.logger')
+    @patch('msb_arch.base.basecontainer.logger')
     def test_get_logs_warning(self, mock_logger, test_container):
         test_container.get("nonexistent")
         mock_logger.warning.assert_called()
@@ -462,7 +462,7 @@ class TestBaseContainerResolveType:
 
 
 class TestBaseContainerLifetime:
-    @patch('src.msb_arch.base.basecontainer.logger')
+    @patch('msb_arch.base.basecontainer.logger')
     def test_del(self, mock_logger, test_container):
         del test_container
         mock_logger.error.assert_not_called()

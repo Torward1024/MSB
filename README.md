@@ -76,11 +76,21 @@ Practical usage examples are available in [`docs/examples.md`](docs/examples.md)
 
 The project includes a complete set of unit, integration, and performance tests using pytest. Tests are located in the `tests/` directory and cover all modules with high coverage rates.
 
-To run tests:
+The tests import `msb_arch` rather than the source tree, so they run against whatever is
+installed. Install the package first:
+
+```bash
+pip install -e .
+```
+
+Then run the tests:
 
 ```bash
 pytest tests/
 ```
+
+CI builds the wheel and installs it before running the same suite, so the distribution that
+ships is the one that was tested.
 
 ## Changelog
 

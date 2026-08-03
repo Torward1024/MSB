@@ -2,10 +2,10 @@
 import timeit
 import pytest
 from typing import Any
-from src.msb_arch.base.baseentity import BaseEntity
-from src.msb_arch.base.basecontainer import BaseContainer
-from src.msb_arch.mega.manipulator import Manipulator
-from src.msb_arch.super.super import Super
+from msb_arch.base.baseentity import BaseEntity
+from msb_arch.base.basecontainer import BaseContainer
+from msb_arch.mega.manipulator import Manipulator
+from msb_arch.super.super import Super
 
 
 # Helper classes for testing
