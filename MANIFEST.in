@@ -1,4 +1,5 @@
 # MANIFEST.in
 include LICENSE
 include README.md
-recursive-include msb *.py
+recursive-include src/msb_arch *.py
+include src/msb_arch/py.typed
