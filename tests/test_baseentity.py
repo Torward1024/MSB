@@ -49,7 +49,7 @@ def test_entity_with_cache():
 
 
 class TestBaseEntityInit:
-    @patch('msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.serializable.logger')
     def test_init_valid(self, mock_logger):
         entity = TestEntity(name="test", value=42)
         assert entity.name == "test"
@@ -134,14 +134,14 @@ class TestBaseEntityGet:
 
 
 class TestBaseEntityActivateDeactivate:
-    @patch('msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.serializable.logger')
     def test_activate(self, mock_logger, test_entity):
         test_entity.deactivate()
         test_entity.activate()
         assert test_entity.isactive is True
         mock_logger.debug.assert_called()
 
-    @patch('msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.serializable.logger')
     def test_deactivate(self, mock_logger, test_entity):
         test_entity.deactivate()
         assert test_entity.isactive is False
@@ -647,7 +647,7 @@ class TestBaseEntityPolymorphicFromDict:
 
 
 class TestBaseEntitySetattr:
-    @patch('msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.serializable.logger')
     def test_setattr_valid(self, mock_logger, test_entity):
         test_entity.value = 100
         assert test_entity.value == 100
