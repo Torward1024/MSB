@@ -9,55 +9,109 @@ from src.msb_arch.utils.validation import (
 )
 
 
+@pytest.fixture
+def pristine_logger():
+    """Restore the package logger after a test reconfigures it."""
+    saved_handlers = logger.handlers[:]
+    saved_level = logger.level
+    yield logger
+    for handler in logger.handlers[:]:
+        if handler not in saved_handlers:
+            logger.removeHandler(handler)
+            handler.close()
+    logger.handlers[:] = saved_handlers
+    logger.setLevel(saved_level)
+
+
+class TestLibraryLoggingHygiene:
+    """A library must not configure logging for the application embedding it.
+
+    Import-time side effects are checked in a clean interpreter: pytest's own logging
+    plugin attaches handlers to the root logger, so they cannot be observed in-process.
+    """
+
+    def _import_in_clean_interpreter(self, tmp_path, probe):
+        import subprocess
+        import sys
+        import os
+        script = (
+            "import logging, os, sys\n"
+            f"sys.path.insert(0, {os.path.dirname(os.path.dirname(os.path.abspath(__file__)))!r})\n"
+            "before = list(logging.getLogger().handlers)\n"
+            "import src.msb_arch\n"
+            f"{probe}\n"
+        )
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                                text=True, cwd=str(tmp_path))
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    def test_importing_does_not_touch_the_root_logger(self, tmp_path):
+        probe = "print(list(logging.getLogger().handlers) == before)"
+        assert self._import_in_clean_interpreter(tmp_path, probe) == "True"
+
+    def test_importing_does_not_create_a_log_file(self, tmp_path):
+        probe = "print(os.listdir('.'))"
+        assert self._import_in_clean_interpreter(tmp_path, probe) == "[]"
+
+    def test_the_package_logger_is_named_and_silent_by_default(self):
+        assert logger.name == "msb_arch"
+        assert any(isinstance(h, logging.NullHandler) for h in logger.handlers)
+
+
 class TestSetupLogging:
-    @patch('src.msb_arch.utils.logging_setup.logging')
-    def test_setup_logging_basic(self, mock_logging):
-        mock_logger = MagicMock()
-        mock_logging.getLogger.return_value = mock_logger
-        mock_logger.handlers = []
-        result = setup_logging()
-        assert result == mock_logger
-        mock_logger.setLevel.assert_called_with(logging.INFO)
+    def test_setup_logging_configures_the_package_logger(self, pristine_logger, tmp_path):
+        log_file = tmp_path / "msb.log"
+        result = setup_logging(log_file=str(log_file), log_level=logging.DEBUG)
+        assert result is pristine_logger
+        assert result.level == logging.DEBUG
+        assert any(isinstance(h, logging.FileHandler) for h in result.handlers)
+        # the handlers land on the package logger, never on root
+        assert not any(isinstance(h, logging.FileHandler) and h.baseFilename == str(log_file)
+                       for h in logging.getLogger().handlers)
 
-    @patch('src.msb_arch.utils.logging_setup.logging')
-    def test_setup_logging_with_clear(self, mock_logging):
-        mock_logger = MagicMock()
-        mock_logging.getLogger.return_value = mock_logger
-        mock_logger.handlers = []
-        setup_logging(clear_log=True)
-        # Check that FileHandler is called with mode='w'
+    def test_setup_logging_writes_to_the_requested_file(self, pristine_logger, tmp_path):
+        log_file = tmp_path / "msb.log"
+        setup_logging(log_file=str(log_file), log_level=logging.INFO)
+        pristine_logger.info("hello from the test")
+        for handler in pristine_logger.handlers:
+            handler.flush()
+        assert "hello from the test" in log_file.read_text(encoding="utf-8")
 
-    @patch('src.msb_arch.utils.logging_setup.logging')
-    def test_setup_logging_existing_handlers(self, mock_logging):
-        mock_logger = MagicMock()
-        mock_logging.getLogger.return_value = mock_logger
-        mock_logger.handlers = [MagicMock()]  # Has handlers
-        setup_logging()
-        # Should not add new handlers
+    def test_setup_logging_does_not_duplicate_handlers(self, pristine_logger, tmp_path):
+        log_file = tmp_path / "msb.log"
+        setup_logging(log_file=str(log_file))
+        first = len(pristine_logger.handlers)
+        setup_logging(log_file=str(log_file))
+        assert len(pristine_logger.handlers) == first
 
 
 class TestUpdateLoggingLevel:
-    @patch('src.msb_arch.utils.logging_setup.logger', None)
-    @patch('src.msb_arch.utils.logging_setup.setup_logging')
-    def test_update_logging_level_no_logger(self, mock_setup):
+    def test_update_logging_level_applies_to_logger_and_handlers(self, pristine_logger, tmp_path):
+        setup_logging(log_file=str(tmp_path / "msb.log"), log_level=logging.INFO)
         update_logging_level(logging.DEBUG)
-        mock_setup.assert_called_with(log_level=logging.DEBUG)
-
-    @patch('src.msb_arch.utils.logging_setup.logger')
-    def test_update_logging_level_existing(self, mock_logger):
-        mock_handler = MagicMock()
-        mock_logger.handlers = [mock_handler]
-        update_logging_level(logging.DEBUG)
-        mock_logger.setLevel.assert_called_with(logging.DEBUG)
-        mock_handler.setLevel.assert_called_with(logging.DEBUG)
+        assert pristine_logger.level == logging.DEBUG
+        assert all(h.level == logging.DEBUG for h in pristine_logger.handlers)
 
 
 class TestUpdateLoggingClear:
-    @patch('src.msb_arch.utils.logging_setup.logger', None)
-    @patch('src.msb_arch.utils.logging_setup.setup_logging')
-    def test_update_logging_clear_no_logger(self, mock_setup):
-        update_logging_clear("test.log", True)
-        mock_setup.assert_called_with(log_file="test.log", clear_log=True)
+    def test_update_logging_clear_truncates_the_file(self, pristine_logger, tmp_path):
+        log_file = tmp_path / "msb.log"
+        setup_logging(log_file=str(log_file), log_level=logging.INFO)
+        pristine_logger.info("first run")
+        for handler in pristine_logger.handlers:
+            handler.flush()
+        assert "first run" in log_file.read_text(encoding="utf-8")
+
+        update_logging_clear(str(log_file), True)
+        assert "first run" not in log_file.read_text(encoding="utf-8")
+
+    def test_update_logging_clear_is_a_no_op_when_not_asked(self, pristine_logger, tmp_path):
+        log_file = tmp_path / "msb.log"
+        setup_logging(log_file=str(log_file), log_level=logging.INFO)
+        before = len(pristine_logger.handlers)
+        update_logging_clear(str(log_file), False)
+        assert len(pristine_logger.handlers) == before
 
 
 class TestCheckType:

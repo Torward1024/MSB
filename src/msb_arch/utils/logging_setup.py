@@ -1,11 +1,16 @@
 # utils/logging_setup.py
 import logging
 
+LOGGER_NAME = "msb_arch"
+
+logger = logging.getLogger(LOGGER_NAME)
+logger.addHandler(logging.NullHandler())
+
 def setup_logging(log_file: str = "output.log", log_level: int = logging.INFO, clear_log: bool = False) -> logging.Logger:
     """Set up and configure logging for the system.
 
-    Creates a logger with both file and console handlers, using a consistent format for log messages.
-    Allows specifying the logging level and whether to clear the log file on start.
+    Attaches file and console handlers to the package logger, using a consistent format for
+    log messages. Allows specifying the logging level and whether to clear the log file on start.
 
     Args:
         log_file (str): Path to the log file. Defaults to "output.log".
@@ -17,13 +22,21 @@ def setup_logging(log_file: str = "output.log", log_level: int = logging.INFO, c
 
     Notes:
         - Log format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s".
-        - Handlers are added only if the logger has no existing handlers to avoid duplication.
+        - Handlers are added only if the logger has no configured handlers to avoid duplication.
         - If clear_log is True, the log file is truncated before adding new logs.
+        - Calling this is optional and never happens on import. A library that configures
+          logging by itself would create a file in the working directory and take over the
+          handlers of the application embedding it; MSB only attaches a NullHandler and
+          leaves every decision to the application.
+
+    Examples:
+        >>> from msb_arch import setup_logging
+        >>> import logging
+        >>> setup_logging(log_level=logging.DEBUG)   # opt in to the built-in configuration
     """
-    logger = logging.getLogger("")
     logger.setLevel(log_level)
 
-    if not logger.handlers:
+    if not any(not isinstance(handler, logging.NullHandler) for handler in logger.handlers):
         mode = 'w' if clear_log else 'a'
         fh = logging.FileHandler(log_file, mode=mode)
         fh.setLevel(log_level)
@@ -41,22 +54,17 @@ def setup_logging(log_file: str = "output.log", log_level: int = logging.INFO, c
     return logger
 
 def update_logging_level(log_level: int) -> None:
-    """Update the logging level for the singleton logger and its handlers.
+    """Update the logging level for the package logger and its handlers.
 
     Args:
         log_level (int): New logging level (e.g., logging.DEBUG, logging.INFO).
 
     Notes:
-        - Updates the level of the singleton logger and all its handlers.
-        - If the logger is not initialized, it will be created with default settings and the specified level.
+        - Updates the level of the package logger and all of its configured handlers.
     """
-    global logger
-    if logger is None:
-        logger = setup_logging(log_level=log_level)
-    else:
-        logger.setLevel(log_level)
-        for handler in logger.handlers:
-            handler.setLevel(log_level)
+    logger.setLevel(log_level)
+    for handler in logger.handlers:
+        handler.setLevel(log_level)
 
 def update_logging_clear(log_file: str, clear_log: bool) -> None:
     """Update the logging configuration to clear the log file if specified.
@@ -64,23 +72,21 @@ def update_logging_clear(log_file: str, clear_log: bool) -> None:
     Args:
         log_file (str): Path to the log file.
         clear_log (bool): If True, reconfigures the file handler to clear the log file.
+
+    Notes:
+        - Does nothing unless clear_log is True.
     """
-    global logger
-    if logger is None:
-        logger = setup_logging(log_file=log_file, clear_log=clear_log)
+    if not clear_log:
         return
 
-    if clear_log:
-        for handler in logger.handlers[:]:
-            if isinstance(handler, logging.FileHandler):
-                logger.removeHandler(handler)
-                handler.close()
-    
-        fh = logging.FileHandler(log_file, mode='w')
-        fh.setLevel(logger.level)
-        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        fh.setFormatter(formatter)
-        logger.addHandler(fh)
-        logger.debug("Log file cleared due to clear_log=True")
+    for handler in logger.handlers[:]:
+        if isinstance(handler, logging.FileHandler):
+            logger.removeHandler(handler)
+            handler.close()
 
-logger = setup_logging()
+    fh = logging.FileHandler(log_file, mode='w')
+    fh.setLevel(logger.level)
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+    logger.debug("Log file cleared due to clear_log=True")

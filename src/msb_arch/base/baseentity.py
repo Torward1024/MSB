@@ -127,7 +127,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         if unknown_attrs:
             raise ValueError(f"Unknown attributes provided for {self.__class__.__name__}: {unknown_attrs}")
         
-        logger.debug(f"Initialized {self.__class__.__name__} instance with name={name}, isactive={isactive}")
+        logger.debug("Initialized %s instance with name=%s, isactive=%s", self.__class__.__name__, name, isactive)
     
     def _adopt(self, owner: Optional['BaseEntity'] = None, _seen: Optional[Set[int]] = None) -> None:
         """Record ownership for this entity and for everything it holds.
@@ -403,7 +403,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             else:
                 raise ValueError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
         self._invalidate_cache()
-        logger.debug(f"Updated attributes of {self.__class__.__name__}: {list(params.keys())}")
+        logger.debug("Updated attributes of %s: %s", self.__class__.__name__, list(params.keys()))
 
     def get(self, key: Union[str, List[str], None] = None) -> Union[Any, Dict[str, Any]]:
         """Retrieve one or more attributes of the entity.
@@ -433,22 +433,22 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         """
         if key is None:
             result = {k: getattr(self, k) for k in self._fields if not k.startswith('_') and hasattr(self, k)}
-            logger.debug(f"Retrieved all public attributes from {self.__class__.__name__}: {result}")
+            logger.debug("Retrieved all public attributes from %s: %s", self.__class__.__name__, result)
             return result
         elif isinstance(key, str):
             if key not in self._fields:
-                logger.error(f"Attribute '{key}' not found in {self.__class__.__name__}")
+                logger.error("Attribute '%s' not found in %s", key, self.__class__.__name__)
                 raise KeyError(f"Attribute '{key}' not found in {self.__class__.__name__}")
             value = getattr(self, key) if hasattr(self, key) else None
-            logger.debug(f"Retrieved attribute '{key}' from {self.__class__.__name__}: {value}")
+            logger.debug("Retrieved attribute '%s' from %s: %s", key, self.__class__.__name__, value)
             return value
         elif isinstance(key, list):
             invalid_keys = [k for k in key if k not in self._fields]
             if invalid_keys:
-                logger.error(f"Attributes {invalid_keys} not found in {self.__class__.__name__}")
+                logger.error("Attributes %s not found in %s", invalid_keys, self.__class__.__name__)
                 raise KeyError(f"Attributes {invalid_keys} not found in {self.__class__.__name__}")
             result = {k: getattr(self, k) if hasattr(self, k) else None for k in key}
-            logger.debug(f"Retrieved attributes {key} from {self.__class__.__name__}: {result}")
+            logger.debug("Retrieved attributes %s from %s: %s", key, self.__class__.__name__, result)
             return result
         
         raise TypeError(f"Argument 'key' must be str, list of str, or None, got {type(key)}")
@@ -461,7 +461,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         """
         self.isactive = True
         self._invalidate_cache()
-        logger.debug(f"Activated {self.__class__.__name__} instance")
+        logger.debug("Activated %s instance", self.__class__.__name__)
 
     def deactivate(self) -> None:
         """Deactivate the entity, setting its status to inactive.
@@ -471,7 +471,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         """
         self.isactive = False
         self._invalidate_cache()
-        logger.debug(f"Deactivated {self.__class__.__name__} instance")
+        logger.debug("Deactivated %s instance", self.__class__.__name__)
     
     def has_attribute(self, key: str) -> bool:
         """Check if the entity has a specific attribute.
@@ -729,7 +729,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         except TypeError:
             raise
         except Exception as e:
-            logger.error(f"Failed to resolve type hint {type_hint}: {str(e)}")
+            logger.error("Failed to resolve type hint %s: %s", type_hint, str(e))
             raise TypeError(f"Type resolution failed for {type_hint} in {field_path or cls.__name__}: {str(e)}")
 
     def clear(self) -> None:
@@ -780,7 +780,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         self._validate_type(key, value, expected_type)
         setattr(self, key, value)
         self._invalidate_cache()
-        logger.debug(f"Set attribute '{key}' of {self.__class__.__name__}")
+        logger.debug("Set attribute '%s' of %s", key, self.__class__.__name__)
 
     def __eq__(self, other: Any) -> bool:
         """Compare two entities for equality based on their attributes and state.
@@ -855,7 +855,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             if isinstance(value, BaseEntity):
                 value._adopt(self)
             self._invalidate_cache()
-            logger.debug(f"Set attribute '{key}' of {self.__class__.__name__}")
+            logger.debug("Set attribute '%s' of %s", key, self.__class__.__name__)
         else:
             raise ValueError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
 

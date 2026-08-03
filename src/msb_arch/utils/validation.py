@@ -27,7 +27,7 @@ def check_type(value, expected_type, name: str) -> None:
     if value is None:
         return
     if not isinstance(value, expected_type):
-        logger.error(f"{name} must be of type {expected_type}, got {type(value)}")
+        logger.error("%s must be of type %s, got %s", name, expected_type, type(value))
         raise TypeError(f"{name} must be of type {expected_type}, got {type(value)}")
 
 def check_range(value: float, min_val: float, max_val: float, name: str) -> None:
@@ -54,10 +54,10 @@ def check_range(value: float, min_val: float, max_val: float, name: str) -> None
         ValueError: my_value must be between 0.0 and 10.0, got -1
     """
     if not isinstance(value, (int, float)):
-        logger.error(f"{name} must be a number, got {type(value)}")
+        logger.error("%s must be a number, got %s", name, type(value))
         raise TypeError(f"{name} must be a number, got {type(value)}")
     if not min_val <= value <= max_val:
-        logger.error(f"{name} must be between {min_val} and {max_val}, got {value}")
+        logger.error("%s must be between %s and %s, got %s", name, min_val, max_val, value)
         raise ValueError(f"{name} must be between {min_val} and {max_val}, got {value}")
 
 def check_positive(value: float, name: str) -> None:
@@ -82,10 +82,10 @@ def check_positive(value: float, name: str) -> None:
         ValueError: my_value must be positive, got 0
     """
     if not isinstance(value, (int, float)):
-        logger.error(f"{name} must be a number, got {type(value)}")
+        logger.error("%s must be a number, got %s", name, type(value))
         raise TypeError(f"{name} must be a number, got {type(value)}")
     if value <= 0:
-        logger.error(f"{name} must be positive, got {value}")
+        logger.error("%s must be positive, got %s", name, value)
         raise ValueError(f"{name} must be positive, got {value}")
 
 def check_list_type(lst: list, expected_type, name: str) -> None:
@@ -110,11 +110,11 @@ def check_list_type(lst: list, expected_type, name: str) -> None:
         TypeError: All items in my_list must be of type <class 'str'>, got <class 'int'>
     """
     if not isinstance(lst, (list, tuple)):
-        logger.error(f"{name} must be a list or tuple, got {type(lst)}")
+        logger.error("%s must be a list or tuple, got %s", name, type(lst))
         raise TypeError(f"{name} must be a list or tuple, got {type(lst)}")
     for item in lst:
         if not isinstance(item, expected_type):
-            logger.error(f"All items in {name} must be of type {expected_type}, got {type(item)}")
+            logger.error("All items in %s must be of type %s, got %s", name, expected_type, type(item))
             raise TypeError(f"All items in {name} must be of type {expected_type}, got {type(item)}")
 
 def check_non_negative(value: float, name: str) -> None:
@@ -139,10 +139,10 @@ def check_non_negative(value: float, name: str) -> None:
         ValueError: my_value must be non-negative, got -1.0
     """
     if not isinstance(value, (int, float)):
-        logger.error(f"{name} must be a number, got {type(value)}")
+        logger.error("%s must be a number, got %s", name, type(value))
         raise TypeError(f"{name} must be a number, got {type(value)}")
     if value < 0:
-        logger.error(f"{name} must be non-negative, got {value}")
+        logger.error("%s must be non-negative, got %s", name, value)
         raise ValueError(f"{name} must be non-negative, got {value}")
 
 def check_non_empty_string(value: str, name: str) -> None:
@@ -167,10 +167,10 @@ def check_non_empty_string(value: str, name: str) -> None:
         ValueError: my_string must not be empty
     """
     if not isinstance(value, str):
-        logger.error(f"{name} must be a string, got {type(value)}")
+        logger.error("%s must be a string, got %s", name, type(value))
         raise TypeError(f"{name} must be a string, got {type(value)}")
     if not value.strip():
-        logger.error(f"{name} must not be empty")
+        logger.error("%s must not be empty", name)
         raise ValueError(f"{name} must not be empty")
 
 def check_non_zero(value: float, name: str) -> None:
@@ -195,8 +195,8 @@ def check_non_zero(value: float, name: str) -> None:
         ValueError: my_value must be non-zero, got 0.0
     """
     if not isinstance(value, (int, float)):
-        logger.error(f"{name} must be a number, got {type(value)}")
+        logger.error("%s must be a number, got %s", name, type(value))
         raise TypeError(f"{name} must be a number, got {type(value)}")
     if value == 0:
-        logger.error(f"{name} must be non-zero, got {value}")
+        logger.error("%s must be non-zero, got %s", name, value)
         raise ValueError(f"{name} must be non-zero, got {value}")

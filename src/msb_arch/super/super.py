@@ -114,11 +114,11 @@ class Super(ABC):
         try:
             nested_obj = getter_method(key)
             if nested_obj is None:
-                logger.error(f"Item '{key}' not found in {type(obj).__name__}")
+                logger.error("Item '%s' not found in %s", key, type(obj).__name__)
                 return None
             return nested_obj
         except Exception as e:
-            logger.error(f"Invalid key {key} for {type(obj).__name__}: {str(e)}")
+            logger.error("Invalid key %s for %s: %s", key, type(obj).__name__, str(e))
             return None
 
     def _do_nested(self, obj: Any, attributes: Dict[str, Any], key: str, getter_method: Callable,
@@ -137,7 +137,7 @@ class Super(ABC):
         """
         index = attributes.get(key)
         if index is None:
-            logger.debug(f"No {key} provided for nested operation")
+            logger.debug("No %s provided for nested operation", key)
             return self._build_response(obj, False, None, None, "Operation not executed")
 
         try:
@@ -148,10 +148,10 @@ class Super(ABC):
             nested_attrs = {k: v for k, v in attributes.items() if k != key}
             result = nested_handler(nested_obj, nested_attrs)
             method_name = nested_handler.__name__ if hasattr(nested_handler, '__name__') else None
-            logger.info(f"Processed nested operation on {type(obj).__name__} with {key}={index}")
+            logger.info("Processed nested operation on %s with %s=%s", type(obj).__name__, key, index)
             return self._build_response(nested_obj, True, method_name, result)
         except Exception as e:
-            logger.error(f"Nested operation failed: {str(e)}")
+            logger.error("Nested operation failed: %s", str(e))
             return self._build_response(obj, False, None, None, str(e))
 
     def _validate_and_apply_method(self, obj: Any, method_name: str, method_args: Any,
@@ -169,7 +169,7 @@ class Super(ABC):
             Dict[str, Any]: Response dictionary with status, object, method, result, and error if status is False.
         """
         if method_name not in valid_methods:
-            logger.error(f"Invalid method '{method_name}' for '{type(obj).__name__}'")
+            logger.error("Invalid method '%s' for '%s'", method_name, type(obj).__name__)
             return self._build_response(obj, False, method_name, None, f"Method '{method_name}' not found")
 
         method = valid_methods[method_name]
@@ -190,7 +190,7 @@ class Super(ABC):
             ]
 
             if not expected_params:
-                logger.debug(f"Applying {method_name} to {type(obj).__name__} with no args")
+                logger.debug("Applying %s to %s with no args", method_name, type(obj).__name__)
                 result = method(obj)
             else:
                 if method_args is not None:
@@ -207,19 +207,19 @@ class Super(ABC):
 
                 for param in required_params:
                     if param not in final_args:
-                        logger.error(f"Missing required argument '{param}' for {method_name}")
+                        logger.error("Missing required argument '%s' for %s", param, method_name)
                         return self._build_response(obj, False, method_name, None, f"Missing required argument '{param}'")
 
                 valid_args = {k: v for k, v in final_args.items() if k in expected_params}
                 result = method(obj, **valid_args) if 'obj' not in expected_params else method(**valid_args)
 
-            logger.debug(f"Applied {method_name} to {type(obj).__name__}, result={result}")
+            logger.debug("Applied %s to %s, result=%s", method_name, type(obj).__name__, result)
             return self._build_response(obj, True, method_name, result)
         except TypeError as e:
-            logger.error(f"TypeError applying {method_name} to {type(obj).__name__}: {str(e)}")
+            logger.error("TypeError applying %s to %s: %s", method_name, type(obj).__name__, str(e))
             return self._build_response(obj, False, method_name, None, f"TypeError: {str(e)}")
         except Exception as e:
-            logger.error(f"Failed to apply {method_name} to {type(obj).__name__}: {str(e)}")
+            logger.error("Failed to apply %s to %s: %s", method_name, type(obj).__name__, str(e))
             return self._build_response(obj, False, method_name, None, f"Failed to apply {method_name}: {str(e)}")
     
     def register_method(self, obj_type: Type, method_name: str, method: Callable) -> None:
@@ -234,7 +234,7 @@ class Super(ABC):
             self._methods[obj_type] = {}
         self._methods[obj_type][method_name] = method
         self._method_cache.clear()
-        logger.info(f"Registered method '{method_name}' for {obj_type.__name__}")
+        logger.info("Registered method '%s' for %s", method_name, obj_type.__name__)
 
     def _is_handler_name(self, name: str) -> bool:
         """Report whether a name denotes a handler for this operation.
@@ -374,7 +374,7 @@ class Super(ABC):
     def clear_cache(self) -> None:
         """Clear the resolved handler lookups, forcing them to be resolved again."""
         self._method_cache.clear()
-        logger.debug(f"Cleared method cache for {self.__class__.__name__}")
+        logger.debug("Cleared method cache for %s", self.__class__.__name__)
 
     def clear(self) -> None:
         """Clear all references to prevent memory leaks.
@@ -385,7 +385,7 @@ class Super(ABC):
         self._manipulator = None
         self._methods.clear()
         self.clear_cache()
-        logger.debug(f"Cleared references for {self.__class__.__name__}")
+        logger.debug("Cleared references for %s", self.__class__.__name__)
 
     def _default_result(self, obj: Any) -> Dict[str, Any]:
         """Provide a default result when an operation cannot be executed.
