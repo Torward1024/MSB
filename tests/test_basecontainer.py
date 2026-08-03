@@ -298,6 +298,33 @@ class TestBaseContainerFromDict:
         # For Union types, but TestEntity is single
         pass
 
+    def test_from_dict_restores_a_subclass_of_the_item_type(self):
+        class SpecialEntity(TestEntity):
+            extra: int
+
+        container = TestContainer(name="mixed")
+        container.add(TestEntity(name="plain", value=1))
+        container.add(SpecialEntity(name="special", value=2, extra=7))
+
+        restored = TestContainer.from_dict(container.to_dict())
+        assert type(restored.get("plain")) is TestEntity
+        assert type(restored.get("special")) is SpecialEntity
+        assert restored.get("special").extra == 7
+
+    def test_from_dict_rejects_a_type_that_is_not_an_item_type(self):
+        class Unrelated(BaseEntity):
+            value: int
+
+        data = {
+            "name": "test",
+            "isactive": True,
+            "items": {
+                "item1": {"name": "item1", "isactive": True, "value": 1, "type": "Unrelated"}
+            },
+        }
+        with pytest.raises(ValueError, match="Invalid type 'Unrelated'"):
+            TestContainer.from_dict(data)
+
 
 class TestBaseContainerMagicMethods:
     def test_iter(self, test_container):

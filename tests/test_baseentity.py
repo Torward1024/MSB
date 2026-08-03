@@ -402,14 +402,128 @@ class TestBaseEntityInvalidateCache:
         assert test_entity_with_cache._cached_to_dict is None
 
 
+def _build_module(module_name, source):
+    """Compile `source` into a fresh importable module, as if it were a separate file."""
+    import sys
+    import types
+    module = types.ModuleType(module_name)
+    module.__dict__['__name__'] = module_name
+    sys.modules[module_name] = module
+    exec(compile(source, module_name, 'exec'), module.__dict__)
+    for attribute in vars(module).values():
+        if isinstance(attribute, type):
+            attribute.__module__ = module_name
+    return module
+
+
 class TestBaseEntityResolveType:
     def test_resolve_type_basic(self):
         resolved = TestEntity._resolve_type(int)
         assert resolved == int
 
     def test_resolve_type_forward_ref(self):
-        # Assuming some forward ref, but for simplicity
-        pass  # Skip for now, as it requires more setup
+        class Referenced(BaseEntity):
+            tag: str
+
+        class Referring(BaseEntity):
+            peer: 'Referenced'
+
+        Referring._lookup_type_name = classmethod(lambda cls, name, path="": Referenced)
+        assert Referring._resolve_type('Referenced') is Referenced
+
+    def test_type_cache_is_per_class(self):
+        assert TestEntity._type_cache is not BaseEntity._type_cache
+        assert GenericEntity._type_cache is not TestEntity._type_cache
+
+    def test_same_name_in_two_modules_does_not_collide(self):
+        # A cache shared across the hierarchy and keyed by name used to make the second
+        # module's class fail validation against the first module's class of the same name.
+        source = (
+            "from src.msb_arch.base.baseentity import BaseEntity\n"
+            "class Node(BaseEntity):\n"
+            "    tag: str\n"
+            "class Holder(BaseEntity):\n"
+            "    peer: 'Node'\n"
+        )
+        first = _build_module('msb_test_module_a', source)
+        second = _build_module('msb_test_module_b', source)
+
+        assert first.Node is not second.Node
+        first.Holder(name='a', peer=first.Node(name='na', tag='A'))
+        second.Holder(name='b', peer=second.Node(name='nb', tag='B'))
+
+    def test_a_type_hint_naming_a_framework_symbol_prefers_the_local_class(self):
+        source = (
+            "from src.msb_arch.base.baseentity import BaseEntity\n"
+            "class Any(BaseEntity):\n"
+            "    tag: str\n"
+            "class Uses(BaseEntity):\n"
+            "    field: 'Any'\n"
+        )
+        module = _build_module('msb_test_module_shadow', source)
+        module.Uses(name='u', field=module.Any(name='a', tag='x'))
+        with pytest.raises(TypeError):
+            module.Uses(name='u', field=123)
+
+
+class TestBaseEntityPolymorphicFromDict:
+    """Nested entities are restored as the class named in their serialized payload."""
+
+    def test_nested_user_type_is_restored(self):
+        class Leaf(BaseEntity):
+            tag: str
+
+        class Holder(BaseEntity):
+            child: Leaf
+
+        holder = Holder(name='h', child=Leaf(name='l', tag='x'))
+        restored = Holder.from_dict(holder.to_dict())
+        assert isinstance(restored.child, Leaf)
+        assert restored.child.tag == 'x'
+
+    def test_subclass_stored_under_a_base_annotation_keeps_its_type(self):
+        class Leaf(BaseEntity):
+            tag: str
+
+        class SpecialLeaf(Leaf):
+            extra: int
+
+        class Holder(BaseEntity):
+            child: Leaf
+
+        holder = Holder(name='h', child=SpecialLeaf(name='s', tag='y', extra=7))
+        restored = Holder.from_dict(holder.to_dict())
+        assert isinstance(restored.child, SpecialLeaf)
+        assert restored.child.extra == 7
+
+    def test_ambiguous_type_name_is_reported(self):
+        source = (
+            "from src.msb_arch.base.baseentity import BaseEntity\n"
+            "class Duplicated(BaseEntity):\n"
+            "    v: int\n"
+        )
+        _build_module('msb_test_dup_a', source)
+        _build_module('msb_test_dup_b', source)
+
+        class Referrer(BaseEntity):
+            child: BaseEntity
+
+        payload = {'name': 'r', 'child': {'name': 'd', 'isactive': True,
+                                          'type': 'Duplicated', 'v': 1}}
+        with pytest.raises(TypeError, match="Ambiguous type 'Duplicated'"):
+            Referrer.from_dict(payload)
+
+    def test_unknown_type_falls_back_to_the_annotation(self):
+        class Leaf(BaseEntity):
+            tag: str
+
+        class Holder(BaseEntity):
+            child: Leaf
+
+        payload = {'name': 'h', 'isactive': True,
+                   'child': {'name': 'l', 'isactive': True, 'type': 'NeverDefined', 'tag': 'z'}}
+        restored = Holder.from_dict(payload)
+        assert isinstance(restored.child, Leaf)
 
 
 class TestBaseEntitySetattr:
