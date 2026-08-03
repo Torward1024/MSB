@@ -1,5 +1,6 @@
 # super/project.py
 from abc import ABC, abstractmethod
+from threading import RLock
 from typing import Dict, Any, Optional, Type, List, TypeVar
 from ..utils.validation import check_non_empty_string
 from ..utils.logging_setup import logger
@@ -20,6 +21,10 @@ class Project(ABC):
     name: str
     _item_type: Type[Serializable] = BaseEntity
     _container_types: Dict[Type[Serializable], Type[BaseContainer]] = {}
+    # Guards the cache above: two threads creating the first project of a type would
+    # otherwise each build a class, and the projects would hold containers of unrelated
+    # classes that compare unequal.
+    _container_lock = RLock()
 
     def __init__(self, name: str = "DEFAULT_PROJECT", items: Optional[Dict[str, BaseEntity]] = None):
         """Initialize a Project with a name and an optional dictionary of BaseEntity items.
@@ -53,13 +58,14 @@ class Project(ABC):
               of the same type unrelated, which broke equality between them.
         """
         item_type = cls._item_type
-        container_type = Project._container_types.get(item_type)
-        if container_type is None:
-            class TypedContainer(BaseContainer[item_type]):
-                pass
-            container_type = TypedContainer
-            Project._container_types[item_type] = container_type
-            logger.debug("Created container type for items of type '%s'", item_type.__name__)
+        with Project._container_lock:
+            container_type = Project._container_types.get(item_type)
+            if container_type is None:
+                class TypedContainer(BaseContainer[item_type]):
+                    pass
+                container_type = TypedContainer
+                Project._container_types[item_type] = container_type
+                logger.debug("Created container type for items of type '%s'", item_type.__name__)
         return container_type(items=items, name=name)
 
     def add_item(self, item: BaseEntity) -> None:

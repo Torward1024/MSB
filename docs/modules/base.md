@@ -18,6 +18,17 @@ carried two incompatible meanings inside one hierarchy.
 | A typed object addressed by attributes | `BaseEntity` |
 | A named collection of such objects | `BaseContainer[T]` |
 
+## Thread safety
+
+What MSB shares between objects is guarded: declaring classes, resolving type hints,
+generating a project's container class and resolving an operation handler can all happen on
+several threads at once. `to_dict` keeps its traversal marks in a context variable, so
+concurrent serializations never interfere.
+
+A single object is not guarded, exactly as a plain Python object is not. Two threads writing
+attributes of the same entity, or adding to the same container, must be serialized by the
+caller; with `use_cache=True` a write racing a read can leave a stale cached mapping.
+
 `entity.get("field")` reads an attribute; `container.get("name")` returns an item.
 `entity.clear()` nulls the attributes; `container.clear()` removes the items. A container
 stored as an attribute of an entity is serialized and restored normally, because both sides

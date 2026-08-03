@@ -34,6 +34,7 @@ everything closed moves to the Done table.
 | R27 | The class registry holds classes weakly, so dynamically built classes are released | no |
 | R28 | Cache invalidation reaches every owner, not only the one that adopted last | no |
 | R29 | `Super`'s extension points are documented; its last two unused helpers removed | only the removals |
+| R19 | Shared state is guarded; the container-class and handler-cache races are fixed and covered by tests that fail without the guards | no |
 | R5 | Named logger with a NullHandler, no configuration on import, all 107 log calls lazy | **yes** - the application configures logging |
 | R9 | `_operation` defaults from `OPERATION`; dispatch restricted to `_<operation>*` handlers | **yes** - a request can no longer name any other method |
 | R10 | An operation name that is not an identifier, or that shadows a Manipulator attribute, is rejected | only already-broken registrations |
@@ -47,7 +48,6 @@ everything closed moves to the Done table.
 
 | # | Item | Where | Cost | Breaking |
 | --- | --- | --- | --- | --- |
-| R19 | No thread safety, with mutable state held at class level | package-wide | L | no |
 | R30 | The Super and Mega layers are the reason to choose MSB and the least examined part of it: dispatch is driven by strings, facades are installed with `setattr` and are invisible to a type checker, and coverage sits at 82% and 80% against 88% for the base layer | `super.py`, `manipulator.py` | L | depends |
 
 ## Working order
@@ -58,7 +58,7 @@ Ordered by cost and regression risk rather than strictly by criticality.
 - [x] **Wave 2** - critical, moderate cost, needs new tests: R1, R7, R6, R11. R1 and R7 both touch `_resolve_type`, so they belong together
 - [x] **Wave 3** - contract changes, each needs a decision before code: R5, R9, R10, R12, R15, R16, R17, R18b
 - [x] **Wave 4** - R13 shipped in 0.3.0, together with R27 to R29 found while re-assessing it
-- [ ] **Wave 5** - the operation layer: R19, R30
+- [ ] **Wave 5** - the operation layer: R30. R19 shipped in 0.3.2
 
 ## Release notes
 

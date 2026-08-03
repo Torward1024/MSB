@@ -13,9 +13,17 @@ from typing import (Dict,
                     get_args)
 import weakref
 from contextvars import ContextVar
+from threading import RLock
 from ..utils.logging_setup import logger
 
 CYCLIC_REFERENCE = "<cyclic reference>"
+
+# Sentinel for cache lookups: None is a legitimate cached value, so it cannot mark a miss.
+_MISSING = object()
+
+# Guards the class registry. Declaring a class and reading the registry can happen on
+# different threads, and a WeakSet cannot be added to while it is being iterated.
+_REGISTRY_LOCK = RLock()
 
 # Identities already serialized during the current to_dict traversal. Kept here rather than
 # in a parameter so that `to_dict()` keeps the signature subclasses override, and so that
@@ -58,7 +66,8 @@ class EntityMeta(ABCMeta):
         annotations.update(attrs.get('__annotations__', {}))
         new_class._fields = annotations
         new_class._type_cache = {}
-        EntityMeta._entity_registry.setdefault(name, weakref.WeakSet()).add(new_class)
+        with _REGISTRY_LOCK:
+            EntityMeta._entity_registry.setdefault(name, weakref.WeakSet()).add(new_class)
         return new_class
 
     @classmethod
@@ -72,10 +81,13 @@ class EntityMeta(ABCMeta):
             List[type]: Matching classes, ordered by module and name so that error messages
                 and single-candidate resolution stay deterministic.
         """
-        entry = mcs._entity_registry.get(type_name)
-        if not entry:
-            return []
-        return sorted(entry, key=lambda c: (c.__module__ or "", c.__qualname__))
+        with _REGISTRY_LOCK:
+            entry = mcs._entity_registry.get(type_name)
+            if not entry:
+                return []
+            # Materialise inside the lock: another thread declaring a class would otherwise
+            # mutate the set while it is being iterated.
+            return sorted(entry, key=lambda c: (c.__module__ or "", c.__qualname__))
 
 class Serializable(ABC, metaclass=EntityMeta):
     """Common base for everything MSB validates, serializes and caches.
@@ -99,6 +111,17 @@ class Serializable(ABC, metaclass=EntityMeta):
           `BaseEntity` no longer matches a container.
         - Subclasses are expected to define `from_dict`, `clear`, `__eq__` and `__repr__`
           themselves, because those cannot mean the same thing for both.
+
+    Thread safety:
+        - State shared between objects is guarded: declaring classes, resolving type hints,
+          generating a container class for a project and resolving a handler are all safe to
+          do from several threads at once.
+        - `to_dict` keeps its traversal marks in a context variable, so concurrent
+          serializations never see each other's.
+        - A single object is not guarded, exactly as a plain Python object is not. Two
+          threads writing attributes of the same entity, or adding to the same container,
+          have to be serialized by the caller; with caching enabled a write racing a read
+          can leave a stale cached mapping.
     """
     name: str
     isactive: bool
@@ -615,8 +638,11 @@ class Serializable(ABC, metaclass=EntityMeta):
         from typing import ForwardRef, TypeVar, get_args
 
         cache = cls._type_cache
-        if type_hint in cache:
-            return cache[type_hint]
+        # One lookup rather than a membership test followed by a read: nothing ever removes
+        # from this cache, so a concurrent write can only add the value we would compute.
+        cached = cache.get(type_hint, _MISSING)
+        if cached is not _MISSING:
+            return cached
         try:
             if isinstance(type_hint, (ForwardRef, str)):
                 type_name = type_hint.__forward_arg__ if isinstance(type_hint, ForwardRef) else type_hint
