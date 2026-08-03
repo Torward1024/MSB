@@ -12,9 +12,15 @@ from typing import (Dict,
                     get_origin,
                     get_args)
 import weakref
+from contextvars import ContextVar
 from ..utils.logging_setup import logger
 
 CYCLIC_REFERENCE = "<cyclic reference>"
+
+# Identities already serialized during the current to_dict traversal. Kept here rather than
+# in a parameter so that `to_dict()` keeps the signature subclasses override, and so that
+# concurrent serializations do not share marks.
+_TRAVERSAL: ContextVar = ContextVar("msb_arch_to_dict_seen", default=None)
 
 class EntityMeta(ABCMeta):
     """Metaclass for Serializable to handle type annotations and enforce attribute validation.
@@ -93,37 +99,6 @@ class Serializable(ABC, metaclass=EntityMeta):
           `BaseEntity` no longer matches a container.
         - Subclasses are expected to define `from_dict`, `clear`, `__eq__` and `__repr__`
           themselves, because those cannot mean the same thing for both.
-    """
-    """Abstract base class for entities with attribute management, type validation, and universal serialization.
-
-    Provides a foundation for base entity classes in the MSB system. Defines common functionality
-    for managing attributes with type checking, an active/inactive state, and universal serialization methods,
-    including support for nested entities.
-
-    Attributes:
-        name (str): An identifier for the entity.
-        isactive (bool): Indicates whether the entity is active or inactive.
-        _fields (Dict[str, type]): Class-level mapping of attribute names to their expected types (from annotations).
-
-    Notes:
-        - Logging is integrated via `utils.logging_setup.logger` to track initialization and state changes.
-        - This is an abstract base class and cannot be instantiated directly; it must be subclassed.
-        - Attributes are validated against type annotations defined in `__annotations__`.
-        - Serialization methods `to_dict` and `from_dict` automatically handle all annotated attributes, including nested entities.
-
-    Examples:
-        >>> class NestedEntity(Serializable):
-        ...     value: int
-        >>> class MyEntity(Serializable):
-        ...     name: str
-        ...     nested: NestedEntity
-        >>> nested = NestedEntity(value=42)
-        >>> entity = MyEntity(name="test", isactive=True, nested=nested)
-        >>> print(entity.to_dict())
-        {'name': 'test', 'isactive': True, 'nested': {'name': None, 'isactive': True, 'value': 42}}
-        >>> new_entity = MyEntity.from_dict({'name': 'test', 'isactive': True, 'nested': {'name': None, 'isactive': True, 'value': 42}})
-        >>> print(new_entity)
-        MyEntity(name='test', isactive=True, nested=NestedEntity(isactive=True, value=42))
     """
     name: str
     isactive: bool
@@ -459,16 +434,11 @@ class Serializable(ABC, metaclass=EntityMeta):
         self.isactive = False
         self._invalidate_cache()
         logger.debug("Deactivated %s instance", self.__class__.__name__)
-    def to_dict(self, _seen: Optional[Set[int]] = None) -> dict:
+    def to_dict(self) -> dict:
         """Convert the entity to a dictionary for serialization.
 
         Automatically serializes the entity's state, including all annotated attributes,
         with nested entities recursively serialized. Always includes a 'type' field with the class name.
-
-        Args:
-            _seen (Optional[Set[int]]): Internal. Identities already serialized during the
-                current traversal, threaded through the recursion so that a reference back
-                into the structure is marked instead of followed.
 
         Returns:
             dict: A dictionary containing the entity's serialized data.
@@ -477,6 +447,12 @@ class Serializable(ABC, metaclass=EntityMeta):
             - A reference to an entity already serialized in this traversal is replaced with
               `CYCLIC_REFERENCE`, which makes genuine cycles terminate rather than exhaust
               the stack.
+            - The traversal state lives in a context variable rather than in a parameter, so
+              this signature stays the one a subclass overrides. Passing it as an argument
+              broke every override written as `def to_dict(self)`, which is how subclasses
+              are meant to write it.
+            - Because the state is contextual it is also per thread and per task, so two
+                concurrent serializations never see each other's marks.
             - When caching is enabled the very same mapping is returned on every call. Treat
               it as read only: mutating it corrupts the cache. Copy it before changing it.
             - The cache is only written at the root of a traversal. A nested result can carry
@@ -485,21 +461,28 @@ class Serializable(ABC, metaclass=EntityMeta):
         if self._use_cache and self._cached_to_dict is not None:
             return self._cached_to_dict
 
-        seen = set() if _seen is None else _seen
-        seen.add(id(self))
-        data = {"name": self.name, "isactive": self.isactive, "type": self.__class__.__name__}
-        for key in self._fields:
-            if key.startswith('_'):
-                continue
-            if not hasattr(self, key):
-                continue
-            value = getattr(self, key)
-            if isinstance(value, Serializable):
-                data[key] = CYCLIC_REFERENCE if id(value) in seen else value.to_dict(_seen=seen)
-            else:
-                data[key] = value
+        seen = _TRAVERSAL.get()
+        is_root = seen is None
+        token = _TRAVERSAL.set(set()) if is_root else None
+        seen = _TRAVERSAL.get()
+        try:
+            seen.add(id(self))
+            data = {"name": self.name, "isactive": self.isactive, "type": self.__class__.__name__}
+            for key in self._fields:
+                if key.startswith('_'):
+                    continue
+                if not hasattr(self, key):
+                    continue
+                value = getattr(self, key)
+                if isinstance(value, Serializable):
+                    data[key] = CYCLIC_REFERENCE if id(value) in seen else value.to_dict()
+                else:
+                    data[key] = value
+        finally:
+            if is_root:
+                _TRAVERSAL.reset(token)
 
-        if self._use_cache and _seen is None:
+        if self._use_cache and is_root:
             self._cached_to_dict = data
         return data
     @classmethod

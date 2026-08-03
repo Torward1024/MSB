@@ -13,7 +13,7 @@ from typing import (Dict,
                     get_type_hints, 
                     get_args, 
                     get_origin)
-from ..base.serializable import CYCLIC_REFERENCE, Serializable
+from ..base.serializable import CYCLIC_REFERENCE, Serializable, _TRAVERSAL
 from ..utils.logging_setup import logger
 
 T = TypeVar('T', bound=Serializable)
@@ -513,7 +513,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         self._invalidate_cache()
         logger.debug("Deactivated item with name '%s' in %s", name, self.__class__.__name__)
 
-    def to_dict(self, *, handle_cyclic_refs: str = "mark", _seen: Optional[Set[int]] = None) -> dict:
+    def to_dict(self, handle_cyclic_refs: str = "mark") -> dict:
         """Convert the container to a dictionary for serialization.
 
         Serializes the container's state, including its name, activation status, and all items,
@@ -524,8 +524,6 @@ class BaseContainer(Serializable, ABC, Generic[T]):
                 - "mark": Replace with `CYCLIC_REFERENCE` (default).
                 - "ignore": Skip cyclic references.
                 - "raise": Raise an error on cyclic references.
-            _seen (Optional[Set[int]]): Internal. Identities already serialized during the
-                current traversal, threaded through the recursion.
 
         Returns:
             dict: A dictionary containing the container's serialized data.
@@ -534,6 +532,11 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             ValueError: If handle_cyclic_refs is invalid or cyclic reference is detected with "raise" option.
 
         Notes:
+            - Items are serialized through a plain `to_dict()` call, so a subclass may
+              override it with the signature it has always had.
+            - `handle_cyclic_refs` applies to the items of this container. A nested container
+              reached through them uses its own default, since the traversal carries no
+              policy with it.
             - When caching is enabled the very same mapping is returned on every call. Treat
               it as read only: mutating it corrupts the cache.
         """
@@ -542,22 +545,27 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         if self._use_cache and self._cached_to_dict is not None:
             return self._cached_to_dict
 
-        seen = set() if _seen is None else _seen
-        data = super().to_dict(_seen=seen)
-        items_dict = {}
-        for name, item in self._items.items():
-            if id(item) in seen:
-                if handle_cyclic_refs == "raise":
-                    raise ValueError(f"Cyclic reference detected for item '{name}'")
-                if handle_cyclic_refs == "ignore":
-                    continue
-                items_dict[name] = CYCLIC_REFERENCE
-            elif isinstance(item, BaseContainer):
-                items_dict[name] = item.to_dict(handle_cyclic_refs=handle_cyclic_refs, _seen=seen)
-            else:
-                items_dict[name] = item.to_dict(_seen=seen)
-        data["items"] = items_dict
-        if self._use_cache and _seen is None:
+        is_root = _TRAVERSAL.get() is None
+        token = _TRAVERSAL.set(set()) if is_root else None
+        seen = _TRAVERSAL.get()
+        try:
+            data = super().to_dict()
+            items_dict = {}
+            for name, item in self._items.items():
+                if id(item) in seen:
+                    if handle_cyclic_refs == "raise":
+                        raise ValueError(f"Cyclic reference detected for item '{name}'")
+                    if handle_cyclic_refs == "ignore":
+                        continue
+                    items_dict[name] = CYCLIC_REFERENCE
+                else:
+                    items_dict[name] = item.to_dict()
+            data["items"] = items_dict
+        finally:
+            if is_root:
+                _TRAVERSAL.reset(token)
+
+        if self._use_cache and is_root:
             self._cached_to_dict = data
         return data
 

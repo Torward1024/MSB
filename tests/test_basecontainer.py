@@ -571,3 +571,78 @@ class TestHierarchySeparation:
 
     def test_both_are_hashable(self):
         assert len({TestEntity(name="e", value=1), TestContainer(name="c")}) == 2
+
+
+class DecoratedEntity(BaseEntity):
+    """Mirrors how downstream code overrides to_dict: same signature, extra keys."""
+    value: int
+
+    def to_dict(self) -> dict:
+        data = super().to_dict()
+        data["extra"] = "added by the subclass"
+        return data
+
+
+class DecoratedBox(BaseContainer[DecoratedEntity]):
+    pass
+
+
+class DecoratedHolder(BaseEntity):
+    child: DecoratedEntity
+
+
+class TestSubclassOverridesToDict:
+    """A subclass may override to_dict with the signature it has always had.
+
+    Threading the traversal state through a parameter broke every downstream override
+    written as `def to_dict(self)`, which is the documented way to write one. The tests
+    that existed did not catch it because the container was never populated, so items were
+    never serialized through it.
+    """
+
+    def test_container_serializes_an_overriding_item(self):
+        box = TestContainer(name="box")
+        box.add(TestEntity(name="item1", value=1))
+        assert box.to_dict()["items"]["item1"]["value"] == 1
+
+    def test_an_overriding_item_keeps_its_additions(self):
+        box = DecoratedBox(name="box")
+        box.add(DecoratedEntity(name="item1", value=1))
+        data = box.to_dict()["items"]["item1"]
+        assert data["extra"] == "added by the subclass"
+        assert data["value"] == 1
+
+    def test_an_overriding_entity_nested_in_another_entity(self):
+        holder = DecoratedHolder(name="holder", child=DecoratedEntity(name="child", value=2))
+        assert holder.to_dict()["child"]["extra"] == "added by the subclass"
+
+    def test_handle_cyclic_refs_is_still_positional(self):
+        box = TestContainer(name="box")
+        box.add(TestEntity(name="item1", value=1))
+        assert "items" in box.to_dict("ignore")
+        with pytest.raises(ValueError):
+            box.to_dict("nonsense")
+
+    def test_traversal_state_does_not_leak_between_calls(self):
+        box = TestContainer(name="box")
+        box.add(TestEntity(name="item1", value=1))
+        first = box.to_dict()
+        second = box.to_dict()
+        assert first == second
+        assert second["items"]["item1"]["value"] == 1
+
+    def test_cycles_still_terminate_with_an_overriding_subclass(self):
+        class Node(BaseEntity):
+            peer: 'Node'
+
+            def to_dict(self) -> dict:
+                data = super().to_dict()
+                data["marker"] = True
+                return data
+
+        first = Node(name="first", peer=None)
+        second = Node(name="second", peer=first)
+        first.peer = second
+        data = first.to_dict()
+        assert data["marker"] is True
+        assert data["peer"]["peer"] == CYCLIC_REFERENCE
