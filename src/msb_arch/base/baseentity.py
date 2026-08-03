@@ -7,9 +7,14 @@ from typing import (Dict,
                     List,
                     Any,
                     Literal,
+                    Optional,
+                    Set,
                     get_origin,
                     get_args)
+import weakref
 from ..utils.logging_setup import logger
+
+CYCLIC_REFERENCE = "<cyclic reference>"
 
 class EntityMeta(ABCMeta):
     """Metaclass for BaseEntity to handle type annotations and enforce attribute validation.
@@ -19,7 +24,20 @@ class EntityMeta(ABCMeta):
 
     Attributes:
         _fields (Dict[str, type]): Dictionary of annotated attribute names and their expected types.
+        _type_cache (Dict[Any, Any]): Per-class cache of resolved type hints.
+        _entity_registry (Dict[str, List[type]]): Every class built by this metaclass, grouped
+            by class name, used to reconstruct nested entities from their serialized 'type'.
+
+    Notes:
+        - Every class gets its own `_type_cache`. A cache shared through the hierarchy would
+          be keyed by names that are only unique within one module, so two modules each
+          defining a class of the same name would resolve to whichever was seen first.
+        - The registry deliberately groups by name rather than overwriting, so a name used in
+          two modules is reported as ambiguous instead of silently resolving to one of them.
     """
+
+    _entity_registry: Dict[str, List[type]] = {}
+
     def __new__(cls, name, bases, attrs):
         new_class = super().__new__(cls, name, bases, attrs)
         annotations = {}
@@ -29,6 +47,10 @@ class EntityMeta(ABCMeta):
             annotations.update(getattr(base, '__annotations__', {}))
         annotations.update(attrs.get('__annotations__', {}))
         new_class._fields = annotations
+        new_class._type_cache = {}
+        registered = EntityMeta._entity_registry.setdefault(name, [])
+        if new_class not in registered:
+            registered.append(new_class)
         return new_class
 
 class BaseEntity(ABC, metaclass=EntityMeta):
@@ -85,6 +107,7 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         self._validate_type('use_cache', use_cache, bool)
         super().__setattr__('_use_cache', use_cache)
         super().__setattr__('_cached_to_dict', None)
+        super().__setattr__('_parent', None)
         self._validate_type('name', name, str)
         super().__setattr__('name', name)
         self._validate_type('isactive', isactive, bool)
@@ -97,6 +120,8 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             expected_type = self._resolve_type(self._fields[field])
             self._validate_type(field, value, expected_type)
             super().__setattr__(field, value)
+            if isinstance(value, BaseEntity):
+                value._adopt(self)
 
         unknown_attrs = set(kwargs.keys()) - set(self._fields.keys())
         if unknown_attrs:
@@ -104,10 +129,52 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         
         logger.debug(f"Initialized {self.__class__.__name__} instance with name={name}, isactive={isactive}")
     
+    def _adopt(self, owner: Optional['BaseEntity'] = None, _seen: Optional[Set[int]] = None) -> None:
+        """Record ownership for this entity and for everything it holds.
+
+        Args:
+            owner (Optional[BaseEntity]): The entity or container taking ownership.
+            _seen (Optional[Set[int]]): Internal. Identities already visited, so a cyclic
+                structure is adopted once rather than endlessly.
+
+        Notes:
+            - The owner is held weakly, so an entity never keeps it alive.
+            - The whole subtree is walked, not just this node: `deepcopy` treats a weak
+              reference as atomic, so the copies made by `add` would otherwise keep pointing
+              at the originals and invalidation would never reach the new owner.
+            - An entity tracks a single owner. Containers deep copy on `add` by default, so
+              each container holds its own copy and the two do not compete for the slot.
+        """
+        seen = set() if _seen is None else _seen
+        if id(self) in seen:
+            return
+        seen.add(id(self))
+        if owner is not None:
+            super().__setattr__('_parent', weakref.ref(owner))
+        for key in self._fields:
+            if key.startswith('_'):
+                continue
+            value = getattr(self, key, None)
+            if isinstance(value, BaseEntity):
+                value._adopt(self, seen)
+
     def _invalidate_cache(self) -> None:
-        """Invalidate the cache of the entity."""
-        if self._use_cache and hasattr(self, '_cached_to_dict'):
-            self._cached_to_dict = None
+        """Drop the cached serialization of this entity and of everything that owns it.
+
+        Notes:
+            - A container serializes its items, so a mutated item makes every ancestor
+              stale. Invalidation therefore walks up the ownership chain rather than down
+              into the children, which is both correct and cheap.
+            - The walk is guarded against a cycle in the ownership chain.
+        """
+        node = self
+        visited = set()
+        while node is not None and id(node) not in visited:
+            visited.add(id(node))
+            if getattr(node, '_use_cache', False) and hasattr(node, '_cached_to_dict'):
+                super(BaseEntity, node).__setattr__('_cached_to_dict', None)
+            parent_ref = getattr(node, '_parent', None)
+            node = parent_ref() if parent_ref is not None else None
 
     def _validate_type(self, key: str, value: Any, expected_type: Any) -> None:
         """Validate that a value matches the expected type.
@@ -425,51 +492,48 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         """
         return self.__class__.from_dict(self.to_dict())
 
-    def to_dict(self) -> dict:
+    def to_dict(self, _seen: Optional[Set[int]] = None) -> dict:
         """Convert the entity to a dictionary for serialization.
 
         Automatically serializes the entity's state, including all annotated attributes,
         with nested entities recursively serialized. Always includes a 'type' field with the class name.
 
+        Args:
+            _seen (Optional[Set[int]]): Internal. Identities already serialized during the
+                current traversal, threaded through the recursion so that a reference back
+                into the structure is marked instead of followed.
+
         Returns:
             dict: A dictionary containing the entity's serialized data.
+
+        Notes:
+            - A reference to an entity already serialized in this traversal is replaced with
+              `CYCLIC_REFERENCE`, which makes genuine cycles terminate rather than exhaust
+              the stack.
+            - When caching is enabled the very same mapping is returned on every call. Treat
+              it as read only: mutating it corrupts the cache. Copy it before changing it.
+            - The cache is only written at the root of a traversal. A nested result can carry
+              cycle markers that only hold relative to that root, so it is never stored.
         """
         if self._use_cache and self._cached_to_dict is not None:
-            valid_cache = True
-            for key in self._fields:
-                if key.startswith('_'):
-                    continue
-                if hasattr(self, key):
-                    value = getattr(self, key)
-                    if isinstance(value, BaseEntity):
-                        cached_nested = self._cached_to_dict.get(key)
-                        current_nested = value.to_dict()
-                        if cached_nested != current_nested:
-                            valid_cache = False
-                            break
-            if valid_cache:
-                return self._cached_to_dict
-        
-        seen = set()
-        data = {"name": self.name, "isactive": self.isactive, "type": self.__class__.__name__}
+            return self._cached_to_dict
+
+        seen = set() if _seen is None else _seen
         seen.add(id(self))
+        data = {"name": self.name, "isactive": self.isactive, "type": self.__class__.__name__}
         for key in self._fields:
             if key.startswith('_'):
                 continue
-            if hasattr(self, key):
-                value = getattr(self, key)
-                if isinstance(value, BaseEntity):
-                    if id(value) in seen:
-                        data[key] = "<cyclic reference>"
-                    else:
-                        data[key] = value.to_dict()
-                        seen.add(id(value))
-                else:
-                    data[key] = value
-        
-        if self._use_cache:
+            if not hasattr(self, key):
+                continue
+            value = getattr(self, key)
+            if isinstance(value, BaseEntity):
+                data[key] = CYCLIC_REFERENCE if id(value) in seen else value.to_dict(_seen=seen)
+            else:
+                data[key] = value
+
+        if self._use_cache and _seen is None:
             self._cached_to_dict = data
-            return self._cached_to_dict
         return data
 
     @classmethod
@@ -499,13 +563,8 @@ class BaseEntity(ABC, metaclass=EntityMeta):
                 raise ValueError(f"Unknown attribute '{key}' for {cls.__name__}")
             expected_type = cls._resolve_type(cls._fields[key])
             if isinstance(value, dict) and "type" in value:
-                type_name = value["type"]
-                type_cls = None
-                if type_name == cls.__name__:
-                    type_cls = cls
-                else:
-                    type_cls = globals().get(type_name)
-                if type_cls and issubclass(type_cls, BaseEntity):
+                type_cls = cls._resolve_entity_type(value["type"], expected_type)
+                if type_cls is not None:
                     kwargs[key] = type_cls.from_dict(value)
                     continue
             if isinstance(expected_type, str):
@@ -521,80 +580,158 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         return cls(name=data.get("name"), isactive=data.get("isactive", True), **kwargs)
     
     @classmethod
-    def _resolve_type(cls, type_hint):
-        """Resolve forward references to actual types.
+    def _resolve_entity_type(cls, type_name: str, expected_type: Any = None) -> Any:
+        """Find the entity class that a serialized 'type' field refers to.
 
         Args:
-            type_hint: The type hint to resolve, potentially a string (forward reference) or a type.
+            type_name (str): The class name recorded by `to_dict`.
+            expected_type (Any): The annotated type of the attribute being restored, used to
+                narrow the search. May be any type hint, or None.
 
         Returns:
-            The resolved type, or raises an error if unresolvable.
+            Any: The matching entity class, or None if the name is not known.
+
+        Raises:
+            TypeError: If several registered classes share the name and none of them can be
+                singled out.
+
+        Notes:
+            - Candidates are taken from the metaclass registry, so classes defined anywhere
+              are found; the previous lookup consulted only the framework module's globals
+              and therefore never resolved a user type.
+            - Resolution order: this class, then the annotated type, then a class declared in
+              the same module as this one, then a subclass of the annotated type.
+        """
+        if type_name == cls.__name__:
+            return cls
+        if isinstance(expected_type, type) and expected_type.__name__ == type_name:
+            return expected_type
+
+        candidates = EntityMeta._entity_registry.get(type_name, [])
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+
+        same_module = [c for c in candidates if c.__module__ == cls.__module__]
+        if len(same_module) == 1:
+            return same_module[0]
+        if isinstance(expected_type, type):
+            narrowed = [c for c in candidates if issubclass(c, expected_type)]
+            if len(narrowed) == 1:
+                return narrowed[0]
+
+        raise TypeError(
+            f"Ambiguous type '{type_name}' while restoring {cls.__name__}: "
+            f"{sorted(f'{c.__module__}.{c.__name__}' for c in candidates)}"
+        )
+
+    @classmethod
+    def _lookup_type_name(cls, type_name: str, field_path: str = "") -> Any:
+        """Resolve a bare type name against the module that defines this class.
+
+        Args:
+            type_name (str): The name to resolve.
+            field_path (str): Optional description of the field being resolved, used in errors.
+
+        Returns:
+            Any: The resolved object.
+
+        Raises:
+            TypeError: If the name cannot be found.
+
+        Notes:
+            - Resolution order: this class itself, the module that defines it, the framework
+              module, then the entity registry. The defining module is consulted before the
+              framework module so a user class never loses to a same-named framework symbol.
+            - Checking this class first lets a self-referential entity such as
+              `peer: 'Node'` inside `class Node` resolve wherever the class is declared,
+              including inside a function, where it is not reachable through its module.
+            - The registry is a last resort and only accepted when the name is unambiguous,
+              so a name declared in two modules still reports an error rather than guessing.
+        """
+        from inspect import getmodule
+
+        if type_name == cls.__name__:
+            return cls
+
+        module = getmodule(cls)
+        resolved = getattr(module, type_name, None) if module else None
+        if resolved is None:
+            resolved = globals().get(type_name)
+        if resolved is None:
+            candidates = EntityMeta._entity_registry.get(type_name, [])
+            if len(candidates) == 1:
+                resolved = candidates[0]
+            elif len(candidates) > 1:
+                raise TypeError(
+                    f"Ambiguous type name '{type_name}' for {field_path or cls.__name__}: "
+                    f"{sorted(f'{c.__module__}.{c.__name__}' for c in candidates)}"
+                )
+        if resolved is None:
+            raise TypeError(f"Cannot resolve type name '{type_name}' for {field_path or cls.__name__}")
+        return resolved
+
+    @classmethod
+    def _resolve_type(cls, type_hint: Any, field_path: str = "") -> Any:
+        """Resolve forward references and type variables to actual types.
+
+        Args:
+            type_hint (Any): The type hint to resolve, potentially a string or `ForwardRef`.
+            field_path (str): Optional description of the field being resolved, used in errors.
+
+        Returns:
+            Any: The resolved type.
 
         Raises:
             TypeError: If the type hint cannot be resolved.
+
+        Notes:
+            - Results are cached per class, so a name is always resolved in the context of
+              the class that declared it.
+            - Parameterized generics are returned unchanged; `_check_type` walks their
+              arguments and resolves each of them in turn.
         """
         from typing import ForwardRef, TypeVar, get_args
 
-        if type_hint in cls._type_cache:
-            return cls._type_cache[type_hint]
+        cache = cls._type_cache
+        if type_hint in cache:
+            return cache[type_hint]
         try:
-            if isinstance(type_hint, ForwardRef):
-                type_name = type_hint.__forward_arg__
-                resolved = globals().get(type_name)
-                if resolved is None:
-                    from inspect import getmodule
-                    module = getmodule(cls)
-                    resolved = getattr(module, type_name, None) if module else None
-                    if resolved is None:
-                        raise TypeError(f"Cannot resolve forward reference '{type_name}' in {cls.__name__}")
-                if hasattr(resolved, '_fields'):
+            if isinstance(type_hint, (ForwardRef, str)):
+                type_name = type_hint.__forward_arg__ if isinstance(type_hint, ForwardRef) else type_hint
+                resolved = cls._lookup_type_name(type_name, field_path)
+                if hasattr(resolved, '_fields') and resolved is not cls:
+                    # Warm the target's own cache in its own context, not in ours.
                     for field, field_type in resolved._fields.items():
-                        cls._resolve_type(field_type)
-                cls._type_cache[type_hint] = resolved
+                        try:
+                            resolved._resolve_type(field_type, field_path=f"{resolved.__name__}.{field}")
+                        except TypeError:
+                            logger.debug("Deferred resolution of '%s.%s'", resolved.__name__, field)
+                cache[type_hint] = resolved
                 return resolved
 
-            if isinstance(type_hint, str):
-                resolved = globals().get(type_hint)
-                if resolved is None:
-                    from inspect import getmodule
-                    module = getmodule(cls)
-                    resolved = getattr(module, type_hint, None) if module else None
-                    if resolved is None:
-                        raise TypeError(f"Cannot resolve type hint '{type_hint}' in {cls.__name__}")
-                cls._type_cache[type_hint] = resolved
+            if isinstance(type_hint, TypeVar):
+                args = get_args(cls.__orig_bases__[0]) if getattr(cls, '__orig_bases__', None) else ()
+                if args:
+                    resolved = cls._resolve_type(args[0], field_path)
+                elif type_hint.__bound__:
+                    resolved = cls._resolve_type(type_hint.__bound__, field_path)
+                elif type_hint.__constraints__:
+                    resolved = cls._resolve_type(type_hint.__constraints__[0], field_path)
+                else:
+                    raise TypeError(f"Cannot resolve TypeVar '{type_hint}' in {cls.__name__}")
+                cache[type_hint] = resolved
                 return resolved
 
-            elif isinstance(type_hint, TypeVar):
-                if hasattr(cls, '__orig_bases__'):
-                    for base in cls.__orig_bases__:
-                        args = get_args(base)
-                        if args and isinstance(type_hint, TypeVar):
-                            if len(args) > 0:
-                                resolved = cls._resolve_type(args[0])
-                                cls._type_cache[type_hint] = resolved
-                                return resolved
-                            bound = type_hint.__bound__
-                            if bound:
-                                resolved = cls._resolve_type(bound)
-                                cls._type_cache[type_hint] = resolved
-                                return resolved
-                            constraints = type_hint.__constraints__
-                            if constraints:
-                                resolved = cls._resolve_type(constraints[0])
-                                cls._type_cache[type_hint] = resolved
-                                return resolved
-                raise TypeError(f"Cannot resolve TypeVar '{type_hint}' in {cls.__name__}")
-
-            elif hasattr(type_hint, "__origin__"):
-                cls._type_cache[type_hint] = type_hint
-                return type_hint
-
-            cls._type_cache[type_hint] = type_hint
+            cache[type_hint] = type_hint
             return type_hint
+        except TypeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to resolve type hint {type_hint}: {str(e)}")
-            raise TypeError(f"Type resolution failed for {type_hint} in {cls.__name__}: {str(e)}")
-    
+            raise TypeError(f"Type resolution failed for {type_hint} in {field_path or cls.__name__}: {str(e)}")
+
     def clear(self) -> None:
         """Clear all public attributes to release references.
 
@@ -686,6 +823,10 @@ class BaseEntity(ABC, metaclass=EntityMeta):
         Raises:
             ValueError: If the key is not in the entity's fields (except for 'name' and 'isactive').
             TypeError: If the value does not match the annotated type.
+
+        Notes:
+            - Assigning a nested entity records this entity as its owner, so mutating the
+              nested entity later invalidates the cached serialization of both.
         """
         internal_attrs = {"name", "isactive", "_use_cache", "_cached_to_dict", "_container"}
         if key in internal_attrs or key.startswith('_'):
@@ -694,6 +835,8 @@ class BaseEntity(ABC, metaclass=EntityMeta):
             expected_type = self._resolve_type(self._fields[key])
             self._validate_type(key, value, expected_type)
             super().__setattr__(key, value)
+            if isinstance(value, BaseEntity):
+                value._adopt(self)
             self._invalidate_cache()
             logger.debug(f"Set attribute '{key}' of {self.__class__.__name__}")
         else:

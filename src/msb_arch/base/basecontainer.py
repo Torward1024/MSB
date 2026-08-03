@@ -1,7 +1,8 @@
 # base/basecontainer.py
 from abc import ABC
 from copy import deepcopy
-from typing import (Dict, 
+from typing import (Dict,
+                    Set,
                     TypeVar, 
                     Generic, 
                     Any, 
@@ -12,7 +13,7 @@ from typing import (Dict,
                     get_type_hints, 
                     get_args, 
                     get_origin)
-from ..base.baseentity import BaseEntity
+from ..base.baseentity import BaseEntity, CYCLIC_REFERENCE
 from ..utils.logging_setup import logger
 
 T = TypeVar('T', bound=BaseEntity)
@@ -56,7 +57,6 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
     _items: Dict[str, T]
     _use_cache: bool
     _cached_to_dict: Dict[str, Any]
-    _type_cache: Dict[Any, Any] = {}
     _item_type: type
 
     def __init__(self, items: Dict[str, T] = None, name: str = None, isactive: bool = True, use_cache: bool = False):
@@ -129,6 +129,23 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
                 raise ValueError(f"Item name '{item.name}' does not match key '{key}' in {self.__class__.__name__}")
             self._validate_item(item)
 
+    def _adopt(self, owner: Optional['BaseEntity'] = None, _seen: Optional[Set[int]] = None) -> None:
+        """Record ownership for this container, its attributes and its items.
+
+        Args:
+            owner (Optional[BaseEntity]): The entity or container taking ownership.
+            _seen (Optional[Set[int]]): Internal. Identities already visited.
+
+        Notes:
+            - Extends `BaseEntity._adopt` to cover `_items`, which is not walked as a field.
+        """
+        seen = set() if _seen is None else _seen
+        if id(self) in seen:
+            return
+        super()._adopt(owner, seen)
+        for item in self._items.values():
+            item._adopt(self, seen)
+
     def _validate_item(self, item: T) -> None:
         """Hook for subclass-specific item validation.
 
@@ -173,6 +190,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
             if item_to_add.name in self._items:
                 raise ValueError(f"Item with name '{item_to_add.name}' already exists in {self.__class__.__name__}")
             self._items[item_to_add.name] = item_to_add
+            item_to_add._adopt(self)
             logger.debug(f"Added item with name '{item_to_add.name}' to {self.__class__.__name__}")
 
         elif isinstance(item, list):
@@ -186,6 +204,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
                 if item_to_add.name in self._items:
                     raise ValueError(f"Item with name '{item_to_add.name}' at index {i} already exists in {self.__class__.__name__}")
                 self._items[item_to_add.name] = item_to_add
+                item_to_add._adopt(self)
                 logger.debug(f"Added item with name '{item_to_add.name}' to {self.__class__.__name__}")
 
         elif isinstance(item, BaseContainer):
@@ -206,6 +225,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
                 if item_to_add.name in self._items:
                     raise ValueError(f"Item with name '{item_to_add.name}' from BaseContainer already exists in {self.__class__.__name__}")
                 self._items[item_to_add.name] = item_to_add
+                item_to_add._adopt(self)
                 logger.debug(f"Added item with name '{item_to_add.name}' from BaseContainer to {self.__class__.__name__}")
 
         else:
@@ -236,6 +256,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
             raise ValueError(f"Item name '{item.name}' does not match key '{name}' in {self.__class__.__name__}")
         self._validate_item(item)
         self._items[name] = item
+        item._adopt(self)
         self._invalidate_cache()
         logger.debug(f"Set item with name '{name}' in {self.__class__.__name__}")
 
@@ -368,6 +389,8 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         self._items.clear()
         self._validate_items(items)
         self._items.update(items)
+        for item in self._items.values():
+            item._adopt(self)
         self._invalidate_cache()
         logger.debug(f"Set {len(items)} items in {self.__class__.__name__}")
 
@@ -477,7 +500,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         self._invalidate_cache()
         logger.debug(f"Deactivated item with name '{name}' in {self.__class__.__name__}")
 
-    def to_dict(self, handle_cyclic_refs: str = "mark") -> dict:
+    def to_dict(self, handle_cyclic_refs: str = "mark", _seen: Optional[Set[int]] = None) -> dict:
         """Convert the container to a dictionary for serialization.
 
         Serializes the container's state, including its name, activation status, and all items,
@@ -485,36 +508,43 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
 
         Args:
             handle_cyclic_refs (str): How to handle cyclic references. Options:
-                - "mark": Replace with "<cyclic reference>" (default).
+                - "mark": Replace with `CYCLIC_REFERENCE` (default).
                 - "ignore": Skip cyclic references.
                 - "raise": Raise an error on cyclic references.
+            _seen (Optional[Set[int]]): Internal. Identities already serialized during the
+                current traversal, threaded through the recursion.
 
         Returns:
             dict: A dictionary containing the container's serialized data.
 
         Raises:
             ValueError: If handle_cyclic_refs is invalid or cyclic reference is detected with "raise" option.
+
+        Notes:
+            - When caching is enabled the very same mapping is returned on every call. Treat
+              it as read only: mutating it corrupts the cache.
         """
-        if self._use_cache and self._cached_to_dict is not None:
-            return self._cached_to_dict
         if handle_cyclic_refs not in ("mark", "ignore", "raise"):
             raise ValueError(f"Invalid handle_cyclic_refs value: {handle_cyclic_refs}")
-        data = super().to_dict()
-        seen = {id(self)}
+        if self._use_cache and self._cached_to_dict is not None:
+            return self._cached_to_dict
+
+        seen = set() if _seen is None else _seen
+        data = super().to_dict(_seen=seen)
         items_dict = {}
         for name, item in self._items.items():
-            if isinstance(item, BaseEntity) and id(item) in seen:
+            if id(item) in seen:
                 if handle_cyclic_refs == "raise":
                     raise ValueError(f"Cyclic reference detected for item '{name}'")
-                elif handle_cyclic_refs == "ignore":
+                if handle_cyclic_refs == "ignore":
                     continue
-                else:  # mark
-                    items_dict[name] = "<cyclic reference>"
+                items_dict[name] = CYCLIC_REFERENCE
+            elif isinstance(item, BaseContainer):
+                items_dict[name] = item.to_dict(handle_cyclic_refs, _seen=seen)
             else:
-                items_dict[name] = item.to_dict()
-                seen.add(id(item))
+                items_dict[name] = item.to_dict(_seen=seen)
         data["items"] = items_dict
-        if self._use_cache:
+        if self._use_cache and _seen is None:
             self._cached_to_dict = data
         return data
 
@@ -567,6 +597,14 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
                         selected_type = candidate_type
                         break
                 if not selected_type:
+                    # The payload may name a subclass of the declared item type; look it up
+                    # in the entity registry and accept it if it really is one.
+                    for candidate_type in item_types:
+                        registered = cls._resolve_entity_type(type_name, candidate_type)
+                        if registered is not None and issubclass(registered, candidate_type):
+                            selected_type = registered
+                            break
+                if not selected_type:
                     raise ValueError(f"Invalid type '{type_name}' for item '{key}' in {cls.__name__}")
             elif is_union:
                 raise ValueError(f"Item '{key}' missing 'type' field required for Union type in {cls.__name__}")
@@ -579,100 +617,6 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
                 raise TypeError(f"Failed to deserialize item '{key}' in {cls.__name__}: {str(e)}") from e
         return cls(items=items, name=data.get("name"), isactive=data.get("isactive", True))
     
-    def _invalidate_cache(self) -> None:
-        """Invalidate the cache of the container.
-
-        Notes:
-            - Only the container's own cache is dropped. Walking the items to clear their
-              caches would be quadratic in the number of items, and it invalidates the wrong
-              direction: an item is not stale because its container changed.
-            - A container whose item is mutated in place still serves a stale `to_dict`
-              result while `_use_cache` is enabled; propagating invalidation upwards
-              requires a parent reference and is tracked separately.
-        """
-        super()._invalidate_cache()
-
-    @classmethod
-    def _resolve_type(cls, type_hint, field_path=""):
-        """Resolve forward references to actual types.
-
-        Args:
-            type_hint: The type hint to resolve, potentially a string (forward reference) or a type.
-
-        Returns:
-            The resolved type, or raises an error if unresolvable.
-
-        Raises:
-            TypeError: If the type hint cannot be resolved.
-        """
-        from typing import ForwardRef, TypeVar, get_args
-
-        if type_hint in cls._type_cache:
-            return cls._type_cache[type_hint]
-        try:
-            if isinstance(type_hint, ForwardRef):
-                type_name = type_hint.__forward_arg__
-                resolved = globals().get(type_name)
-                if resolved is None:
-                    from inspect import getmodule
-                    module = getmodule(cls)
-                    resolved = getattr(module, type_name, None) if module else None
-                    if resolved is None:
-                        raise TypeError(f"Cannot resolve forward reference '{type_name}' for {field_path or cls.__name__}")
-                if hasattr(resolved, '_fields'):
-                    for field, field_type in resolved._fields.items():
-                        try:
-                            cls._resolve_type(field_type, field_path=f"{field_path}.{field}" if field_path else field)
-                        except TypeError as e:
-                            raise TypeError(f"Failed to resolve nested type '{field}' in {resolved.__name__}: {str(e)}") from e
-                cls._type_cache[type_hint] = resolved
-                return resolved
-
-            if isinstance(type_hint, str):
-                resolved = globals().get(type_hint)
-                if resolved is None:
-                    from inspect import getmodule
-                    module = getmodule(cls)
-                    resolved = getattr(module, type_hint, None) if module else None
-                    if resolved is None:
-                        raise TypeError(f"Cannot resolve type hint '{type_hint}' for {field_path or cls.__name__}")
-                cls._type_cache[type_hint] = resolved
-                return resolved
-
-            elif isinstance(type_hint, TypeVar):
-                if hasattr(cls, '__orig_bases__'):
-                    for base in cls.__orig_bases__:
-                        args = get_args(base)
-                        if args and isinstance(type_hint, TypeVar):
-                            if len(args) > 0:
-                                resolved = cls._resolve_type(args[0])
-                                cls._type_cache[type_hint] = resolved
-                                return resolved
-                            bound = type_hint.__bound__
-                            if bound:
-                                resolved = cls._resolve_type(bound)
-                                cls._type_cache[type_hint] = resolved
-                                return resolved
-                            constraints = type_hint.__constraints__
-                            if constraints:
-                                resolved = cls._resolve_type(constraints[0])
-                                cls._type_cache[type_hint] = resolved
-                                return resolved
-                raise TypeError(f"Cannot resolve TypeVar '{type_hint}' in {cls.__name__}")
-
-            elif hasattr(type_hint, "__origin__"):
-                cls._type_cache[type_hint] = type_hint
-                return type_hint
-
-            cls._type_cache[type_hint] = type_hint
-            return type_hint
-        except TypeError as e:
-            logger.error(f"Failed to resolve type hint {type_hint}: {str(e)}")
-            raise TypeError(f"Type resolution failed for {type_hint} in {field_path or cls.__name__}: {str(e)}") from e
-        except Exception as e:
-            logger.error(f"Failed to resolve type hint {type_hint}: {str(e)}")
-            raise TypeError(f"Type resolution failed for {type_hint} in {field_path or cls.__name__}: {str(e)}") from e
-
     def __iter__(self) -> Iterator[T]:
         """Iterate over the items in the container.
 
@@ -756,7 +700,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
     def __setattr__(self, key: str, value: Any) -> None:
         super().__setattr__(key, value)
         if key != '_cached_to_dict':
-            self._cached_to_dict = None
+            self._invalidate_cache()
         logger.debug(f"Set attribute '{key}' of {self.__class__.__name__} to {value}")
     
     @property
