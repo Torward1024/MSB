@@ -56,6 +56,25 @@ class TestProjectCreateContainer:
         container = TestProject._create_container(name='test')
         assert container is not None
 
+    def test_container_type_is_reused_across_calls(self):
+        # A fresh class per call leaked one class per project and left the containers of
+        # two projects of the same type unrelated.
+        first = TestProject._create_container(name='first')
+        second = TestProject._create_container(name='second')
+        assert type(first) is type(second)
+
+    def test_containers_of_two_projects_compare_equal(self):
+        first = TestProject(name='ProjectA')
+        second = TestProject(name='ProjectB')
+        first.add_item(TestEntity(name='item1', value=1))
+        second.add_item(TestEntity(name='item1', value=1))
+        second._items.name = first._items.name
+        assert first._items == second._items
+
+    def test_repeated_projects_do_not_accumulate_classes(self):
+        classes = {type(TestProject(name=f'Project{i}')._items) for i in range(25)}
+        assert len(classes) == 1
+
 
 class TestProjectAddItem:
     def test_add_item_valid(self, test_project, test_entity):

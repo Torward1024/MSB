@@ -17,6 +17,7 @@ class Project(ABC):
     """
     name: str
     _item_type: Type[BaseEntity] = BaseEntity
+    _container_types: Dict[Type[BaseEntity], Type[BaseContainer]] = {}
 
     def __init__(self, name: str = "DEFAULT_PROJECT", items: Optional[Dict[str, BaseEntity]] = None):
         """Initialize a Project with a name and an optional dictionary of BaseEntity items.
@@ -43,10 +44,21 @@ class Project(ABC):
 
         Returns:
             BaseContainer: A new BaseContainer instance typed for the project's item type.
+
+        Notes:
+            - The generated container class is cached per item type. Building a fresh class
+              on every call leaked one class per project and made containers of two projects
+              of the same type unrelated, which broke equality between them.
         """
-        class TypedContainer(BaseContainer[cls._item_type]):
-            pass
-        return TypedContainer(items=items, name=name)
+        item_type = cls._item_type
+        container_type = Project._container_types.get(item_type)
+        if container_type is None:
+            class TypedContainer(BaseContainer[item_type]):
+                pass
+            container_type = TypedContainer
+            Project._container_types[item_type] = container_type
+            logger.debug(f"Created container type for items of type '{item_type.__name__}'")
+        return container_type(items=items, name=name)
 
     def add_item(self, item: BaseEntity) -> None:
         """Add a BaseEntity item to the project's container.
