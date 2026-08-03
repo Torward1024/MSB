@@ -1,6 +1,29 @@
 # Base Module
 
-The Base module provides the fundamental building blocks for the MSB Framework: `BaseEntity` and `BaseContainer`. These classes form the core data management layer.
+The base layer defines three classes.
+
+`Serializable` holds everything an object needs to be validated, serialized and cached:
+the annotated fields and their type checking, the `name` and `isactive` state, `to_dict`,
+the cache and the ownership graph invalidation travels through.
+
+`BaseEntity` and `BaseContainer` both derive from it, and **neither derives from the
+other**. An entity addresses its attributes; a container addresses its items. They spell
+that with the same words -- `get`, `set`, `clear`, `[]`, `in` -- which is exactly why they
+have to be siblings: while the container inherited from the entity, each of those names
+carried two incompatible meanings inside one hierarchy.
+
+| You want | Use |
+| --- | --- |
+| `isinstance` that accepts either | `Serializable` |
+| A typed object addressed by attributes | `BaseEntity` |
+| A named collection of such objects | `BaseContainer[T]` |
+
+`entity.get("field")` reads an attribute; `container.get("name")` returns an item.
+`entity.clear()` nulls the attributes; `container.clear()` removes the items. A container
+stored as an attribute of an entity is serialized and restored normally, because both sides
+are `Serializable`.
+
+
 
 ## BaseEntity
 

@@ -371,23 +371,23 @@ class TestBaseContainerCyclicReferences:
 
     def test_mark(self):
         container = self._self_containing()
-        items = container.to_dict("mark")["items"]
+        items = container.to_dict(handle_cyclic_refs="mark")["items"]
         assert items["itself"] == CYCLIC_REFERENCE
         assert items["item1"]["value"] == 1
 
     def test_ignore(self):
         container = self._self_containing()
-        assert set(container.to_dict("ignore")["items"]) == {"item1"}
+        assert set(container.to_dict(handle_cyclic_refs="ignore")["items"]) == {"item1"}
 
     def test_raise(self):
         container = self._self_containing()
         with pytest.raises(ValueError, match="Cyclic reference detected"):
-            container.to_dict("raise")
+            container.to_dict(handle_cyclic_refs="raise")
 
     def test_invalid_mode_is_rejected(self):
         container = TestContainer(name="plain")
         with pytest.raises(ValueError, match="Invalid handle_cyclic_refs"):
-            container.to_dict("nonsense")
+            container.to_dict(handle_cyclic_refs="nonsense")
 
 
 class TestBaseContainerCacheInvalidation:
@@ -518,3 +518,56 @@ class TestBaseContainerAddCopySemantics:
         assert empty_container.get("item1") is test_entity
         test_entity.value = 99
         assert empty_container.get("item1").value == 99
+
+
+class TestHierarchySeparation:
+    """A container is no longer an entity; both are Serializable."""
+
+    def test_a_container_is_not_an_entity(self):
+        from msb_arch.base.serializable import Serializable
+
+        container = TestContainer(name="c")
+        assert not isinstance(container, BaseEntity)
+        assert isinstance(container, Serializable)
+
+    def test_an_entity_is_not_a_container(self):
+        from msb_arch.base.serializable import Serializable
+
+        entity = TestEntity(name="e", value=1)
+        assert not isinstance(entity, BaseContainer)
+        assert isinstance(entity, Serializable)
+
+    def test_get_means_different_things_without_clashing(self):
+        entity = TestEntity(name="e", value=1)
+        container = TestContainer(name="c")
+        container.add(entity)
+        # the entity addresses its attributes, the container its items
+        assert entity.get("value") == 1
+        assert container.get("e").value == 1
+        assert entity.get() == {"name": "e", "isactive": True, "value": 1, "optional_value": None}
+
+    def test_clear_means_different_things_without_clashing(self):
+        entity = TestEntity(name="e", value=1)
+        container = TestContainer(name="c")
+        container.add(entity)
+        container.clear()
+        assert len(container) == 0
+        entity.clear()
+        assert entity.value is None
+        assert entity.name == "e"
+
+    def test_a_container_nested_in_an_entity_still_serializes(self):
+        class Holder(BaseEntity):
+            box: TestContainer
+
+        holder = Holder(name="holder", box=TestContainer(name="box"))
+        holder.box.add(TestEntity(name="item1", value=7))
+        data = holder.to_dict()
+        assert data["box"]["items"]["item1"]["value"] == 7
+
+        restored = Holder.from_dict(data)
+        assert isinstance(restored.box, TestContainer)
+        assert restored.box.get("item1").value == 7
+
+    def test_both_are_hashable(self):
+        assert len({TestEntity(name="e", value=1), TestContainer(name="c")}) == 2

@@ -32,11 +32,57 @@ The Super module provides operation handling and project management capabilities
 
 When executing an operation, `Super` follows this resolution order:
 
-1. Explicit method call (if `method` parameter provided)
+1. The requested name, if it already denotes a handler of this operation
 2. Prefixed method (`_<operation>_<method>`)
 3. Type-specific method (`_<operation>_<object_type>`)
 4. Container method (`_<operation>_basecontainer`)
 5. Default method (`_<operation>`)
+
+Only handlers of the operation are reachable, that is `_<operation>` and `_<operation>_*`.
+The name arrives inside a request, so allowing anything else would let a caller invoke
+arbitrary methods on the instance. A request naming something else falls through the
+cascade to a more general handler rather than reaching it.
+
+## Writing your own Super
+
+A subclass supplies handlers and builds them out of the helpers below. They carry a single
+underscore in the sense the language intends, **protected rather than private**: the
+framework never calls them, your handlers do. They are part of the contract, and their
+signatures will not change without a major version.
+
+| Helper | Purpose |
+| --- | --- |
+| `_build_response(obj, status, method, result, error)` | Produce the response dictionary a handler returns |
+| `_get_methods(obj_type)` | Methods registered for a type, from this instance first, then the Manipulator |
+| `_validate_and_apply_method(obj, name, args, valid_methods, extra_args)` | Check a name against allowed methods, bind arguments, call it |
+| `_do_nested(obj, attributes, key, getter, handler)` | Descend into a member of a container and run a handler on it |
+| `register_method(obj_type, name, method)` | Add a method for a type at run time |
+
+A handler is named `_<operation>_<type>` for a specific type, or `_<operation>` as the
+fallback, takes `(obj, attributes)` and returns whatever the operation produces; `execute`
+wraps that in the standard response.
+
+```python
+class Configurator(Super):
+    OPERATION = "configure"
+
+    def _configure_telescope(self, obj, attributes):
+        # a type-specific handler: reached for any object whose class is Telescope
+        valid = self._get_methods(type(obj))
+        for name, args in attributes.items():
+            outcome = self._validate_and_apply_method(obj, name, args, valid)
+            if not outcome["status"]:
+                return outcome
+        return True
+
+    def _configure(self, obj, attributes):
+        # the fallback, reached when no more specific handler matches
+        return False
+```
+
+Handlers may of course call each other directly. Only the entry point goes through
+`execute`, so a helper such as `_generate_observations` does not need to follow the naming
+convention as long as one of the handlers calls it.
 
 ### Basic Usage
 

@@ -5,7 +5,8 @@ from ..utils.validation import check_non_empty_string
 from ..utils.logging_setup import logger
 from ..base.basecontainer import BaseContainer
 from ..base.baseentity import BaseEntity
-T = TypeVar('T', bound=BaseEntity)
+from ..base.serializable import Serializable
+T = TypeVar('T', bound=Serializable)
 
 class Project(ABC):
     """Abstract super-class for managing collections of BaseEntity items within a project using BaseContainer.
@@ -13,11 +14,12 @@ class Project(ABC):
     Attributes:
         _name (str): The name of the project, must be a non-empty string.
         _items (BaseContainer[BaseEntity]): Container of BaseEntity items indexed by their names.
-        _item_type (Type[BaseEntity]): The type of items stored in the container, defaults to BaseEntity.
+        _item_type (Type[Serializable]): The type of items stored in the container, defaults to
+            BaseEntity. A project can hold containers too, since both share Serializable.
     """
     name: str
-    _item_type: Type[BaseEntity] = BaseEntity
-    _container_types: Dict[Type[BaseEntity], Type[BaseContainer]] = {}
+    _item_type: Type[Serializable] = BaseEntity
+    _container_types: Dict[Type[Serializable], Type[BaseContainer]] = {}
 
     def __init__(self, name: str = "DEFAULT_PROJECT", items: Optional[Dict[str, BaseEntity]] = None):
         """Initialize a Project with a name and an optional dictionary of BaseEntity items.

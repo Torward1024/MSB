@@ -7,6 +7,64 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Dates are
 
 Open findings that have not been addressed yet are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
+## [0.3.0] - 2026-08-03
+
+Separates the base hierarchy, closes two regressions the 0.2.0 fixes introduced, and writes
+down the contract `Super` subclasses were already relying on.
+
+### Breaking
+
+- **`BaseContainer` no longer derives from `BaseEntity`.** Both now derive from a new
+  `Serializable`, which holds the annotated fields and their validation, the `name` and
+  `isactive` state, serialization, the cache and the ownership graph it is invalidated
+  through. The container inherited fourteen members it gave a different meaning, seven with
+  incompatible signatures: `get` addressed attributes on one and items on the other, `clear`
+  wiped attributes or removed items, and the item operators disagreed the same way. An
+  `isinstance` check that should accept either must now name `Serializable`; naming
+  `BaseEntity` no longer matches a container. There were seven such checks inside the
+  framework and none in pAstroCORE.
+- **`BaseContainer.to_dict` takes `handle_cyclic_refs` keyword-only**, because
+  `Serializable` declares `to_dict(_seen)` and a positional first argument would mean two
+  different things depending on the class.
+- **`Super._default_result` and `Super._default_nested_result` are gone.** Neither had a
+  caller in the framework or downstream.
+
+### Fixed
+
+- The class registry added in 0.2.0 held strong references, so every class ever declared
+  stayed alive for the lifetime of the process; five hundred dynamically built classes
+  survived a full collection. Entries are weak now, and `EntityMeta.registered_classes()`
+  returns the live ones in a deterministic order.
+- Upward cache invalidation recorded a single owner, which was enough only while `add` deep
+  copied. With `copy_items=False` -- the documented way to avoid that copy -- one item lands
+  in two containers, and only the one that adopted last was invalidated; the other served a
+  stale mapping indefinitely. Every owner is tracked and invalidated. They are keyed by
+  identity rather than held in a set, because a set hashes and compares its members and
+  comparing entities walks their fields, which never returns on a cyclic structure.
+- Attribute assignment is faster than before either change, 0.068 s per 20000 sets against
+  0.076 s in 0.1.3, because invalidation now skips the graph walk entirely when nothing owns
+  the entity.
+
+### Added
+
+- `Serializable`, exported from `msb_arch`, for `isinstance` checks and for annotations that
+  accept an entity or a container.
+- A "Writing your own Super" section in the module guide. `_get_methods`,
+  `_validate_and_apply_method` and `_do_nested` are called 22, 33 and 9 times by pAstroCORE
+  and never by the framework: they are the integration surface, the single underscore means
+  protected rather than private, and nothing said so. The class docstring lists them as
+  extension points.
+- Test suite grown from 411 to 426 cases, covering the split hierarchy, registry lifetime,
+  multiple owners and the `Super` extension points.
+
+### Upgrade notes: 0.2.0 to 0.3.0
+
+| Symptom after upgrading | Cause | What to do |
+| --- | --- | --- |
+| `isinstance(x, BaseEntity)` is False for a container | The two classes are siblings now | Use `Serializable` where either is acceptable |
+| `TypeError` from `container.to_dict("ignore")` | `handle_cyclic_refs` is keyword-only | Pass it by name |
+| `AttributeError` on `_default_result` | Removed, it had no callers | Call `_build_response(obj, False, ...)` |
+
 ## [0.2.0] - 2026-08-03
 
 This release closes a full review of the 0.1.3 MVP: twenty-three findings across three

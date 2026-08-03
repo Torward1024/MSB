@@ -13,13 +13,13 @@ from typing import (Dict,
                     get_type_hints, 
                     get_args, 
                     get_origin)
-from ..base.baseentity import BaseEntity, CYCLIC_REFERENCE
+from ..base.serializable import CYCLIC_REFERENCE, Serializable
 from ..utils.logging_setup import logger
 
-T = TypeVar('T', bound=BaseEntity)
+T = TypeVar('T', bound=Serializable)
 
-class BaseContainer(BaseEntity, ABC, Generic[T]):
-    """Abstract base class for managing collections of BaseEntity objects using a dictionary.
+class BaseContainer(Serializable, ABC, Generic[T]):
+    """Abstract base class for managing a collection of objects addressed by name.
 
     Provides a foundation for container classes in the MSB system. Manages a collection of entities
     indexed by their `name` attribute, with support for validation, activation state management,
@@ -27,7 +27,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
 
     Attributes:
         _items (Dict[str, T]): Dictionary mapping entity names to their instances.
-        _fields (Dict[str, type]): Inherited from BaseEntity, contains type annotations including `_items`.
+        _fields (Dict[str, type]): Inherited from Serializable, contains type annotations including `_items`.
         _use_cache (bool): Flag to enable caching for `to_dict` results.
         _cached_to_dict (dict, optional): Cached result of `to_dict` to improve performance.
 
@@ -128,15 +128,15 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
                 raise ValueError(f"Item name '{item.name}' does not match key '{key}' in {self.__class__.__name__}")
             self._validate_item(item)
 
-    def _adopt(self, owner: Optional['BaseEntity'] = None, _seen: Optional[Set[int]] = None) -> None:
+    def _adopt(self, owner: Optional['Serializable'] = None, _seen: Optional[Set[int]] = None) -> None:
         """Record ownership for this container, its attributes and its items.
 
         Args:
-            owner (Optional[BaseEntity]): The entity or container taking ownership.
+            owner (Optional[Serializable]): The entity or container taking ownership.
             _seen (Optional[Set[int]]): Internal. Identities already visited.
 
         Notes:
-            - Extends `BaseEntity._adopt` to cover `_items`, which is not walked as a field.
+            - Extends `Serializable._adopt` to cover `_items`, which is not walked as a field.
         """
         seen = set() if _seen is None else _seen
         if id(self) in seen:
@@ -513,7 +513,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
         self._invalidate_cache()
         logger.debug("Deactivated item with name '%s' in %s", name, self.__class__.__name__)
 
-    def to_dict(self, handle_cyclic_refs: str = "mark", _seen: Optional[Set[int]] = None) -> dict:
+    def to_dict(self, *, handle_cyclic_refs: str = "mark", _seen: Optional[Set[int]] = None) -> dict:
         """Convert the container to a dictionary for serialization.
 
         Serializes the container's state, including its name, activation status, and all items,
@@ -553,7 +553,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
                     continue
                 items_dict[name] = CYCLIC_REFERENCE
             elif isinstance(item, BaseContainer):
-                items_dict[name] = item.to_dict(handle_cyclic_refs, _seen=seen)
+                items_dict[name] = item.to_dict(handle_cyclic_refs=handle_cyclic_refs, _seen=seen)
             else:
                 items_dict[name] = item.to_dict(_seen=seen)
         data["items"] = items_dict
@@ -702,7 +702,7 @@ class BaseContainer(BaseEntity, ABC, Generic[T]):
                 self.isactive == other.isactive and
                 self.get_all() == other.get_all())
 
-    __hash__ = BaseEntity.__hash__
+    __hash__ = Serializable.__hash__
 
     def __len__(self) -> int:
         """Return the number of items in the container.
