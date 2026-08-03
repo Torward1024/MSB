@@ -295,11 +295,16 @@ new_inventory = BaseContainer[Product].from_dict(data)
 
 2. **Use Meaningful Names**: Entity names should be unique within containers.
 
-3. **Handle Serialization Carefully**: Be aware of cyclic references when nesting entities.
+3. **Handle Serialization Carefully**: Cycles of any length are detected and marked with
+   `CYCLIC_REFERENCE`, but a payload carrying that marker cannot be restored by `from_dict`.
+   Break the cycle before a round trip.
 
 4. **Leverage Container Queries**: Use `get_by_value()` for complex filtering instead of manual loops.
 
-5. **Enable Caching**: Use `use_cache=True` for entities that are serialized frequently.
+5. **Enable Caching**: Use `use_cache=True` for entities that are serialized frequently. The
+   cached mapping is returned as is, so copy it before mutating. Invalidation travels up the
+   ownership chain, so changing a nested entity or a container item refreshes every cache
+   above it.
 
 ## Error Handling
 

@@ -283,6 +283,12 @@ Serialize container to dictionary.
 
 **Returns:** Serialized dictionary
 
+**Notes:**
+- Cycles of any length are detected. The second visit to an entity within one call is
+  replaced with `CYCLIC_REFERENCE`, skipped, or reported, according to the parameter.
+- With `use_cache=True` the same mapping is returned on every call. Treat it as read only
+  and copy it before making changes, or the cache is corrupted.
+
 ##### `from_dict(data: dict) -> BaseContainer` (classmethod)
 
 Create container from dictionary.
