@@ -7,6 +7,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Dates are
 
 Open findings that have not been addressed yet are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
+## [0.4.0] - 2026-08-03
+
+Moves the loop every handler was writing by hand into the framework, and makes the result
+of an operation report every method it ran.
+
+### Added
+
+- **`Super._apply_methods(obj, attributes, valid_methods, extra_args, strict)`**: applies
+  every method a request names and reports each outcome. It is the loop downstream handlers
+  had to write themselves -- look the allowed methods up, apply each one, decide what a
+  failure means -- and it reduces a typical handler to a single line. In the project this
+  was measured against, 22 handlers of about 800 lines collapse to roughly 60.
+- **`MethodResults`**, exported from `msb_arch`: the mapping a handler returns, from method
+  name to `{"status", "result"}` with `"error"` where one failed. A plain `dict` subclass,
+  so it serializes and replays like any mapping.
+- **`Manipulator.batch(requests, raise_on_error=False)`**: sugar over the sequence form of
+  `process_request`, which had no facade and therefore no users and no coverage. A sequence
+  is numbered, a mapping keeps its identifiers, requests run in order, and the report gives
+  the response of each. The requests are independent.
+
+### Changed
+
+- **A handler built on `_apply_methods` reports every method it ran**, not just the last.
+  The previous shape made the outcome depend on the order of the keys in the request and
+  discarded everything else, which is why a request history could not be reconstructed.
+  Handlers that do not use the new helper are unaffected.
+- The facades stay sugar and unwrap the common case: a request naming exactly one method
+  yields that value rather than a mapping of one, so existing single-method call sites need
+  no change. Only `MethodResults` is unwrapped, so a handler returning data of its own is
+  left alone.
+
+### Notes
+
+Nothing here is breaking. `_apply_methods` is opt-in, and `batch` is new. The two directions
+this work opens -- pipelines, where a step depends on an earlier result, and an asynchronous
+Manipulator -- are recorded in [`docs/ROADMAP.md`](docs/ROADMAP.md) and deliberately not
+started: there is no dependent batch anywhere yet to design against.
+
 ## [0.3.2] - 2026-08-03
 
 Makes the state MSB shares between objects safe to use from several threads, and restores a

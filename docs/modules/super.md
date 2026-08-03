@@ -52,11 +52,40 @@ signatures will not change without a major version.
 
 | Helper | Purpose |
 | --- | --- |
+| `_apply_methods(obj, attributes, valid_methods, extra_args, strict)` | Apply every method the request named and report each outcome. **Start here**: it is the whole body of most handlers |
 | `_build_response(obj, status, method, result, error)` | Produce the response dictionary a handler returns |
 | `_get_methods(obj_type)` | Methods registered for a type, from this instance first, then the Manipulator |
-| `_validate_and_apply_method(obj, name, args, valid_methods, extra_args)` | Check a name against allowed methods, bind arguments, call it |
+| `_validate_and_apply_method(obj, name, args, valid_methods, extra_args)` | Apply one method. Use it when a handler needs finer control than `_apply_methods` |
 | `_do_nested(obj, attributes, key, getter, handler)` | Descend into a member of a container and run a handler on it |
 | `register_method(obj_type, name, method)` | Add a method for a type at run time |
+
+### The result protocol
+
+`_apply_methods` returns a `MethodResults`: a mapping of method name to
+`{"status", "result"}`, with `"error"` added where one failed. The shape does not depend on
+how many methods the request named, which is what lets a request history record and replay
+exactly what happened.
+
+```python
+manipulator.process_request({
+    "operation": "inspect", "obj": telescope,
+    "attributes": {"get_code": None, "get_diameter": None},
+})["result"]
+# {'get_code':     {'status': True, 'result': 'T1'},
+#  'get_diameter': {'status': True, 'result': 25.0}}
+```
+
+The facade is sugar, so it unwraps the common case: a request naming exactly one method
+gives back that value rather than a mapping of one.
+
+```python
+manipulator.inspect(telescope, get_code=None)                    # 'T1'
+manipulator.inspect(telescope, get_code=None, get_diameter=None) # the mapping
+```
+
+`strict=True`, the default, stops at the first failed method and lets `execute` turn it into
+a failed response. `strict=False` attempts every method and records what each did, which is
+what you want when a caller needs the whole picture rather than the first problem.
 
 A handler is named `_<operation>_<type>` for a specific type, or `_<operation>` as the
 fallback, takes `(obj, attributes)` and returns whatever the operation produces; `execute`
@@ -68,16 +97,20 @@ class Configurator(Super):
 
     def _configure_telescope(self, obj, attributes):
         # a type-specific handler: reached for any object whose class is Telescope
-        valid = self._get_methods(type(obj))
-        for name, args in attributes.items():
-            outcome = self._validate_and_apply_method(obj, name, args, valid)
-            if not outcome["status"]:
-                return outcome
-        return True
+        return self._apply_methods(obj, attributes)
 
     def _configure(self, obj, attributes):
         # the fallback, reached when no more specific handler matches
-        return False
+        return self._apply_methods(obj, attributes)
+```
+
+A handler that needs to return something of its own still can; `_apply_methods` is then
+used for its effect and the handler decides what comes back.
+
+```python
+    def _configure_source(self, obj, attributes):
+        self._apply_methods(obj, attributes)
+        return obj.get()
 ```
 
 Handlers may of course call each other directly. Only the entry point goes through

@@ -522,6 +522,24 @@ Update method registry.
 - `additional_classes` (Optional[List[Type]]): Additional classes
 - `clear_operations` (bool): Clear existing operations
 
+##### `batch(requests, raise_on_error: bool = False) -> Dict[str, Any]`
+
+Run several requests in order and report the outcome of each.
+
+**Parameters:**
+- `requests` (Sequence[dict] or Dict[str, dict]): Requests to run. A sequence is numbered
+  from zero; a mapping keeps the identifiers you chose.
+- `raise_on_error` (bool): Raise as soon as a request fails. Off by default, since a report
+  is the point of a batch.
+
+**Returns:** Identifier mapped to the response of that request
+
+**Notes:**
+- Sugar over the sequence form of `process_request`, as the per-operation facades are sugar
+  over its single form.
+- Requests are independent: nothing feeds the result of one into the next. Dependent steps
+  are tracked as a separate direction in the roadmap.
+
 ##### `get_supported_operations() -> List[str]`
 
 Get list of supported operations.

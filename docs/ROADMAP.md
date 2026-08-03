@@ -48,7 +48,17 @@ everything closed moves to the Done table.
 
 | # | Item | Where | Cost | Breaking |
 | --- | --- | --- | --- | --- |
-| R30 | The Super and Mega layers are the reason to choose MSB and the least examined part of it: dispatch is driven by strings, facades are installed with `setattr` and are invisible to a type checker, and coverage sits at 82% and 80% against 88% for the base layer | `super.py`, `manipulator.py` | L | depends |
+| R30 | Downstream handlers can move onto `_apply_methods`: pAstroCORE has 22 handlers of about 800 lines that each reimplement the loop, and they disagree on what a failed method means -- `_inspect_*` raises, `_configure_*` ignores it as long as one method worked. Moving them collapses the code and settles the policy | consumer side | M | the failure policy has to be chosen |
+
+## Planned, not scheduled
+
+Two directions for the Manipulator that are wanted but deliberately not started. Both were
+raised on 2026-08-03 and left until there is a real case to design against.
+
+| # | Item | Notes |
+| --- | --- | --- |
+| P1 | **Pipelines**: a request in a batch that depends on the result of an earlier one | `batch` runs independent requests. Feeding one result into the next must not be done with callables between steps: a request would stop being data, and with it go serialization, history and replay -- the properties the orchestrator exists for, and the reason an external caller can drive it at all. The shape that keeps them is a reference inside the request, `Ref("step_id", "method_name")`, substituted before the step runs. Three things need deciding first: how a reference addresses a result now that a step reports every method it ran, what happens to steps that depend on a failed one, and whether substitution belongs in the Manipulator or in a layer above it. None of that should be guessed: there is no dependent batch anywhere yet, so there is nothing to design against |
+| P2 | **Asynchronous Manipulator**: `await manipulator.calculate(...)` | The calculations in the downstream project are long, and the GUI blocks on them today. The awkward part is not the plumbing but the contract: whether an operation may be sync and async at once, whether `Super` handlers become coroutines or run in an executor, and what a batch means when its requests overlap in time. The thread-safety work in 0.3.2 is a prerequisite and is done |
 
 ## Working order
 
@@ -58,7 +68,8 @@ Ordered by cost and regression risk rather than strictly by criticality.
 - [x] **Wave 2** - critical, moderate cost, needs new tests: R1, R7, R6, R11. R1 and R7 both touch `_resolve_type`, so they belong together
 - [x] **Wave 3** - contract changes, each needs a decision before code: R5, R9, R10, R12, R15, R16, R17, R18b
 - [x] **Wave 4** - R13 shipped in 0.3.0, together with R27 to R29 found while re-assessing it
-- [ ] **Wave 5** - the operation layer: R30. R19 shipped in 0.3.2
+- [x] **Wave 5** - the operation layer: `_apply_methods`, the uniform result protocol and `batch()` shipped; R19 in 0.3.2
+- [ ] **Later** - P1 pipelines and P2 an asynchronous Manipulator, once there is a real case to design against
 
 ## Release notes
 

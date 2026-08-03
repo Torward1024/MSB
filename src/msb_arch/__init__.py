@@ -11,4 +11,4 @@ from .utils import logger, setup_logging
 
 __all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "Manipulator", "MethodResults", "logger", "setup_logging"]
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"
