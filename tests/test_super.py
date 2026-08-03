@@ -9,10 +9,6 @@ class TestSuper(Super):
 
     OPERATION = "test_op"
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._operation = self.OPERATION or "test_op"
-
     def _test_op(self, obj, attributes):
         return f"executed default on {obj}"
 
@@ -135,12 +131,95 @@ class TestSuperRegisterMethod:
 
 
 class TestSuperExecute:
-    def test_execute_explicit_method(self, test_super):
-        # Add a method to the instance
+    def test_execute_named_handler(self, test_super):
+        result = test_super.execute("obj", {}, method="specific")
+        assert result["status"] is True
+        assert result["method"] == "_test_op_specific"
+
+    def test_execute_handler_by_its_full_name(self, test_super):
+        result = test_super.execute("obj", {}, method="_test_op_specific")
+        assert result["status"] is True
+        assert result["method"] == "_test_op_specific"
+
+    def test_execute_ignores_an_attribute_that_is_not_a_handler(self, test_super):
+        # A name arriving in a request must not reach an arbitrary attribute; resolution
+        # falls through to the operation's own handlers instead.
         test_super.explicit_method = lambda obj, attrs: "explicit"
         result = test_super.execute("obj", {}, method="explicit_method")
         assert result["status"] is True
-        assert result["result"] == "explicit"
+        assert result["method"] == "_test_op"
+
+    @pytest.mark.parametrize("dangerous", ["clear", "clear_cache", "execute", "register_method",
+                                           "_build_response", "__init__"])
+    def test_execute_refuses_to_call_framework_methods(self, test_super, dangerous):
+        result = test_super.execute("obj", {}, method=dangerous)
+        assert result["method"] == "_test_op"
+        assert test_super._methods == {}
+        assert test_super._manipulator is None or result["status"] is True
+
+    def test_execute_without_registration(self):
+        # _operation used to be assigned only by Manipulator.register_operation, so an
+        # unregistered Super raised AttributeError before the try block.
+        standalone = TestSuper()
+        result = standalone.execute("obj", {})
+        assert result["status"] is True
+        assert result["method"] == "_test_op"
+
+    def test_execute_without_an_operation_name_reports_it(self):
+        class Nameless(Super):
+            pass
+
+        result = Nameless().execute("obj", {})
+        assert result["status"] is False
+        assert "no operation name" in result["error"]
+
+
+class TestSuperHandlerResolutionCache:
+    """Only the lookup is cached, never the outcome of an operation."""
+
+    def test_repeated_resolution_is_cached(self, test_super):
+        test_super.execute("obj", {})
+        assert (None, str) in test_super._method_cache
+        assert test_super._method_cache[(None, str)] == "_test_op"
+
+    def test_cache_distinguishes_object_types(self, test_super):
+        test_super.execute("obj", {})
+        test_super.execute([1, 2], {})
+        assert test_super._method_cache[(None, str)] == "_test_op"
+        assert test_super._method_cache[(None, list)] == "_test_op_list"
+
+    def test_a_failed_lookup_is_remembered_too(self):
+        class Empty(Super):
+            OPERATION = "empty_op"
+
+        empty = Empty()
+        assert empty.execute("obj", {})["status"] is False
+        assert empty._method_cache[(None, str)] is None
+
+    def test_operations_are_never_replayed_from_the_cache(self, test_super):
+        calls = []
+        test_super._test_op_counted = lambda obj, attrs: calls.append(obj) or "done"
+        for _ in range(3):
+            test_super.execute("obj", {}, method="counted")
+        assert len(calls) == 3
+
+    def test_register_method_drops_the_cache(self, test_super):
+        test_super.execute("obj", {})
+        assert test_super._method_cache
+        test_super.register_method(str, "anything", lambda: None)
+        assert test_super._method_cache == {}
+
+    def test_cache_respects_its_size_limit(self):
+        class Sized(Super):
+            OPERATION = "sized_op"
+
+            def _sized_op(self, obj, attributes):
+                return True
+
+        sized = Sized(cache_size=2)
+        for name in ("a", "b", "c"):
+            sized.execute("obj", {}, method=name)
+        assert len(sized._method_cache) == 2
 
     def test_execute_method_from_attributes(self, test_super):
         test_super.method_from_attrs = lambda obj, attrs: "from_attrs"
