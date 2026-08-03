@@ -10,4 +10,4 @@ from .utils import logger, setup_logging
 
 __all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "Manipulator", "logger", "setup_logging"]
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"

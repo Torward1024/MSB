@@ -7,6 +7,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Dates are
 
 Open findings that have not been addressed yet are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
+## [0.3.1] - 2026-08-03
+
+Fixes a break that 0.2.0 introduced and 0.3.0 carried: a subclass overriding `to_dict`
+could no longer be serialized.
+
+### Fixed
+
+- **`to_dict()` takes no arguments again.** Cycle detection, added in 0.2.0, threaded the
+  set of already-serialized identities through a `_seen` parameter. Containers and nested
+  entities therefore called `item.to_dict(_seen=...)`, and every subclass override written
+  as `def to_dict(self)` -- which is how the documentation says to write one -- failed with
+  `TypeError: to_dict() got an unexpected keyword argument '_seen'`. The traversal state
+  moved into a context variable, so the signature is the one it was in 0.1.3 and overrides
+  work again. Being contextual it is also per thread and per task, so concurrent
+  serializations no longer share marks.
+- **`BaseContainer.to_dict(handle_cyclic_refs)` is positional again.** It was made
+  keyword-only in 0.3.0 only to avoid colliding with `_seen`, which no longer exists.
+- Removed an orphaned duplicate docstring left inside `Serializable` by the 0.3.0 split.
+
+### Added
+
+- Tests covering a subclass that overrides `to_dict`, both as a container item and as a
+  nested attribute. The suite missed the break because its containers were never populated,
+  so no item was ever serialized through one; that gap is closed, and the same gap in the
+  downstream smoke check is fixed too.
+
 ## [0.3.0] - 2026-08-03
 
 Separates the base hierarchy, closes two regressions the 0.2.0 fixes introduced, and writes
@@ -62,7 +88,7 @@ down the contract `Super` subclasses were already relying on.
 | Symptom after upgrading | Cause | What to do |
 | --- | --- | --- |
 | `isinstance(x, BaseEntity)` is False for a container | The two classes are siblings now | Use `Serializable` where either is acceptable |
-| `TypeError` from `container.to_dict("ignore")` | `handle_cyclic_refs` is keyword-only | Pass it by name |
+| `TypeError` from `container.to_dict("ignore")` | Was keyword-only in 0.3.0 only | Fixed in 0.3.1; positional again |
 | `AttributeError` on `_default_result` | Removed, it had no callers | Call `_build_response(obj, False, ...)` |
 
 ## [0.2.0] - 2026-08-03
