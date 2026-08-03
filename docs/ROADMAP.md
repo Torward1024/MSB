@@ -29,6 +29,7 @@ everything closed moves to the Done table.
 | R6 | `to_dict` threads its `seen` set through the recursion, so genuine cycles terminate | no |
 | R11 | Invalidation travels up a weak ownership chain; the cache-validation walk is gone | cached mapping is documented read-only |
 | R26 | Cyclic reference support is now real, so the documentation claim holds | no |
+| R23 | Tests import `msb_arch`; CI builds the wheel, installs it and runs the suite against it | no |
 | R5 | Named logger with a NullHandler, no configuration on import, all 107 log calls lazy | **yes** - the application configures logging |
 | R9 | `_operation` defaults from `OPERATION`; dispatch restricted to `_<operation>*` handlers | **yes** - a request can no longer name any other method |
 | R10 | An operation name that is not an identifier, or that shadows a Manipulator attribute, is rejected | only already-broken registrations |
@@ -45,12 +46,6 @@ everything closed moves to the Done table.
 | R13 | `BaseContainer(BaseEntity)` violates LSP: `get`, `clear` and `set` carry incompatible semantics. This is the root cause behind R2, and composition would fix it | `basecontainer.py` | **L** | **yes, widely** |
 | R19 | No thread safety, with mutable state held at class level | package-wide | L | no |
 
-## Level 4 - hygiene and packaging
-
-| # | Item | Cost |
-| --- | --- | --- |
-| R23 | Tests import `from src.msb_arch` and CI never installs the package, so the **installed** distribution is never exercised | S-M |
-
 ## Working order
 
 Ordered by cost and regression risk rather than strictly by criticality.
@@ -58,13 +53,14 @@ Ordered by cost and regression risk rather than strictly by criticality.
 - [x] **Wave 1** - cheap, critical, leaves the API alone: R4, R3, R2, R8, R14, R18, plus R20, R21, R22, R24, R25
 - [x] **Wave 2** - critical, moderate cost, needs new tests: R1, R7, R6, R11. R1 and R7 both touch `_resolve_type`, so they belong together
 - [x] **Wave 3** - contract changes, each needs a decision before code: R5, R9, R10, R12, R15, R16, R17, R18b
-- [ ] **Wave 4** - separate minor release: R13, R19, R23
+- [ ] **Wave 4** - deferred past 0.2.0, each is a reshaping rather than a fix: R13, R19
 
 ## Release notes
 
-The validation contract changes in F1, and most of wave 3 changes it further, so the next
-release is **0.2.0** rather than 0.1.4. A `CHANGELOG.md` with an explicit breaking-changes
-section is worth adding: two downstream projects upgrade against it.
+Waves 1 to 3 and R23 shipped as **0.2.0** on 2026-08-03; see [`CHANGELOG.md`](../CHANGELOG.md)
+for the breaking changes and the upgrade table. pAstroCORE was verified against the release
+beforehand: 840 entities and 11729 fields re-validated with no violations, and its code paths
+behaved identically to 0.1.3.
 
 R13 is the only **L** item that reshapes the base hierarchy, and it drags R2, R16 and R17
 along with it. Recommendation: keep it out of 0.2.0 and do it deliberately on a stable base.

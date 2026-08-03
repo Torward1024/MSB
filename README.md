@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MSB%20Software%20License-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.3-orange.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-0.2.0-orange.svg)](https://github.com/Torward1024/MSB)
 
 Mega-Super-Base (MSB) - a flexible and extensible architecture for Python applications, providing a modular system for managing entities, containers, operations, and projects with built-in type safety, serialization, and logging.
 
@@ -108,4 +108,4 @@ For commercial use, a separate royalty-bearing license is required. Please conta
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 0.1.3
+- **Version**: 0.2.0

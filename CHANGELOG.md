@@ -7,10 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Dates are
 
 Open findings that have not been addressed yet are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
-## [Unreleased] - targeting 0.2.0
+## [0.2.0] - 2026-08-03
 
-This release closes the first wave of fixes from a full review of the 0.1.3 MVP. The
-validation contract changes, so it is a minor version bump rather than a patch. Read
+This release closes a full review of the 0.1.3 MVP: twenty-three findings across three
+waves of fixes, plus packaging and test-harness work. The validation contract changes, so
+it is a minor version bump rather than a patch. Read
 [Upgrade notes](#upgrade-notes-013-to-020) before upgrading a project that depends on MSB.
 
 ### Breaking
@@ -146,6 +147,11 @@ validation contract changes, so it is a minor version bump rather than a patch. 
   closure after `clear()`, container mapping ownership, object collection, registry
   isolation between `Manipulator` instances, cycle handling, cache invalidation across an
   ownership chain, handler dispatch restrictions and library logging hygiene.
+- The tests exercise the **installed** package. They previously imported from `src/`, which
+  works only because `tests/` is a package and pytest prepends the repository root, so the
+  built distribution was never covered and a packaging mistake could not fail the suite. CI
+  now builds the wheel, installs it, checks that `msb_arch` resolves inside `site-packages`,
+  and runs the suite against it. Local development needs `pip install -e .` first.
 
 ### Removed
 
