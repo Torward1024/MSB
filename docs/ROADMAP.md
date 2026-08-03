@@ -12,6 +12,17 @@ Status: `[x]` merged into main, `[ ]` open.
 | --- | --- | --- |
 | F1 | `_validate_type` rewritten for parameterized type hints, nested to any depth | yes - `List[int]` no longer silently accepts foreign elements |
 | F2 | Removed the hardcoded `value` attribute guard | no - a loosening only |
+| R4 | Registry held per `Manipulator` instead of an `lru_cache` keyed on `self` | no |
+| R3 | Cache invalidation no longer walks the items; `add` is flat at ~12 us | no |
+| R2 | All five `__del__` methods removed; the container copies the incoming mapping | no |
+| R24 | `ScheduleManipulator` / `ScheduleProject` leftovers removed with those finalizers | no |
+| R8 | Underscore-prefixed fields kept out of `clear()`, `__eq__` and `__repr__` | `repr` output only |
+| R25 | Caching performance tests assert cache identity instead of racing micro-timings | no |
+| R14 | Generated container class cached per item type | no |
+| R18 | `_make_hashable`, `_update_cache` and `BaseContainer.__getattribute__` removed | no |
+| R20 | `py.typed` marker added and verified in the built wheel | no |
+| R21 | `MANIFEST.in` paths corrected for the `src/msb_arch` layout | no |
+| R22 | README version badge synchronised with pyproject | no |
 
 ## Level 1 - data loss, leaks, wrong results
 
@@ -64,9 +75,9 @@ Status: `[x]` merged into main, `[ ]` open.
 
 Ordered by cost and regression risk rather than strictly by criticality.
 
-- [ ] **Wave 1** - cheap, critical, leaves the API alone: R4, R3, R2, R8, R14, R18, plus R20, R21, R22, R24, R25
+- [x] **Wave 1** - cheap, critical, leaves the API alone: R4, R3, R2, R8, R14, R18, plus R20, R21, R22, R24, R25
 - [ ] **Wave 2** - critical, moderate cost, needs new tests: R1, R7, R6, R11. R1 and R7 both touch `_resolve_type`, so they belong together
-- [ ] **Wave 3** - contract changes, each needs a decision before code: R5, R9, R10, R12, R15, R16, R17
+- [ ] **Wave 3** - contract changes, each needs a decision before code: R5, R9, R10, R12, R15, R16, R17, R18b
 - [ ] **Wave 4** - separate minor release: R13, R19, R23
 
 ## Release notes
