@@ -11,7 +11,7 @@ from typing import (Callable,
                     Tuple,
                     Type,
                     Union)
-from src.msb_arch.base.baseentity import BaseEntity
+from src.msb_arch.base.baseentity import BaseEntity, CYCLIC_REFERENCE
 
 
 class TestEntity(BaseEntity):
@@ -368,6 +368,126 @@ class TestBaseEntityClear:
     def test_cleared_entity_can_still_be_cloned(self, test_entity):
         test_entity.clear()
         assert test_entity.clone().to_dict() == test_entity.to_dict()
+
+
+class TestBaseEntityCyclicReferences:
+    """A reference back into the structure is marked, not followed."""
+
+    def test_two_node_cycle_terminates(self):
+        class Node(BaseEntity):
+            peer: 'Node'
+
+        first = Node(name='first', peer=None)
+        second = Node(name='second', peer=first)
+        first.peer = second
+
+        data = first.to_dict()
+        assert data['peer']['name'] == 'second'
+        assert data['peer']['peer'] == CYCLIC_REFERENCE
+
+    def test_self_reference_is_marked(self):
+        class Node(BaseEntity):
+            peer: 'Node'
+
+        node = Node(name='node', peer=None)
+        node.peer = node
+        assert node.to_dict()['peer'] == CYCLIC_REFERENCE
+
+    def test_three_node_cycle_terminates(self):
+        class Node(BaseEntity):
+            peer: 'Node'
+
+        first = Node(name='first', peer=None)
+        second = Node(name='second', peer=None)
+        third = Node(name='third', peer=first)
+        second.peer = third
+        first.peer = second
+
+        data = first.to_dict()
+        assert data['peer']['peer']['peer'] == CYCLIC_REFERENCE
+
+    def test_a_shared_reference_is_serialized_once(self):
+        class Leaf(BaseEntity):
+            tag: str
+
+        class Holder(BaseEntity):
+            left: Leaf
+            right: Leaf
+
+        shared = Leaf(name='shared', tag='x')
+        holder = Holder(name='holder', left=shared, right=shared)
+        data = holder.to_dict()
+        assert data['left']['tag'] == 'x'
+        assert data['right'] == CYCLIC_REFERENCE
+
+
+class TestBaseEntityCacheInvalidation:
+    """A cached serialization must not survive a change anywhere below it."""
+
+    def test_mutating_a_nested_entity_passed_to_the_constructor(self):
+        class Inner(BaseEntity):
+            v: int
+
+        class Outer(BaseEntity):
+            inner: Inner
+
+        outer = Outer(name='outer', inner=Inner(name='inner', v=1), use_cache=True)
+        assert outer.to_dict()['inner']['v'] == 1
+        outer.inner.v = 42
+        assert outer.to_dict()['inner']['v'] == 42
+
+    def test_mutating_a_nested_entity_assigned_afterwards(self):
+        class Inner(BaseEntity):
+            v: int
+
+        class Outer(BaseEntity):
+            inner: Inner
+
+        outer = Outer(name='outer', use_cache=True)
+        outer.inner = Inner(name='inner', v=1)
+        assert outer.to_dict()['inner']['v'] == 1
+        outer.inner.v = 7
+        assert outer.to_dict()['inner']['v'] == 7
+
+    def test_invalidation_reaches_the_root_of_a_deep_chain(self):
+        class Third(BaseEntity):
+            v: int
+
+        class Second(BaseEntity):
+            child: Third
+
+        class First(BaseEntity):
+            child: Second
+
+        leaf = Third(name='third', v=1)
+        root = First(name='first', child=Second(name='second', child=leaf, use_cache=True),
+                     use_cache=True)
+        assert root.to_dict()['child']['child']['v'] == 1
+        leaf.v = 5
+        assert root.to_dict()['child']['child']['v'] == 5
+
+    def test_the_owner_is_held_weakly(self):
+        import gc
+        import weakref
+
+        class Inner(BaseEntity):
+            v: int
+
+        class Outer(BaseEntity):
+            inner: Inner
+
+        inner = Inner(name='inner', v=1)
+        outer = Outer(name='outer', inner=inner)
+        ref = weakref.ref(outer)
+        del outer
+        gc.collect()
+        assert ref() is None
+        inner.v = 2  # invalidation must cope with a dead owner
+        assert inner.v == 2
+
+    def test_cached_result_is_the_same_mapping(self):
+        entity = TestEntity(name='cached', value=1, use_cache=True)
+        assert entity.to_dict() is entity.to_dict()
 
 
 class TestBaseEntityInternalFields:

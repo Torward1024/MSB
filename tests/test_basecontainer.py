@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from typing import Dict, Any
-from src.msb_arch.base.baseentity import BaseEntity
+from src.msb_arch.base.baseentity import BaseEntity, CYCLIC_REFERENCE
 from src.msb_arch.base.basecontainer import BaseContainer
 
 
@@ -358,6 +358,65 @@ class TestBaseContainerMagicMethods:
         repr_str = repr(test_container)
         assert "TestContainer" in repr_str
         assert "count=2" in repr_str
+
+
+class TestBaseContainerCyclicReferences:
+    """A container that reaches itself is marked, skipped or reported, but never followed."""
+
+    def _self_containing(self):
+        container = TestContainer(name="cyclic")
+        container.add(TestEntity(name="item1", value=1))
+        container._items["itself"] = container
+        return container
+
+    def test_mark(self):
+        container = self._self_containing()
+        items = container.to_dict("mark")["items"]
+        assert items["itself"] == CYCLIC_REFERENCE
+        assert items["item1"]["value"] == 1
+
+    def test_ignore(self):
+        container = self._self_containing()
+        assert set(container.to_dict("ignore")["items"]) == {"item1"}
+
+    def test_raise(self):
+        container = self._self_containing()
+        with pytest.raises(ValueError, match="Cyclic reference detected"):
+            container.to_dict("raise")
+
+    def test_invalid_mode_is_rejected(self):
+        container = TestContainer(name="plain")
+        with pytest.raises(ValueError, match="Invalid handle_cyclic_refs"):
+            container.to_dict("nonsense")
+
+
+class TestBaseContainerCacheInvalidation:
+    def test_mutating_an_item_invalidates_the_container(self):
+        container = TestContainer(name="cached", use_cache=True)
+        container.add(TestEntity(name="item1", value=1))
+        assert container.to_dict()["items"]["item1"]["value"] == 1
+        container.get("item1").value = 99
+        assert container.to_dict()["items"]["item1"]["value"] == 99
+
+    def test_mutating_an_item_invalidates_a_nested_container(self):
+        class OuterContainer(BaseContainer[TestContainer]):
+            pass
+
+        inner = TestContainer(name="inner")
+        inner.add(TestEntity(name="item1", value=1))
+        outer = OuterContainer(name="outer", use_cache=True)
+        outer.add(inner)
+
+        assert outer.to_dict()["items"]["inner"]["items"]["item1"]["value"] == 1
+        outer.get("inner").get("item1").value = 5
+        assert outer.to_dict()["items"]["inner"]["items"]["item1"]["value"] == 5
+
+    def test_removing_an_item_invalidates_the_container(self):
+        container = TestContainer(name="cached", use_cache=True)
+        container.add(TestEntity(name="item1", value=1))
+        assert set(container.to_dict()["items"]) == {"item1"}
+        container.remove("item1")
+        assert container.to_dict()["items"] == {}
 
 
 class TestBaseContainerInvalidateCache:
