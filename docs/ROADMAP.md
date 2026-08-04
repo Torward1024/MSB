@@ -1,386 +1,174 @@
 # MSB Roadmap
 
-Two things live here: what a review of the 0.1.3 MVP turned up and where each finding was
-resolved, and where the framework is going next.
+The path from 0.4.0 to 1.0.0, as a work list. Four releases, 16 open items, each with the
+release it belongs to, what it depends on and what can go wrong.
 
-Nothing from the review is open. The sections after it are planning, not a backlog: each
-entry records what would have to be decided before it could be built, because guessing
-those answers is how two of the bugs below got in.
+**How to use this.** Take the next unstarted item in the release table currently in progress.
+Do not take an item from a later release; the order exists to keep risky changes off an
+unmeasured base.
 
-## Resolved, by release
+## The scope rule
 
-Thirty-two findings, closed across five releases on 2026-08-03. Each release carries an
-upgrade table in [`CHANGELOG.md`](../CHANGELOG.md).
+**The 1.0 scope is closed.** It is the 16 items in [The work](#the-work) and nothing else.
 
-### 0.2.0 — the review
+| Situation | What happens |
+| --- | --- |
+| A new idea arrives | Goes to [After 1.0](#after-10). No exceptions for small ones |
+| A bug is found | Fixed if it breaks a documented promise; otherwise it goes after 1.0 |
+| An item turns out bigger than its row | Cut it down or move it out. Do not grow the release |
+| An item could be "improved further" | It is done when its exit criterion in the table is met. Nothing is done twice |
 
-| # | Finding | Breaking |
+This section exists because the failure mode of this project is not missing features. It is
+polishing without a stopping condition.
+
+## Releases
+
+| Release | Theme | Closes | Contract risk | Exit criterion |
+| --- | --- | --- | --- | --- |
+| **0.5.0** | Errors and measurement | B3, B1, P7, P9, P11 | **Low** — nothing changes what an annotation or a request means | CI fails on a performance regression; every documented example runs |
+| **0.6.0** | The data contract | B2, B4, B9, P5, P6 | **Medium** — annotations and serialized data gain meaning | A file written by 0.6.0 declares its version; a constraint on an annotation is enforced |
+| **0.7.0** | The request contract | B11, P8, P12, B5, B8 | **Medium-high** — how a request is processed changes | Every request passes an interceptor chain; a `Manipulator` works with no `Super` written by hand |
+| **0.8.0** | The async surface | B7 | **Low** — purely additive | `await manipulator.acalculate(...)` keeps an event loop responsive |
+| **1.0.0** | The freeze | B10, P13 | **None** — no code changes | Deprecation policy published, public surface marked, an application guide exists |
+
+Sequencing rationale, once: measurement before optimisation, so 0.5.0 precedes 0.6.0. Data
+semantics before request semantics, because `_apply_methods` validates what the data layer
+defines. The additive surface after both, so it wraps a settled protocol. The freeze last.
+
+## The work
+
+Status: **done** (merged or on a branch), **next** (the item to pick up), **open**.
+
+### 0.5.0 — errors and measurement
+
+| # | Item | Depends on | Risk | Exit criterion | Status |
+| --- | --- | --- | --- | --- | --- |
+| B3 | Exception taxonomy: `MSBError` root, 16 types, each also deriving from the built-in it replaces | — | Behaviour visible to anyone catching exceptions | No bare built-in raised in the package; no existing test changed | **done** |
+| B1 | `TypeVar` resolution: resolve by parameter position, treat constraints as a union, fall back to `Any` when unparameterized | — | Corrects a type that is wrong today, so behaviour changes | `Generic[T, U]` resolves each parameter to its own type | **next** |
+| P7 | Benchmark suite in CI | — | None | A performance regression fails a build | open |
+| P9 | Document the cache's memory behaviour | — | None | The reader can predict the cost without measuring | open |
+| P11 | Repair the 11 documentation examples that no longer run | — | None | `STALE` in `tests/test_documentation.py` is empty | open |
+
+### 0.6.0 — the data contract
+
+| # | Item | Depends on | Risk | Exit criterion | Status |
+| --- | --- | --- | --- | --- | --- |
+| B2 | Value constraints on annotations: `Annotated[float, Positive()]`, wired to `utils/validation.py` | B3 | Adds meaning to an annotation | A negative price is rejected by the model, not by a hand-written `__init__` | open |
+| B4 | Schema version in serialized data, and a migration hook | B3 | Changes what `to_dict` writes | A file written by an earlier version still loads, or fails with a migration error naming the version | open |
+| B9 | Ingest foreign data: a declared discriminator, or a default type per field | B4 | Changes `from_dict` | JSON not produced by MSB restores into a declared model | open |
+| P5 | Compile a validator per field once per class | B2, P7 | Rewrites the validation hot path | Entity construction measurably faster, benchmarks green | open |
+| P6 | Skip the invalidation walk when no owner caches | P7 | Small, isolated | The idle walk costs nothing when nothing caches | open |
+
+### 0.7.0 — the request contract
+
+| # | Item | Depends on | Risk | Exit criterion | Status |
+| --- | --- | --- | --- | --- | --- |
+| B11 | Interceptor chain around `process_request` | B3 | Changes how every request is processed | An interceptor sees each request before it runs and its response after, on both the sync and async paths | open |
+| P8 | Observability hooks as the first interceptor | B11 | None beyond B11 | Serialization time, cache size, invalidation frequency and validation failures are observable without a dependency | open |
+| P12 | Request journal: a built-in interceptor recording what each request consumed and produced | B11 | None beyond B11 | A session can be replayed from its journal; a result can be traced to the request that produced it | open |
+| B5 | A protocol for what `Super` needs from `Manipulator`, replacing the concrete reference | — | Changes the extension contract | `Super` names an interface, not a class. One method: `get_methods_for_type` | open |
+| B8 | Built-in `Inspector` and `Configurator`, registered by default | B5 | Changes the duplicate-name rule | A `Manipulator` handles `inspect` and `configure` with no `Super` written by hand; an application registering its own still works unchanged | open |
+
+### 0.8.0 — the async surface
+
+| # | Item | Depends on | Risk | Exit criterion | Status |
+| --- | --- | --- | --- | --- | --- |
+| B7 | Additive async surface: `aprocess_request` and async facades, sync handler on an executor, coroutine handler awaited directly | B11 | Additive only; no sync signature changes | An event loop stays responsive during a long operation; the sync API is untouched | open |
+
+### 1.0.0 — the freeze
+
+| # | Item | Depends on | Risk | Exit criterion | Status |
+| --- | --- | --- | --- | --- | --- |
+| B10 | Publish the deprecation policy; mark the public surface | all above | None | Every underscore-prefixed name is either a documented extension point or private | open |
+| P13 | A guide to building an application on MSB | all above | None | A reader who has never seen MSB has a working application by the end | open |
+
+## Decisions taken
+
+Settled, with the reasoning compressed to its conclusion. Reopen only on new evidence.
+
+| # | Question | Decision | Evidence |
+| --- | --- | --- | --- |
+| B6 | Pipelines: dependent steps in a batch | **After 1.0.** Shape reserved: a step names its input explicitly, so a chain is the one-edge case of a graph rather than a rival syntax. Adaptation between steps is itself an operation, never a callable | No dependent pipeline exists to design against. 1.0 forecloses nothing: attribute values reach handlers unexamined |
+| B7 | Asynchrony | **Additive surface**, not async all the way down | An `async def` entry point over a synchronous handler let the event loop run 0 times during a 0.5 s operation — the same as a plain call. Only an executor helped (20 times) |
+| B8 | Built-in `Inspector` and `Configurator` | **Ship, registered by default.** A user registration replaces a built-in silently; two user registrations of one name still raise | 20 of 21 downstream handlers hold no domain logic; `inspect` and `configure` serve 185 of 194 facade calls |
+| — | Metrics, audit, rate limiting, authorisation | **One hook, not four features.** All are interceptors (B11) | A library choosing a metrics backend would end the zero-dependency property |
+| — | Graceful shutdown, health checks | **Not applicable.** MSB owns no processes or connections | A library has no health; the service hosting it does |
+| — | Lineage | **Separable from scheduling, and precedes it.** Recording rides on B11 (P12); the graph is derived from the journal, not declared in advance | A request is already data and `to_dict` already exists, so the expensive precondition is met |
+| — | Mutable identity for lineage and incremental recompute | Revision counters first, then the journal, then content hashing, with snapshots only as checkpoints | A counter rides on the invalidation walk that already exists; a hash costs a traversal; snapshots cost the model size |
+| — | A dependency graph over `Super` classes | **Rejected.** Ordering between operations is a property of a workflow, not of a class; attaching it to the class freezes one scenario and destroys reuse. The real graph is over steps, which is B6 | The entity graph, by contrast, already exists twice: statically in `_fields` and `_item_type_hint()`, at runtime in `_parents` |
+| — | A wizard that draws the graphs | Belongs to P4, and reads the entity graph rather than authoring it | Two sources of truth would drift. The annotations already are the graph |
+
+## Not in 1.0
+
+The stop list. Each of these is a reasonable idea, and each is out.
+
+| Item | Why not |
+| --- | --- |
+| Persistence beyond `to_dict`/`from_dict` | A store is a product of its own |
+| Pipelines and the DAG scheduler | Nothing to design against yet; see B6 |
+| Application generation from the model (P4) | Follows persistence and the async surface |
+| A plugin system | Nothing has asked for one |
+| A metrics backend, a rate limiter, an auth model | Policies. MSB provides the hook (B11) and no dependencies |
+| Object pooling | Profiling puts entity construction cost in type-hint introspection, which P5 removes; pooling would not touch it |
+| Parallel serialization, async invalidation | Measured as slower. `to_dict` of 8 containers × 3 000 items: 1.69× sequential with `asyncio.gather`, 1.11× with threads |
+| A cache size limit | Bounded by the object graph already: 3.8 MB for 20 000 items. Documented (P9) rather than capped |
+
+## After 1.0
+
+| # | Item | Blocked on |
 | --- | --- | --- |
-| F1 | `_validate_type` compared `get_origin()` against `typing.List`, so element types inside `List[T]` were never checked and nested generics raised on valid data | **yes** |
-| F2 | An attribute named `value` could not be None, so `clear()` produced objects that could not be restored | no |
-| R1 | `_type_cache` was shared across the hierarchy and keyed by name, so two modules declaring the same name collided | no |
-| R2 | `__del__` called `clear()`, and a container emptied the caller's dict on garbage collection | no |
-| R3 | Cache invalidation walked every item, making `add` quadratic: 4000 items took 1.4 s | no |
-| R4 | `@lru_cache` on an instance method meant no `Manipulator` was ever collected | no |
-| R5 | Importing the package seized the root logger and wrote `output.log` in the working directory | **yes** |
-| R6 | Cyclic references exhausted the stack despite being advertised as supported | no |
-| R7 | `from_dict` resolved types through the framework module's globals, so polymorphic restore never worked | no |
-| R8 | Internal fields leaked into `clear()`, `__eq__` and `__repr__` | `repr` only |
-| R9 | `Super.execute` resolved any attribute named in a request; `method="clear"` wiped the instance | **yes** |
-| R10 | An operation named after a `Manipulator` method shadowed it and recursed | only broken registrations |
-| R11 | Validating the cache re-serialized everything it was meant to save, and still missed the stale case | read-only mapping |
-| R12 | `__eq__` without `__hash__` made every entity unhashable | no |
-| R14 | `_create_container` built a class per call, so two projects held incomparable containers | no |
-| R15 | `Project.from_dict` was abstract with a body, forcing a stub nobody could fill | no |
-| R16 | `remove()` logged a warning and then failed with a bare `KeyError` | no |
-| R17 | `add()` deep copies by default; the cost and the identity change are now documented | no |
-| R18, R18b | Unreachable cache machinery removed; what remained now caches handler resolution | no |
-| R20–R22, R24–R26 | `py.typed`, `MANIFEST.in` paths, version badge, copy-paste leftovers, flaky timing assertions, a documentation claim that did not hold | no |
-| R23 | Tests imported from `src/`, so the built distribution was never exercised | no |
+| P1 | Pipelines, then the dependency-graph scheduler: topological order, parallel branches, incremental recomputation | A real dependent pipeline to design against; a declared output per step |
+| P10 | Persistence | — |
+| P4 | Generating an application from the data model | P10, B7. Aim at GUI wiring: downstream, 74.5% is already Qt Designer output and the handler stubs a generator would emit are 81 lines |
+| P14 | A derived model-graph API: "what depends on `Telescope`" | — . Cheap: a read over `_fields`, `_item_type_hint()` and `_parents` |
 
-### 0.3.0 — the hierarchy
+## What 1.0.0 means
 
-| # | Finding | Breaking |
+A promise that the contract will not break outside a major version. Five releases went out on
+2026-08-03, four of them breaking, so the promise is earned by the work above, not declared.
+
+| What is frozen | Settled by |
+| --- | --- |
+| The request and response protocol, including `MethodResults` and what a facade unwraps | B11, B7 |
+| The extension contract: what a `Super` implements and what it sees instead of a `Manipulator` | B5, B8 |
+| The entity model and what an annotation means | 0.3.0, then B1, B2 |
+| Serialized data, carrying its own version | B4, B9 |
+| The exception types a caller may catch | B3 |
+| The public surface, and how long a superseded name survives | B10 |
+| Performance, defended by CI rather than by memory | P7 |
+
+Already true, and not to be re-litigated: more than one project depends on MSB in earnest
+(pAstroCORE and an observatory scheduling system), there are 519 tests at 90% coverage, and
+the framework has no external dependencies.
+
+## History
+
+Thirty-two review findings, closed across five releases on 2026-08-03. Each release carries
+an upgrade table in [`CHANGELOG.md`](../CHANGELOG.md).
+
+| Release | What it settled | Breaking |
 | --- | --- | --- |
-| R13 | `BaseContainer` inherited `BaseEntity` and gave fourteen members a different meaning. `Serializable` is now the shared base and the two are siblings | **yes** |
-| R27 | The class registry held strong references, so nothing declared was ever released | no |
-| R28 | Invalidation reached one owner, so an item shared by two containers left one stale | no |
-| R29 | `Super`'s extension points documented; its last unused helpers removed | only removals |
+| 0.2.0 | 26 findings from the 0.1.3 review: nested generic validation, cache correctness and cost, the root-logger seizure, cyclic references, polymorphic restore, `Super.execute` resolving any named attribute | yes |
+| 0.3.0 | `BaseContainer` stopped inheriting `BaseEntity`; `Serializable` became the shared base and the two became siblings. Weak class registry; invalidation reaching every owner | yes |
+| 0.3.1 | `to_dict()` takes no arguments again; cycle-detection state moved to a context variable | a repair |
+| 0.3.2 | Thread safety: the class registry, the container-class cache and handler resolution are guarded, with tests that fail without the guards | no |
+| 0.4.0 | `Super._apply_methods` owns the handler loop; a result reports every method it ran; `Manipulator.batch`. Downstream, 22 handlers of 667 lines became 81 | opt-in |
 
-### 0.3.1 — a break of our own making
+### Audit of the 2026-08-04 feedback list
 
-| # | Finding | Breaking |
-| --- | --- | --- |
-| R31 | Cycle detection threaded its state through a `_seen` parameter, so every downstream override written as `def to_dict(self)` failed. The state moved to a context variable | no, a repair |
-
-### 0.3.2 — concurrency
-
-| # | Finding | Breaking |
-| --- | --- | --- |
-| R19 | Shared state was unguarded: sixteen threads building the first project of a type produced up to fifteen competing container classes, and the handler cache lost entries. Both are covered by tests that fail without the guards | no |
-
-### 0.4.0 — the operation layer
-
-| # | Finding | Breaking |
-| --- | --- | --- |
-| R32 | Every handler wrote the same loop by hand. `Super._apply_methods` owns it, and a result now reports every method it ran rather than the last, which is what makes a request history replayable | no, opt-in |
-| R33 | The sequence form of `process_request` had no facade, hence no users and no coverage. `Manipulator.batch` is that facade | no |
-| R30 | Consumer side: the 22 handlers in pAstroCORE moved onto `_apply_methods`, 667 lines becoming 81, and the failure policy they disagreed on was settled | the policy changed for `configure` |
-
-## Audit of the 2026-08-04 feedback list
-
-A list of concerns was raised for review. Each was checked against the code rather than
-accepted, because several turned out to describe something other than what is there. The
-evidence column is what was measured, not what was expected.
-
-| Concern | Verdict | Evidence |
-| --- | --- | --- |
-| `TypeVar` in `_resolve_type` breaks on complex annotations | **confirmed, three separate bugs** | `Generic[T, U]` resolves both parameters to `args[0]`, so the second field gets the first type; `TypeVar('V', int, str)` accepts only `int`; an unparameterized `Generic[U]` raises at construction |
-| `_resolve_type` for `Union` in `from_dict` may pick the wrong type | **not confirmed** | `to_dict` always writes `type`, and both entity attributes and container items restore correctly. Without it the call fails loudly rather than guessing |
-| — but nothing can read foreign JSON that has no `type` | **real gap, newly found** | There is no way to declare a discriminator or a default, so data not produced by MSB cannot be ingested |
-| `_invalidate_cache` walks the graph synchronously and may be expensive | **confirmed, and worse than stated** | 3.3 µs with no owners against 413 µs with 500. The walk also runs when nothing caches at all, costing 277 µs of the 413 for no result |
-| The `to_dict` cache has no size limit and may grow | **not as stated** | One mapping per object with `use_cache=True`, so it is bounded by the object graph: 3.8 MB for a 20 000-item container. It is never evicted and duplicates the data, which is worth documenting rather than capping |
-| No object pooling for many small objects | **real cost, wrong remedy** | Constructing an entity costs 10.5 µs against 0.56 µs for a plain dict. Profiling puts the time in repeated type-hint introspection — `get_origin` and `get_args` are each called 150 000 times for 30 000 objects — not in allocation, which pooling would not touch |
-| No runtime contract checking, Pydantic style | **confirmed** | Types are checked, values are not: a dish accepts `diameter=-5.0` and an empty band. `utils/validation.py` already has `check_positive`, `check_range` and the rest, but nothing connects them to annotations |
-| `Manipulator` and `Super` are tightly coupled through `_manipulator` | **confirmed, and small** | `Super` calls exactly one method on it, `get_methods_for_type`, so a one-method protocol replaces the dependency |
-| No asynchrony | true | Recorded as P2 |
-| No persistence | true | Recorded below |
-| No monitoring, hard to debug in production | true | Recorded below |
-| Parallel serialization with `asyncio.gather` | **wrong** | `to_dict` is pure CPU. Gathering eight containers of 3 000 items takes 1.69x the sequential time; a thread pool takes 1.11x |
-| Asynchronous `_invalidate_cache` | **wrong** | Microseconds of pure CPU; awaiting it costs more than doing it |
-| No profiling of hot spots | true | There is no benchmark suite, so a regression is only visible when someone measures by hand |
-| Tests are critical for maintenance | already done | 485 tests, 90% coverage, including concurrency tests that fail without their guards |
-
-A second list arrived the same day, about operating the framework in production. Most of it
-resolves to one thing rather than five:
+Kept because it records what was measured rather than assumed. Concerns not listed here were
+confirmed and became items above.
 
 | Concern | Verdict |
 | --- | --- |
-| No metrics (Prometheus, statsd) | **A library should not choose a metrics backend.** MSB has no dependencies and that is a feature; importing `prometheus_client` would end it. What it owes the application is *events* — what ran, how long it took, what failed — and the application exports them wherever it likes |
-| No rate limiting in `Manipulator` | Rate limiting is a policy, and MSB knows nothing about callers or identity. But the orchestrator is the one place every request passes through, so a hook there is the right shape |
-| No change audit | **Fits the model best of all.** A request is already data and a response already reports every method that ran, so the audit trail is nearly free — it is the request history that motivated the uniform protocol in 0.4.0 |
-| No graceful shutdown | **Not applicable.** MSB owns no processes, connections or background tasks; there is nothing to wind down. It becomes a question only if P2 introduces task management, and belongs to whatever hosts the library |
-| No health checks | **Not applicable**, for the same reason. A library has no health; a service does |
+| `_resolve_type` picks the wrong `Union` member in `from_dict` | **Not confirmed.** `to_dict` always writes `type`; without it the call fails loudly rather than guessing. The real gap was ingesting foreign data — B9 |
+| The `to_dict` cache grows without limit | **Not as stated.** One mapping per caching object, bounded by the object graph |
+| No object pooling | **Real cost, wrong remedy.** 10.5 µs per entity against 0.56 µs for a dict, but the time is in introspection — `get_origin`/`get_args` called 150 000 times for 30 000 objects — not allocation. P5 |
+| Parallel serialization, async invalidation | **Wrong.** Both measured slower than doing the work |
+| `_invalidate_cache` is expensive | **Confirmed, and worse.** 3.3 µs with no owners against 413 µs with 500, of which 277 µs is spent reaching nothing. P6 |
+| No runtime contract checking | **Confirmed.** Types are checked, values are not. B2 |
+| `Super` and `Manipulator` are tightly coupled | **Confirmed, and small.** One method is called on it. B5 |
+| Tests are critical | Already true: 519 tests, 90% coverage, including concurrency tests that fail without their guards |
 
-Metrics, rate limiting, auditing and authorisation are all *the same hook*: something that
-sees a request before it runs and its response after. One interceptor chain around
-`process_request` gives all four and keeps the dependency count at zero. Recorded as B11.
-
-Two further gaps came out of the same pass, neither of them on the list:
-
-| Gap | Evidence |
-| --- | --- |
-| **No exception taxonomy** | Ninety `raise` statements, all of them bare `ValueError`, `TypeError` or `KeyError`, and no exception type of the framework's own. A caller cannot tell a validation failure from a misconfiguration from an ordinary Python error |
-| **No schema version in serialized data** | `to_dict` writes `type` but nothing about the shape it was written with. Rename a field and every file saved before it becomes unreadable, with no way to migrate. pAstroCORE saves projects to disk, so this is not hypothetical |
-
-## The road to 1.0.0
-
-A 1.0 is a promise that the contract will not break outside a major version. The work below
-is ordered by whether it blocks that promise, not by how interesting it is.
-
-### Where to start
-
-The items below are what has to happen, not the order it happens in. The order matters
-because some of them make the others cheaper or more expensive, so here it is, with the
-reason for each position rather than a bare sequence.
-
-Four rules decide it: **a decision before the code it shapes**, because a decision costs a
-conversation now and a rewrite later; **error types before the code that raises them**,
-because retrofitting ninety call sites twice is absurd; **a benchmark before an
-optimisation**, because otherwise nobody can tell whether it worked; and **the freeze last**,
-because only a finished contract can be frozen.
-
-| Wave | Items | Why here |
-| --- | --- | --- |
-| **0. Decide** | B7 async, B8 built-in Supers, B6 pipelines — **all three settled on 2026-08-04**, see *Decisions taken* | None of these was code, and each changed the shape of something built later. Async decides what an interceptor has to wrap; built-in Supers change the extension contract B5 defines; pipelines change the request shape B11 wraps. Deciding cost a conversation; deferring would have cost a rewrite |
-| **1. Foundation** | ~~B3 exception taxonomy~~ **done**, P7 benchmark suite | Everything after this raises errors, so the types should exist before the code that raises them rather than be retrofitted through ninety sites. And every performance number so far was measured by hand; before touching P5 or P6 the measurement has to be permanent |
-| **2. Correctness, cheap and separable** | B1 TypeVar, P6 skip the idle invalidation walk, B5 the Super protocol | Three small, independent changes. B1 fixes a wrong type that ships today; P6 removes 277 µs of the 413 spent reaching nothing; B5 replaces a concrete dependency with a one-method protocol. Each lands on its own and none blocks another |
-| **3. The contract of data** | B2 value constraints, B4 schema version, B9 foreign input | All three change what serialized data and annotations mean. B2 needs B3 so a failed constraint raises the right type; B4 and B9 both rework `from_dict` and are cheaper together than apart |
-| **4. The contract of requests** | B11 interceptor chain, then P8 observability | B11 waits for wave 0, because what an interceptor wraps depends on whether a request can carry references and whether it may be awaited. P8 is not a feature of its own — it is the first thing plugged into B11 |
-| **5. Performance** | P5 compiled per-class validators | After P7 can prove it worked and after B2, because constraints become part of what is compiled. Doing it earlier means compiling twice |
-| **6. Freeze** | B10 policy and public surface, P9 and P11 documentation | A contract can only be frozen once it has stopped moving. The documentation guide is the last thing written because it describes the finished shape |
-
-**Wave 0 is done.** It was three conversations rather than three tasks, and all three were
-held on 2026-08-04; what each settled is recorded below. **Work now starts at wave 1**, whose
-first code is B3, with B1 travelling alongside it since its own raises are two lines.
-
-### Decisions taken
-
-#### B7 — asynchrony: an additive async surface (2026-08-04)
-
-The obvious move is to make the `Manipulator` asynchronous and leave the rest alone. It does
-not work, and the reason is worth writing down because it will be proposed again.
-
-`await` does not create concurrency; it marks a point where control *may* be yielded. A
-synchronous handler has no such point, so awaiting one blocks the event loop for its whole
-duration. Measured against a heartbeat task counting how often the loop got to run during one
-0.5-second operation:
-
-| | loop ran |
-| --- | --- |
-| a plain synchronous call, as today | **0 times** |
-| an `async def` entry point over a synchronous handler | **0 times** |
-| the handler moved onto an executor | **20 times** |
-
-So an asynchronous entry point alone changes the spelling and not the behaviour. What helps
-depends on what the handler does: a handler that waits on I/O genuinely benefits from being a
-coroutine, while a handler that computes -- the case in the numerical work MSB was written for
--- benefits only from leaving the loop's thread. NumPy releases the GIL, so for that work a
-thread is real parallelism rather than a polite fiction.
-
-The decision is therefore neither "async everywhere" nor "nothing":
-
-- `Manipulator` gains an asynchronous surface alongside the synchronous one, not instead of
-  it. Every synchronous signature stays as it is.
-- Given a synchronous handler, the asynchronous path runs it on an executor, so the caller's
-  loop stays responsive. Given a handler that is itself a coroutine, it is awaited directly.
-- The executor is the framework's to own, so thread policy is configured once rather than at
-  every call site.
-- The response protocol is identical on both paths. This is the part that cannot be deferred:
-  B11's interceptors must wrap either path from the day they exist.
-
-**This corrects an earlier entry in this document**, which said asynchrony had to be settled
-first because retrofitting it would touch every signature. That is true of async-all-the-way-
-down and false of an additive surface. The *decision* still belongs in wave 0, because B11 is
-shaped by it; the *implementation* is additive, breaks nothing, and need not block 1.0.
-
-#### B8 — built-in `Inspector` and `Configurator`, registered by default (2026-08-04)
-
-They ship, and a `Manipulator` knows `inspect` and `configure` without being told. The
-evidence under P3 is not marginal: 20 of pAstroCORE's 21 handlers hold no domain logic, and
-those two operations serve 185 of its 194 facade calls. It is also the honest continuation of
-0.4.0 -- the framework took the loop, and the shell around the loop turned out to be empty
-too.
-
-Registering them by default cannot be done as the registry stands. A duplicate operation name
-raises `ValueError`, so every existing application would fail on import the moment the
-built-ins claimed `inspect` and `configure`. The rule therefore changes, narrowly:
-
-- **A user registration replaces a built-in, silently.** It is a default being overridden, not
-  a collision of two intentions. An application that registers its own `Inspector` behaves
-  exactly as it does today.
-- **Two user registrations of one name still raise.** That collision is a mistake and stays
-  one.
-
-Three things decide whether the built-ins are worth having, and all three are constraints on
-the implementation rather than open questions. The descent into nested objects is not uniform
--- a container exposes `get(name)` while a `Project` exposes `get_observation(name)` -- so it
-needs a named hook, not a convention. A built-in `Configurator` returns `MethodResults` where
-today each handler invents its own value, which touches 2 of 62 downstream call sites because
-a configure result is almost never read. And both classes must stay thin over `_apply_methods`
-with named hooks, or a subclass will override everything and be worse off than with a
-hand-written handler.
-
-Only `inspect` and `configure` generalise: they fall straight out of the request model, where
-an attribute names a method. Operations like `calculate` and `visualize` are domain work and
-stay bespoke.
-
-#### B6 — pipelines: shape reserved, built after 1.0 (2026-08-04)
-
-Nothing is built for 1.0, because there is no dependent batch anywhere yet and an abstraction
-designed against no example is the wrong one to freeze. What 1.0 owes is only that it does not
-foreclose the feature. It does not: attribute *values* are passed to handlers unexamined, so a
-reference object already travels through `process_request` untouched, and the sequence form
-`{request_id: {...}}` already gives step identifiers something to address. The one obligation
-this places on 1.0 is that value validation, if it ever arrives, must not reject objects it
-does not recognise.
-
-Three things are settled about the shape, and they are what 1.0 must not contradict.
-
-**A step declares its input explicitly, by step identifier.** This is the decision that
-matters, and it is not "chain versus graph" -- it is whether a dependency is named or implied
-by position. Named, a chain is literally the one-edge case of a dependency graph, and widening
-to several inputs per step is additive. Implied by position, a graph arrives later as a second
-and incompatible syntax, and both live in the contract forever. So the chain is sugar over the
-general form, never a rival to it.
-
-**Adaptation between two steps is itself a step**, written as an ordinary `Super`, never a
-callable between steps. A callable would stop a request being data, and with it go
-serialization, history and replay -- the properties the orchestrator exists for. This holds in
-a chain and in a graph alike.
-
-**Substitution happens before B11's interceptors.** An interceptor must always see a concrete
-request, or a recorded session stops being replayable.
-
-What a dependency graph eventually buys is worth naming, because it is the reason not to
-foreclose it: execution order derived by topological sort rather than written out; independent
-branches run in parallel -- on the executor B7 just gave the framework, so the two wave-0
-decisions compound; incremental recomputation, where changing one parameter recomputes only
-what depends on it; and provenance, since a graph is data and can be drawn, stored and
-replayed. For numerical work the last two are the point. It is also a whole subsystem, needing
-cycle detection, failure semantics, and somewhere for a step's output to live until its
-dependents run -- which is P10. That is why it follows 1.0 rather than entering it.
-
-One observation reframes the problem and should be settled before anything is built: most MSB
-operations *mutate* their object rather than return a new one -- `configure` changes it,
-`inspect` reads it -- and a sequence of those over one object is an ordered batch, which
-already works. The genuinely unserved case is a step that **produces** an object for the next
-to consume, and that is where the one real ambiguity lives: a step reports every method it ran,
-so which result becomes the next input has to be declared rather than guessed. Choosing a
-chain does not avoid this question; it only leaves it unasked.
-
-**What unblocks this: one real dependent pipeline from pAstroCORE**, designed against rather
-than imagined.
-
-##### Lineage is separable from scheduling, and comes first
-
-The most valuable thing a dependency graph offers is not execution order but **provenance**:
-following an object through every operation that touched it, and being able to say which
-inputs produced a given result. MSB is unusually well placed for it, and by accident of a
-decision made for other reasons -- in a scheduler whose steps are callables, an invocation
-cannot be serialized, so lineage has to be reconstructed from annotations bolted on beside the
-code. Here a request is already data, an object already has `to_dict`, and `_apply_methods`
-already reports every method it ran with its outcome. The expensive precondition is met.
-
-Which means the order is the other way round from the obvious one. Recording what a request
-consumed and produced needs no execution engine at all -- it needs the interceptor already
-decided in B11, plus serialization that already exists. The graph is then **derived from the
-recorded history** rather than declared in advance. A declared graph is a later and different
-thing: it exists to *plan* -- topological order, parallel branches, incremental recomputation
--- rather than to observe.
-
-So B11 carries one extra obligation, and it is free today because it concerns only what the
-interceptor is handed: **a recorded request must be sufficient to reconstruct lineage from**.
-Meeting it costs nothing now and makes provenance an addition later rather than a rewrite.
-
-The hard problem is not the graph. It is that entities are **mutable and addressed by `name`**:
-once an object is changed, the state that produced an earlier result is gone, so "this came
-from that version of the input" has nothing to point at. Incremental recomputation needs the
-same answer, so the two stand or fall together.
-
-Four ways out, and they compose rather than compete:
-
-| Approach | Cost | What it actually gives |
-| --- | --- | --- |
-| **A revision counter** on every `Serializable`, bumped on write | one `int`, one increment | "did this change" and an ordering, not what it was. Nearly free here: the place that invalidates the cache and walks the ownership graph is the place that would bump it |
-| **A request journal**, written by B11's interceptor | O(operations), not O(model size) | provenance itself, and any past state by replay from a checkpoint. The natural fit, because a request is already data |
-| **A content hash**, cached and invalidated like `to_dict` | cheap in memory, a traversal in time | "is this the same input as last time", which is what memoisation and incremental recomputation need. Cannot reconstruct the input |
-| **Snapshots** through `to_dict` | O(model size) per snapshot | exact past states. Affordable as occasional checkpoints, not per step |
-
-The order that follows: revision counters first, since they ride on machinery that exists;
-then the journal, which is the provenance feature; then hashing, when memoisation is actually
-built; with snapshots only as checkpoints the journal replays from.
-
-One constraint this places on the journal: **replay assumes determinism**. A handler that
-reads the clock, a file or a random seed cannot be reconstructed from its request alone, so
-either such inputs are recorded too or handlers have to declare themselves pure.
-
-### Blocking — each changes something a caller depends on
-
-| # | Item | Why it blocks |
-| --- | --- | --- |
-| B1 | Fix `TypeVar` resolution: resolve by parameter position, treat constraints as a union, fall back to `Any` when unparameterized | Corrects a wrong type today, so it changes behaviour |
-| B2 | Value constraints on annotations, e.g. `Annotated[float, Positive()]`, wired to the helpers already in `utils/validation.py` | Adds to what an annotation means; `_check_type` already unwraps `Annotated`, so the hook exists |
-| B3 | An exception taxonomy: `MSBError` with `ValidationError`, `ResolutionError`, `OperationError` beneath it, each still deriving from the built-in it replaces | **Done, unreleased.** What a caller may catch is part of the contract. Sixteen types over 93 sites; the six real groupings the code turned out to have rather than the three guessed here. No existing test changed, which is the measure of the compatibility claim. A ratchet test fails the build if a bare built-in is raised again |
-| B4 | A schema version in serialized data, and a migration hook | Otherwise 1.0 promises to read files it will not be able to read |
-| B5 | A protocol for what `Super` needs from `Manipulator`, replacing the concrete reference | The extension contract must name an interface, not a class |
-| B6 | Decide P1 pipelines | **Settled**: shape reserved, built after 1.0, see above. What 1.0 owes is only not to foreclose it |
-| B7 | Decide P2 asynchrony | **Settled**: an additive async surface, see above. Only the decision blocks, because B11 wraps both paths; the implementation breaks nothing |
-| B8 | Decide P3 built-in `Inspector` and `Configurator` | **Settled**: they ship, registered by default, a user registration replaces a built-in. Needs the duplicate-name rule to change, so it blocks |
-| B9 | Ingesting foreign data: a declared discriminator, or a default type per field | Changes `from_dict` |
-| B11 | An interceptor chain around `process_request`: something that sees a request before it runs and its response after | Metrics, auditing, rate limiting and authorisation are one hook, not four features. Adding it later would change how a request is processed, so it belongs before the freeze. Two obligations from wave 0: it wraps the synchronous and asynchronous paths alike, and a recorded request must be enough to reconstruct lineage from |
-| B10 | Write down the deprecation policy and mark the public surface | The promise needs stating before it can be kept |
-
-### Should be in 1.0, but breaks nothing
-
-| # | Item | Measured reason |
-| --- | --- | --- |
-| P5 | Compile a validator per field once per class instead of re-deriving `get_origin`/`get_args` per instance | 150 000 introspection calls for 30 000 objects; entity construction is 19x a plain dict |
-| P6 | Skip the invalidation walk when no owner caches | 277 µs of the 413 µs at 500 owners is spent reaching nothing |
-| P7 | A benchmark suite in CI, so a performance regression fails a build | Yesterday every performance number was measured by hand |
-| P8 | Observability hooks: serialization time, cache size, invalidation frequency, validation failures | Asked for, and cheap once there is one place to hang them |
-| P11 | Repair the ten documentation examples that no longer run, and add a test that executes every fenced Python block so they cannot rot again | Executing each document's blocks in order, as a reader would: `mega.md` 6 of 17 broken, `super.md` 2, `base.md` 1, `examples.md` 1. `api.md` blocks are signature fragments and are not meant to run |
-| P9 | Documented memory behaviour of the cache: one mapping per object, duplicated, never evicted | Cheaper than capping it, and enough for a reader to decide |
-
-### After 1.0
-
-| # | Item | Note |
-| --- | --- | --- |
-| P4 | Generating an application from the data model | The WYSIWYG editor. Aim at the GUI wiring rather than the handler stubs — see the entry below |
-| P10 | Persistence beyond `to_dict`/`from_dict` | A store is a product of its own; 1.0 should not carry it |
-
-## Planned, not scheduled
-
-Four directions that are wanted and deliberately not started. P1, P2 and P3 blocked 1.0 as
-decisions rather than as code; all three were settled on 2026-08-04 under B6, B7 and B8 above,
-and of them only P3 is built for 1.0. P4 follows the release.
-
-| # | Item | Notes |
-| --- | --- | --- |
-| P1 | **Pipelines**: a request in a batch that depends on the result of an earlier one | Settled under B6: after 1.0, with position in a chain currently preferred over a reference. The reasoning below is what led there. `batch` runs independent requests. Feeding one result into the next must not be done with callables between steps: a request would stop being data, and with it go serialization, history and replay -- the properties the orchestrator exists for, and the reason an external caller can drive it at all. The shape that keeps them is a reference inside the request, `Ref("step_id", "method_name")`, substituted before the step runs. Three things need deciding first: how a reference addresses a result now that a step reports every method it ran, what happens to steps that depend on a failed one, and whether substitution belongs in the Manipulator or in a layer above it. None of that should be guessed: there is no dependent batch anywhere yet, so there is nothing to design against |
-| P2 | **Asynchronous Manipulator**: `await manipulator.calculate(...)` | The calculations in the downstream project are long, and the GUI blocks on them today. Shape settled under B7: an additive async surface that runs a synchronous handler on an executor and awaits a coroutine handler directly, with the synchronous API untouched. What is still open is what a batch means when its requests overlap in time. The thread-safety work in 0.3.2 is a prerequisite and is done |
-| P3 | **Built-in `Inspector` and `Configurator`** | Settled under B8: they ship in 1.0, registered by default. The measurements below are why. Requested by a downstream author on 2026-08-03, and the natural continuation of `_apply_methods`: the framework took the loop, and the handler around it turns out to be nearly empty too. Measured on pAstroCORE after that migration, 20 of its 21 handlers contain no domain logic at all -- six are literally a type check and one call, and the type check is redundant because dispatch already selected the handler by type. Shipping an `Inspector` and a `Configurator` would delete all of them but one, `_configure_scheduleproject`, which really does have domain logic. Three things decide whether it works: the nested descent is not uniform, since containers expose `get(name)` while a `Project` exposes `get_observation(name)`, so it needs a hook rather than a convention; a built-in `Configurator` returns `MethodResults` instead of the bespoke value each handler invents today, which touches 2 of 62 call sites because a configure result is almost never read; and the classes have to stay thin over `_apply_methods` with named hooks, or subclasses will override everything and end up worse off than with a hand-written handler. Only `inspect` and `configure` generalise -- they fall straight out of the request model, where an attribute names a method -- while operations such as `calculate` and `visualize` are domain work and stay bespoke. Those two cover 185 of the 194 facade calls downstream |
-| P4 | **Generating an application from the data model** | The downstream author is building a WYSIWYG editor that lays out entities and their Super classes and emits Python skeletons. Measuring pAstroCORE shows where the leverage actually is: 74.5% of it is already generated, by Qt Designer, and of the rest the data model is 4.4% and the operations 7.5% -- of which the handlers this would scaffold are 81 lines, four each. Skeletons that small are faster to type than to find in an editor. The 11.7% written by hand is GUI wiring: tables over containers, dialogs over entity attributes, validation, saving back. MSB already holds everything that needs -- `_fields` with types, which attributes are optional, `Literal` as a ready list of choices, nested entities, containers, validation -- so the target worth aiming at is generating those forms and tables, not the handler stubs. One constraint to design in from the start: a template carrying "your logic here" cannot be regenerated once it has been edited. Generating only what follows from the model, into files nobody edits, and leaving user code in subclasses beside them, keeps regeneration possible. For the digital-twin and platform cases mentioned alongside this, two things are missing first: persistence beyond `to_dict`/`from_dict`, and P2 |
-
-## What 1.0.0 should mean
-
-A 1.0 is a promise rather than a feature count: that the contract will not break outside a
-major version. Five releases went out on 2026-08-03, four of them changing the contract, so
-the promise is not close. It becomes possible when nothing is left that would force a break
-— which is what the blocking list above enumerates.
-
-**What must hold when the blocking work is done:**
-
-| | |
-| --- | --- |
-| The request and response protocol is frozen | Including `MethodResults` and what a facade unwraps |
-| The extension contract is frozen | What a `Super` subclass implements, which helpers it may call, and the protocol it sees instead of a `Manipulator` |
-| The entity model is frozen | Settled in 0.3.0 when `Serializable` split the hierarchy; B1 and B2 are the last changes to what an annotation means |
-| Serialized data carries its version | So a file written by 1.0 is still readable by 1.9 |
-| Errors are the framework's own types | So a caller can catch precisely rather than by string matching |
-| A deprecation policy is written down | How long a name survives after it is superseded, and how it is announced |
-| The public surface is marked | Which underscore-prefixed names are protected extension points and which are genuinely private |
-| There is a guide to building an application | The docs describe the API well and still never show how to start a project on it |
-| Performance is defended by CI | A benchmark suite, so a regression fails a build instead of being noticed months later |
-| More than one project depends on it in earnest | Already true: pAstroCORE and an observatory scheduling system |
-
-**What 1.0 is not.** Not persistence, not a UI generator, not a plugin system, not
-asynchrony unless P2 is decided in its favour. Those belong to whatever is built on MSB, or
-to a later minor. A framework earns 1.0 by holding still, not by growing.
-
-**On "enterprise-grade".** Nothing in the list above is specific to large organisations. A
-scientist writing a simulation and a team running a service want the same things from a
-framework: that it says no to bad data early, that its errors can be caught precisely, that
-files written last year still open, that a mistake is visible in logs, and that the API they
-learned still works. The only thing genuinely peculiar to scale is P2 and P10 — concurrency
-and a store — and both are recorded as decisions rather than assumptions.
+Two gaps came out of the same pass that nobody had listed: no exception taxonomy (B3) and no
+schema version in serialized data (B4).
