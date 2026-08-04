@@ -13,6 +13,41 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.0.0] - 2026-08-04
+
+The contract is frozen. Nothing on the public surface will break outside a major version, and
+[`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) says exactly what that covers -- because a
+promise nobody can check is not one.
+
+No behaviour changes here beyond the fix below. 1.0 is what the five releases before it earned,
+not a feature.
+
+### Added
+
+- **[`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)**: the public surface, named member by
+  member; the protected-but-promised extension points a `Super` subclass calls; what is private
+  and therefore free to move; what serialized data guarantees; and the deprecation policy --
+  announced in a MINOR release with a `DeprecationWarning` naming the replacement, removed no
+  earlier than the next MAJOR. Also what is deliberately *not* promised: exception messages, log
+  wording, performance numbers, and the thread safety of a single object.
+- **[`docs/guide.md`](docs/guide.md)**: a working application built from nothing, in the order
+  you would build it. Every block runs as part of the test suite.
+
+### Fixed
+
+- **`schema_version` is written only by a class that has actually versioned itself.** 0.6.0 put
+  it into every serialized mapping, which broke deserialization downstream where `from_dict` is
+  overridden per class and a careful override rejects keys it does not recognise. A class at the
+  default version now serializes exactly as it did before versioning existed, and a mapping
+  carrying no version still reads as version 1. Versioning costs nothing until it is used.
+
+### Upgrading from 0.8.0
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| A hand-written `from_dict` that broke in 0.6.0 | `schema_version` was written unconditionally. | Nothing — it is no longer written unless your class sets `SCHEMA_VERSION`. |
+| Nothing else. | The freeze changes no behaviour. | Read [Compatibility](docs/COMPATIBILITY.md) to see what you may now rely on. |
+
 ## [0.8.0] - 2026-08-04
 
 An asynchronous surface, added beside the synchronous one rather than in place of it. Every
