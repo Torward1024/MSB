@@ -5,18 +5,26 @@ than a developer machine and varies run to run, so a threshold loose enough not 
 is loose enough to hide a tenfold regression -- which is what the older assertions in
 `test_performance.py` do.
 
-Three kinds of assertion here are stable across machines:
+Three kinds of assertion here, in decreasing order of how much they can be trusted:
 
-- **Ratios.** Both sides are measured in the same run on the same machine, so the hardware
-  cancels out. "An entity costs no more than N times a plain dict" survives a slow runner.
 - **Counts.** How many times a hot path is entered is not a measurement at all, it is
-  arithmetic, and it is exactly what the cost of entity construction turned out to be about.
+  arithmetic. It cannot flake, and it is exactly what the cost of entity construction turned
+  out to be about. Where a property can be expressed as a count, it is expressed as a count.
 - **Scaling.** Cost at 2n against cost at n catches an accidental quadratic, which is the
-  regression that has actually happened here before (R3, adding 4000 items took 1.4 s).
+  regression that has actually happened here before (R3, adding 4000 items took 1.4 s). The
+  ratio between two sizes is far more stable than either measurement.
+- **Ratios against a baseline.** A ratio cancels how fast the machine is. It does **not**
+  cancel how much the machine varies, which is a separate thing and was learned the hard way:
+  a budget set from a single sample of 17x failed CI at 32.9x, on the same commit that had
+  passed minutes earlier. Sampling both sides in one pass and taking the median of the
+  per-pass ratios brought the observed spread from 19x down to 6x; the remaining budget
+  carries honest headroom over that, so it catches a gross regression and nothing finer.
 
-Budgets carry headroom over what was measured, so they fail on a real regression rather than
-on noise. Each says what it is defending and what the number was when it was set.
+Budgets say what they defend and what was measured when they were set. Where a number here
+looks loose, it is because a tighter one would fail on noise, and the exact count beside it is
+the assertion doing the real work.
 """
+import statistics
 import time
 from typing import Dict, List
 
@@ -79,13 +87,37 @@ class PlainReading:
         self.name, self.value, self.label, self.isactive = name, value, label, isactive
 
 
-def test_an_entity_costs_no_more_than_twenty_eight_plain_objects():
-    """Defends the construction path.
+def paired_ratio(first, second, count=3000, repeats=9):
+    """How much dearer `first` is than `second`, as the median of per-pass ratios.
+
+    Both sides are timed inside one pass, so a slow moment on the machine lands on both and
+    largely cancels. Timing each side separately and dividing the two minima does the
+    opposite: it pairs the unluckiest run of one with the luckiest of the other, which is what
+    produced a spread of 19x where this produces 6x.
+    """
+    ratios = []
+    for _ in range(repeats):
+        start = time.perf_counter()
+        first(count)
+        elapsed_first = time.perf_counter() - start
+
+        start = time.perf_counter()
+        second(count)
+        ratios.append(elapsed_first / (time.perf_counter() - start))
+    return statistics.median(ratios)
+
+
+def test_an_entity_costs_no_more_than_forty_five_plain_objects():
+    """Defends the construction path against a gross regression.
 
     Compared against a plain class rather than a dict literal, because both then allocate an
-    object and set the same four attributes, and the ratio is exactly what validation costs.
-    Measured at 44x before P5 and 17x after it: 7.4 us against 0.43. The budget carries about
-    half again in headroom, so it fails on a real regression rather than on a slow runner.
+    object and assign the same four attributes, so the ratio is what validation costs.
+    Measured at 44x before P5. After it, this machine reports between 22x and 29x depending on
+    the pass, and a CI runner reported 33x, so the budget sits above all of them.
+
+    It is deliberately loose. What actually defends P5 is
+    `test_construction_introspects_a_bounded_number_of_times_per_object`, which counts rather
+    than times and therefore cannot flake; this catches the slowdown that a count would miss.
     """
     def entities(count):
         for _ in range(count):
@@ -95,8 +127,8 @@ def test_an_entity_costs_no_more_than_twenty_eight_plain_objects():
         for _ in range(count):
             PlainReading("r", 1.0, "x")
 
-    ratio = per_operation(entities, 3000) / per_operation(plain, 3000)
-    assert ratio < 28, f"entity construction is {ratio:.1f}x a plain object, budget 28x"
+    ratio = paired_ratio(entities, plain)
+    assert ratio < 45, f"entity construction is {ratio:.1f}x a plain object, budget 45x"
 
 
 def test_a_cached_to_dict_is_much_cheaper_than_an_uncached_one():
@@ -189,8 +221,11 @@ def test_invalidation_does_not_grow_with_owners_that_do_not_cache():
     lonely = Reading(name="lonely", value=1.0, label="x")
     shared = owners[0].get("shared")
 
-    alone = per_operation(lambda n: [setattr(lonely, "value", 2.0) for _ in range(n)], 2000)
-    crowded = per_operation(lambda n: [setattr(shared, "value", 2.0) for _ in range(n)], 2000)
-    assert crowded < alone * 25, (
-        f"a write with 200 owners costs {crowded / alone:.0f}x one with none, budget 25x"
+    ratio = paired_ratio(
+        lambda n: [setattr(shared, "value", 2.0) for _ in range(n)],
+        lambda n: [setattr(lonely, "value", 2.0) for _ in range(n)],
+        count=2000,
+    )
+    assert ratio < 25, (
+        f"a write with 200 owners costs {ratio:.1f}x one with none, budget 25x"
     )
