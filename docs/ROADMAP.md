@@ -262,6 +262,34 @@ chain does not avoid this question; it only leaves it unasked.
 **What unblocks this: one real dependent pipeline from pAstroCORE**, designed against rather
 than imagined.
 
+##### Lineage is separable from scheduling, and comes first
+
+The most valuable thing a dependency graph offers is not execution order but **provenance**:
+following an object through every operation that touched it, and being able to say which
+inputs produced a given result. MSB is unusually well placed for it, and by accident of a
+decision made for other reasons -- in a scheduler whose steps are callables, an invocation
+cannot be serialized, so lineage has to be reconstructed from annotations bolted on beside the
+code. Here a request is already data, an object already has `to_dict`, and `_apply_methods`
+already reports every method it ran with its outcome. The expensive precondition is met.
+
+Which means the order is the other way round from the obvious one. Recording what a request
+consumed and produced needs no execution engine at all -- it needs the interceptor already
+decided in B11, plus serialization that already exists. The graph is then **derived from the
+recorded history** rather than declared in advance. A declared graph is a later and different
+thing: it exists to *plan* -- topological order, parallel branches, incremental recomputation
+-- rather than to observe.
+
+So B11 carries one extra obligation, and it is free today because it concerns only what the
+interceptor is handed: **a recorded request must be sufficient to reconstruct lineage from**.
+Meeting it costs nothing now and makes provenance an addition later rather than a rewrite.
+
+The hard problem is not the graph. It is that entities are **mutable and addressed by `name`**:
+once an object is changed, the state that produced an earlier result is gone, so "this came
+from that version of the input" has nothing to point at. The two ways out are snapshots --
+cheap to take through `to_dict`, expensive to keep -- and content hashing. This is also
+exactly what incremental recomputation would need, so the two stand or fall together, and it
+should be settled before either is built.
+
 ### Blocking — each changes something a caller depends on
 
 | # | Item | Why it blocks |
@@ -275,7 +303,7 @@ than imagined.
 | B7 | Decide P2 asynchrony | **Settled**: an additive async surface, see above. Only the decision blocks, because B11 wraps both paths; the implementation breaks nothing |
 | B8 | Decide P3 built-in `Inspector` and `Configurator` | **Settled**: they ship, registered by default, a user registration replaces a built-in. Needs the duplicate-name rule to change, so it blocks |
 | B9 | Ingesting foreign data: a declared discriminator, or a default type per field | Changes `from_dict` |
-| B11 | An interceptor chain around `process_request`: something that sees a request before it runs and its response after | Metrics, auditing, rate limiting and authorisation are one hook, not four features. Adding it later would change how a request is processed, so it belongs before the freeze |
+| B11 | An interceptor chain around `process_request`: something that sees a request before it runs and its response after | Metrics, auditing, rate limiting and authorisation are one hook, not four features. Adding it later would change how a request is processed, so it belongs before the freeze. Two obligations from wave 0: it wraps the synchronous and asynchronous paths alike, and a recorded request must be enough to reconstruct lineage from |
 | B10 | Write down the deprecation policy and mark the public surface | The promise needs stating before it can be kept |
 
 ### Should be in 1.0, but breaks nothing
