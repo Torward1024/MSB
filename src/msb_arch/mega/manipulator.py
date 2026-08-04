@@ -37,7 +37,8 @@ class Manipulator(ABC):
     def __init__(self, managing_object: Optional[Any] = None,
                  base_classes: Optional[List[Type]] = None,
                  operations: Optional[Dict[str, Callable]] = None,
-                 strict_type_check: bool = False):
+                 strict_type_check: bool = False,
+                 builtins: bool = True):
         """Initialize a Manipulator with an optional managing object, base classes, and operations.
 
         Args:
@@ -45,6 +46,16 @@ class Manipulator(ABC):
             base_classes (Optional[List[Type]]): List of base classes for method registration. Defaults to None.
             operations (Optional[Dict[str, Callable]]): Initial operations to register. Defaults to None.
             strict_type_check (bool): If True, enforce strict type checking for objects. Defaults to False.
+            builtins (bool): Register the built-in `inspect` and `configure` operations.
+                Defaults to True.
+
+        Notes:
+            - The built-ins make an application that only reads and writes its model need no
+              `Super` of its own. Registering an operation of the same name replaces one
+              silently, so an application that supplies its own `Inspector` behaves exactly as
+              it did before they existed. Two registrations of one name that are both yours
+              still raise.
+            - Pass `builtins=False` to start with nothing registered.
         """
         self._managing_object = managing_object
         self._strict_type_check = strict_type_check
@@ -53,6 +64,12 @@ class Manipulator(ABC):
             self._base_classes.append(type(managing_object))
         self._operations = {}
         self._registry = {}
+        self._builtin_operations = set()
+        if builtins:
+            from ..super.builtins import Configurator, Inspector
+            for builtin in (Inspector(self), Configurator(self)):
+                self.register_operation(builtin)
+                self._builtin_operations.add(builtin.OPERATION)
         if operations:
             for op_name, super_inst in operations.items():
                 self.register_operation(super_inst, operation=op_name)
@@ -163,8 +180,15 @@ class Manipulator(ABC):
             raise RegistrationError("Operation name must be a non-empty string")
 
         if operation in self._operations:
-            logger.error("Operation '%s' already registered", operation)
-            raise RegistrationError(f"Operation '{operation}' already registered")
+            if operation in self._builtin_operations:
+                # A default being overridden, not two intentions colliding. Registering an
+                # `Inspector` of your own is how it has always been written, and must keep
+                # meaning the same thing now that one is supplied.
+                logger.debug("Operation '%s' replaces the built-in", operation)
+                self._builtin_operations.discard(operation)
+            else:
+                logger.error("Operation '%s' already registered", operation)
+                raise RegistrationError(f"Operation '{operation}' already registered")
 
         if not operation.isidentifier():
             logger.error("Operation name '%s' is not a valid identifier", operation)

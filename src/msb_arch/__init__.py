@@ -22,6 +22,7 @@ from .errors import (AttributeNotFoundError,
                      ValidationError)
 from .protocols import MethodProvider
 from .super import Super, Project
+from .super.builtins import Configurator, Inspector
 from .mega import Manipulator
 from .results import MethodResults
 from .utils import logger, setup_logging
@@ -38,6 +39,6 @@ __all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "M
            "DuplicateNameError", "ResolutionError", "NotFoundError", "AttributeNotFoundError", "SerializationError",
            "OperationError", "RegistrationError", "DispatchError", "RequestError", "HandlerError",
            "Constraint", "Positive", "NonNegative", "NonZero", "NonEmpty", "Range", "Predicate",
-           "MethodProvider"]
+           "MethodProvider", "Inspector", "Configurator"]
 
 __version__ = "0.6.0"

@@ -64,11 +64,11 @@ Status: **done** (merged or on a branch), **next** (the item to pick up), **open
 
 | # | Item | Depends on | Risk | Exit criterion | Status |
 | --- | --- | --- | --- | --- | --- |
-| B11 | Interceptor chain around `process_request` | B3 | Changes how every request is processed | An interceptor sees each request before it runs and its response after, on both the sync and async paths | open |
+| B11 | Interceptor chain around `process_request` | B3 | Changes how every request is processed | An interceptor sees each request before it runs and its response after, on both the sync and async paths | **next** |
 | P8 | Observability hooks as the first interceptor | B11 | None beyond B11 | Serialization time, cache size, invalidation frequency and validation failures are observable without a dependency | open |
 | P12 | Request journal: a built-in interceptor recording what each request consumed and produced | B11 | None beyond B11 | A session can be replayed from its journal; a result can be traced to the request that produced it | open |
 | B5 | A protocol for what `Super` needs from `Manipulator`, replacing the concrete reference | — | Changes the extension contract | `Super` names an interface, not a class. One method: `get_methods_for_type` | **done** |
-| B8 | Built-in `Inspector` and `Configurator`, registered by default | B5 | Changes the duplicate-name rule | A `Manipulator` handles `inspect` and `configure` with no `Super` written by hand; an application registering its own still works unchanged | **next** |
+| B8 | Built-in `Inspector` and `Configurator`, registered by default | B5 | Changes the duplicate-name rule | A `Manipulator` handles `inspect` and `configure` with no `Super` written by hand; an application registering its own still works unchanged | **done** |
 
 ### 0.8.0 — the async surface
 

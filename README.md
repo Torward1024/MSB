@@ -27,6 +27,8 @@ lets a session be logged and replayed.
 - **Containers for collections**: named, queryable, serializable, with bulk operations.
 - **One entry point**: a `Manipulator` registers operations and processes requests; the
   per-operation facades are sugar so you rarely write a request dictionary by hand.
+- **Reading and writing come free**: `inspect` and `configure` are supplied, so an application
+  that only reads and writes its model needs no operation layer at all.
 - **Operations that write themselves**: a handler is usually one call to `_apply_methods`,
   which applies everything a request names and reports each outcome.
 - **Serialization that round-trips**: `json.loads(json.dumps(obj.to_dict()))` restores an
@@ -51,7 +53,7 @@ pip install msb_arch
 Describe the data, describe the operations, drive both through the orchestrator.
 
 ```python
-from msb_arch import BaseContainer, BaseEntity, Manipulator, Super
+from msb_arch import BaseContainer, BaseEntity, Manipulator
 
 # 1. the data
 class Telescope(BaseEntity):
@@ -67,26 +69,11 @@ class Telescope(BaseEntity):
 class Telescopes(BaseContainer[Telescope]):
     pass
 
-# 2. the operations
-class Inspector(Super):
-    OPERATION = "inspect"
-
-    def _inspect(self, obj, attributes):
-        return self._apply_methods(obj, attributes)
-
-class Configurator(Super):
-    OPERATION = "configure"
-
-    def _configure(self, obj, attributes):
-        return self._apply_methods(obj, attributes)
-
-# 3. the entry point
+# 2. the entry point
 class Observatory(Manipulator):
     pass
 
 manipulator = Observatory(base_classes=[Telescope, Telescopes])
-manipulator.register_operation(Inspector(manipulator))
-manipulator.register_operation(Configurator(manipulator))
 
 dishes = Telescopes(name="array")
 dishes.add(Telescope(name="DSS14", diameter=70.0))
@@ -99,8 +86,24 @@ manipulator.inspect(dish, get_diameter=None)      # 64.0
 dishes.to_dict()["items"]["DSS14"]["diameter"]    # 64.0
 ```
 
-Two handlers of one line each serve every type: the orchestrator dispatches by operation and
-by the type of the object, so adding an entity adds no code to the operation layer.
+There is no operation layer to write: `inspect` and `configure` follow from the request model
+itself, so the framework supplies them, and they serve every type. You write a `Super` when an
+operation carries domain logic — `calculate`, `visualize` — and register it the same way.
+
+```python
+from msb_arch import Super
+
+class Calculator(Super):
+    OPERATION = "calculate"
+
+    def _calculate_telescope(self, obj, attributes):
+        return self._apply_methods(obj, attributes)
+
+manipulator.register_operation(Calculator(manipulator))
+```
+
+A handler is one line because `_apply_methods` owns the loop, and the orchestrator dispatches
+by operation and by the type of the object, so adding an entity adds no code at all.
 
 Ask for several things at once and every outcome comes back, whatever the order:
 
