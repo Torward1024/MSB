@@ -3,6 +3,9 @@ from abc import ABC
 from typing import Dict, Any, Optional, Callable, List, Sequence, Type, Union
 from ..errors import DispatchError, HandlerError, NotFoundError, RegistrationError, RequestError
 from ..protocols import Interceptor
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from ..utils.logging_setup import logger
 from ..results import MethodResults
 import inspect
@@ -39,7 +42,8 @@ class Manipulator(ABC):
                  base_classes: Optional[List[Type]] = None,
                  operations: Optional[Dict[str, Callable]] = None,
                  strict_type_check: bool = False,
-                 builtins: bool = True):
+                 builtins: bool = True,
+                 max_workers: Optional[int] = None):
         """Initialize a Manipulator with an optional managing object, base classes, and operations.
 
         Args:
@@ -49,6 +53,9 @@ class Manipulator(ABC):
             strict_type_check (bool): If True, enforce strict type checking for objects. Defaults to False.
             builtins (bool): Register the built-in `inspect` and `configure` operations.
                 Defaults to True.
+            max_workers (Optional[int]): Size of the executor the asynchronous surface runs on.
+                Defaults to None, letting Python choose. The executor is created on first
+                asynchronous use and never before.
 
         Notes:
             - The built-ins make an application that only reads and writes its model need no
@@ -68,6 +75,9 @@ class Manipulator(ABC):
         self._builtin_operations = set()
         self._interceptors = []
         self._chain = None
+        self._executor = None
+        self._executor_lock = Lock()
+        self._max_workers = max_workers
         if builtins:
             from ..super.builtins import Configurator, Inspector
             for builtin in (Inspector(self), Configurator(self)):
@@ -270,10 +280,42 @@ class Manipulator(ABC):
                 raise HandlerError(result.get("error", "Unknown error"))
             return self._unwrap_single(result["result"])
 
+        async def async_facade_wrapper(self, obj: Optional[Any] = None, method: Optional[str] = None,
+                                       raise_on_error: bool = True, **attributes) -> Any:
+            """Asynchronous facade for {operation}.
+
+            Args:
+                obj (Optional[Any]): The object to operate on. Defaults to managing_object.
+                method (Optional[str]): Specific method to call.
+                raise_on_error (bool): If True, raise on failure; if False, return the response.
+                **attributes: Method names mapped to their arguments.
+
+            Returns:
+                Any: Whatever the synchronous facade would return.
+
+            Notes:
+                - Identical to `{operation}` except that the work leaves the caller's event
+                  loop, so a GUI or a server stays responsive while it runs.
+            """
+            request_attributes = attributes.copy()
+            if method:
+                request_attributes["method"] = method
+
+            request = {"operation": operation, "obj": obj, "attributes": request_attributes}
+            result = await self.aprocess_request(request)
+            if not raise_on_error:
+                return result
+            if not result["status"]:
+                raise HandlerError(result.get("error", "Unknown error"))
+            return self._unwrap_single(result["result"])
+
         facade_wrapper.__doc__ = facade_wrapper.__doc__.format(operation=operation)
         bound_method = types.MethodType(facade_wrapper, self)
         setattr(self, operation, bound_method)
-        logger.debug("Added facade method '%s' to Manipulator with docstring: %s", operation, bound_method.__doc__)
+
+        async_facade_wrapper.__doc__ = async_facade_wrapper.__doc__.format(operation=operation)
+        setattr(self, f"a{operation}", types.MethodType(async_facade_wrapper, self))
+        logger.debug("Added facade methods '%s' and 'a%s' to Manipulator", operation, operation)
 
     @staticmethod
     def _unwrap_single(result: Any) -> Any:
@@ -437,6 +479,129 @@ class Manipulator(ABC):
             return {"status": False, "object": request.get("obj"), "method": None, "result": None, "error": error_msg}
 
         return self._process_single_request(request)
+
+    async def aprocess_request(self, request: Dict[str, Any]) -> Any:
+        """Process a request without blocking the caller's event loop.
+
+        Args:
+            request (Dict[str, Any]): A single request or a mapping of them, exactly as
+                `process_request` takes.
+
+        Returns:
+            Any: Exactly what `process_request` would return, except that any awaitable a
+                method produced has been awaited.
+
+        Notes:
+            - **Awaiting is not enough on its own.** A coroutine that never suspends holds the
+              loop for as long as the work takes, so an asynchronous entry point over a
+              synchronous handler leaves a GUI as frozen as a plain call does -- measured: the
+              loop ran zero times either way during a 0.5 second operation, and twenty times
+              once the work moved off it. So the work moves off it.
+            - The whole synchronous pipeline runs on the executor, **interceptors included**.
+              That is what lets one interceptor serve both paths unchanged, and it means an
+              interceptor runs on a worker thread here and cannot await inside.
+            - A method that is itself a coroutine function is awaited afterwards, on the loop,
+              so an entity may declare `async def fetch(self)` and have it work.
+            - The framework owns the executor. Call `close()`, or use the orchestrator as a
+              context manager, to shut it down.
+        """
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(self._get_executor(), self.process_request, request)
+        return await self._resolve_awaitables(response)
+
+    async def abatch(self, requests: Union[Sequence[Dict[str, Any]], Dict[str, Dict[str, Any]]],
+                     raise_on_error: bool = False) -> Dict[str, Any]:
+        """Run a batch without blocking the caller's event loop.
+
+        Args:
+            requests: The requests, as `batch` takes them.
+            raise_on_error (bool): If True, raise as soon as one fails. Defaults to False.
+
+        Returns:
+            Dict[str, Any]: The response of each request, keyed as `batch` keys them.
+
+        Notes:
+            - The requests still run one after another, on one worker thread. They are
+              independent, so running them concurrently is possible and is not done here:
+              deciding what concurrency means for requests that touch the same object is the
+              pipeline question, and it is deliberately left until there is a real one to
+              design against.
+        """
+        loop = asyncio.get_running_loop()
+        responses = await loop.run_in_executor(
+            self._get_executor(), lambda: self.batch(requests, raise_on_error=raise_on_error))
+        return await self._resolve_awaitables(responses)
+
+    async def _resolve_awaitables(self, response: Any) -> Any:
+        """Await anything a method returned that has still to happen.
+
+        Args:
+            response (Any): A response, a batch of them, or a `MethodResults`.
+
+        Returns:
+            Any: The same shape, with awaitables replaced by their values.
+
+        Notes:
+            - This is what makes `async def` methods on an entity work: applying one on a
+              worker thread produces a coroutine rather than a value, and it is awaited here,
+              back on the loop where it belongs.
+        """
+        if inspect.isawaitable(response):
+            return await response
+        if isinstance(response, dict):
+            resolved = type(response)() if isinstance(response, MethodResults) else {}
+            for key, value in response.items():
+                resolved[key] = await self._resolve_awaitables(value)
+            return resolved
+        if isinstance(response, list):
+            return [await self._resolve_awaitables(item) for item in response]
+        return response
+
+    def _get_executor(self):
+        """Return the executor, creating it on first asynchronous use.
+
+        Returns:
+            concurrent.futures.Executor: The executor this orchestrator runs work on.
+
+        Notes:
+            - Created lazily, so an application that never goes asynchronous never starts a
+              thread.
+            - Threads rather than processes: the numerical libraries this framework was written
+              for release the GIL, so a thread is real parallelism there, and a process would
+              have to pickle the model to reach the work.
+        """
+        if self._executor is None:
+            with self._executor_lock:
+                if self._executor is None:
+                    self._executor = ThreadPoolExecutor(
+                        max_workers=self._max_workers,
+                        thread_name_prefix=f"msb-{type(self).__name__}")
+                    logger.debug("Started executor with max_workers=%s", self._max_workers)
+        return self._executor
+
+    def close(self, wait: bool = True) -> None:
+        """Shut the executor down, if one was ever started.
+
+        Args:
+            wait (bool): Wait for running work to finish. Defaults to True.
+
+        Notes:
+            - Safe to call when nothing asynchronous was ever used, and safe to call twice.
+            - The orchestrator stays usable afterwards: the next asynchronous call starts a
+              new executor.
+        """
+        with self._executor_lock:
+            if self._executor is not None:
+                self._executor.shutdown(wait=wait)
+                self._executor = None
+                logger.debug("Executor shut down")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+        return False
 
     def add_interceptor(self, interceptor: Interceptor) -> None:
         """Add an interceptor around every request this orchestrator processes.

@@ -332,6 +332,73 @@ before they existed is already spelled, and it has to keep meaning the same thin
 registrations of one name that are both yours still raise. Pass `builtins=False` to start with
 nothing registered.
 
+## The asynchronous surface
+
+Every facade has an `a`-prefixed twin, and so do `process_request` and `batch`. The synchronous
+API is untouched.
+
+```python
+import asyncio
+
+async def main():
+    await manipulator.aconfigure(dish, set_diameter=64.0)
+    return await manipulator.ainspect(dish, get_diameter=None)
+
+assert asyncio.run(main()) == 64.0
+```
+
+**Why it is not simply `async def` on the entry point.** Awaiting does not create concurrency;
+it marks a point where control *may* be yielded, and a synchronous handler has none. Measured
+against a heartbeat task during one 0.5-second operation:
+
+| | the loop ran |
+| --- | --- |
+| a plain synchronous call | **0 times** |
+| an `async def` entry point over a synchronous handler | **0 times** |
+| the work moved onto an executor | **19 times** |
+
+So the work moves off the loop. The whole synchronous pipeline runs on an executor the
+framework owns — interceptors included, which is what lets one interceptor serve both paths
+unchanged. The consequence is that an interceptor runs on a worker thread here and cannot await
+inside it.
+
+Threads rather than processes: the numerical libraries this was written for release the GIL, so
+a thread is real parallelism there, and a process would have to pickle the model to reach the
+work.
+
+### Methods that are themselves coroutines
+
+An entity may declare one, and the asynchronous surface awaits it back on the loop:
+
+```python
+class Dish(BaseEntity):
+    async def fetch_status(self) -> str:
+        await asyncio.sleep(0)
+        return "online"
+
+remote = Observatory(base_classes=[Dish])
+assert asyncio.run(remote.ainspect(Dish(name="d"), fetch_status=None)) == "online"
+remote.close()
+```
+
+### The executor
+
+Created on first asynchronous use and never before, so an application that stays synchronous
+never starts a thread. Size it with `Manipulator(max_workers=...)`.
+
+It is the one resource MSB owns, so it is the one thing to shut down:
+
+```python
+manipulator.close()
+
+# or let a context manager do it
+with Observatory(base_classes=[Telescope]) as orchestrator:
+    assert asyncio.run(orchestrator.ainspect(dish, get_diameter=None)) == 64.0
+```
+
+`close()` is safe when nothing was started and safe to call twice, and the orchestrator stays
+usable afterwards: the next asynchronous call starts a new executor.
+
 ## Interceptors
 
 Something that sees a request before it runs and its response after. Metrics, auditing, rate

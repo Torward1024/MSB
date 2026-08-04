@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MSB%20Software%20License-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.7.0-orange.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-0.8.0-orange.svg)](https://github.com/Torward1024/MSB)
 
 Mega-Super-Base (MSB) is an architecture for Python applications built around a single entry
 point. You describe your data as typed entities, you describe what may be done to them as
@@ -43,6 +43,8 @@ lets a session be logged and replayed.
 - **One place to hang metrics, auditing, rate limiting and authorisation**: an interceptor sees
   a request before it runs and its response after, and may refuse or rewrite it. Request
   metrics and a replayable request journal ship using nothing more than that hook.
+- **Asynchronous when you need it**: `await manipulator.ainspect(...)` keeps an event loop
+  responsive by moving the work off it, and every synchronous signature is untouched.
 - **No external dependencies**: Python >= 3.12 and nothing else.
 
 ## Installation
@@ -195,4 +197,4 @@ For commercial use, a separate royalty-bearing license is required. Please conta
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 0.7.0
+- **Version**: 0.8.0
