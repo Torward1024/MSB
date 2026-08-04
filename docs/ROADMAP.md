@@ -45,8 +45,8 @@ Status: **done** (merged or on a branch), **next** (the item to pick up), **open
 | --- | --- | --- | --- | --- | --- |
 | B3 | Exception taxonomy: `MSBError` root, 16 types, each also deriving from the built-in it replaces | — | Behaviour visible to anyone catching exceptions | No bare built-in raised in the package; no existing test changed | **done** |
 | B1 | `TypeVar` resolution: resolve by parameter position, treat constraints as a union, fall back to `Any` when unparameterized | — | Corrects a type that is wrong today, so behaviour changes | `Generic[T, U]` resolves each parameter to its own type | **done** |
-| P7 | Benchmark suite in CI | — | None | A performance regression fails a build | **next** |
-| P9 | Document the cache's memory behaviour | — | None | The reader can predict the cost without measuring | open |
+| P7 | Benchmark suite in CI | — | None | A performance regression fails a build | **done** |
+| P9 | Document the cache's memory behaviour | — | None | The reader can predict the cost without measuring | **next** |
 | P11 | Repair the 11 documentation examples that no longer run | — | None | `STALE` in `tests/test_documentation.py` is empty | open |
 
 ### 0.6.0 — the data contract
@@ -57,7 +57,7 @@ Status: **done** (merged or on a branch), **next** (the item to pick up), **open
 | B4 | Schema version in serialized data, and a migration hook | B3 | Changes what `to_dict` writes | A file written by an earlier version still loads, or fails with a migration error naming the version | open |
 | B9 | Ingest foreign data: a declared discriminator, or a default type per field | B4 | Changes `from_dict` | JSON not produced by MSB restores into a declared model | open |
 | B12 | Make `to_dict`/`from_dict` actually round-trip through JSON: emit `set`, `frozenset` and `tuple` as lists, restore them from the annotation, and order sets deterministically | B4 | Changes what `to_dict` emits for three annotations | `json.loads(json.dumps(obj.to_dict()))` restores an equal object for every supported annotation | open |
-| P5 | Compile a validator per field once per class | B2, P7 | Rewrites the validation hot path | Entity construction measurably faster, benchmarks green | open |
+| P5 | Compile a validator per field once per class | B2, P7 | Rewrites the validation hot path | Entity construction measurably faster; the benchmark budgets of 65x and 12 introspection calls tightened to match | open |
 | P6 | Skip the invalidation walk when no owner caches | P7 | Small, isolated | The idle walk costs nothing when nothing caches | open |
 
 ### 0.7.0 — the request contract
@@ -164,7 +164,7 @@ confirmed and became items above.
 | --- | --- |
 | `_resolve_type` picks the wrong `Union` member in `from_dict` | **Not confirmed.** `to_dict` always writes `type`; without it the call fails loudly rather than guessing. The real gap was ingesting foreign data — B9 |
 | The `to_dict` cache grows without limit | **Not as stated.** One mapping per caching object, bounded by the object graph |
-| No object pooling | **Real cost, wrong remedy.** 10.5 µs per entity against 0.56 µs for a dict, but the time is in introspection — `get_origin`/`get_args` called 150 000 times for 30 000 objects — not allocation. P5 |
+| No object pooling | **Real cost, wrong remedy.** 13.1 µs per entity against 0.30 µs for a plain class with the same four attributes — 44x — but the time is in introspection, ten `get_origin`/`get_args` calls per object, not allocation. P5 |
 | Parallel serialization, async invalidation | **Wrong.** Both measured slower than doing the work |
 | `_invalidate_cache` is expensive | **Confirmed, and worse.** 3.3 µs with no owners against 413 µs with 500, of which 277 µs is spent reaching nothing. P6 |
 | No runtime contract checking | **Confirmed.** Types are checked, values are not. B2 |

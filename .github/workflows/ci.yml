@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [ main ]
+  # Also on every pull request: a suite that only runs after a merge cannot stop anything.
+  pull_request:
 
 jobs:
   test:
@@ -41,5 +43,7 @@ jobs:
     - name: Run integration tests
       run: pytest tests/integration/ -v
 
-    - name: Run performance tests
+    # Benchmarks assert ratios, call counts and scaling rather than wall-clock times, so a
+    # slow or noisy runner does not fail them and a real regression does.
+    - name: Run performance tests and benchmarks
       run: pytest tests/performance/ -v
