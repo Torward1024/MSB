@@ -20,6 +20,7 @@ from .errors import (AttributeNotFoundError,
                      TypeValidationError,
                      UnknownAttributeError,
                      ValidationError)
+from .protocols import MethodProvider
 from .super import Super, Project
 from .mega import Manipulator
 from .results import MethodResults
@@ -36,6 +37,7 @@ __all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "M
            "MSBError", "ValidationError", "TypeValidationError", "ConstraintError", "UnknownAttributeError", "ItemNameError",
            "DuplicateNameError", "ResolutionError", "NotFoundError", "AttributeNotFoundError", "SerializationError",
            "OperationError", "RegistrationError", "DispatchError", "RequestError", "HandlerError",
-           "Constraint", "Positive", "NonNegative", "NonZero", "NonEmpty", "Range", "Predicate"]
+           "Constraint", "Positive", "NonNegative", "NonZero", "NonEmpty", "Range", "Predicate",
+           "MethodProvider"]
 
 __version__ = "0.6.0"
