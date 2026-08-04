@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MSB%20Software%20License-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.8.0-orange.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-1.0.0-brightgreen.svg)](https://github.com/Torward1024/MSB)
 
 Mega-Super-Base (MSB) is an architecture for Python applications built around a single entry
 point. You describe your data as typed entities, you describe what may be done to them as
@@ -157,12 +157,15 @@ Main classes:
 
 ## Documentation
 
+- [**Guide**](docs/guide.md) — **start here**: a working application, built from nothing
 - [API reference](docs/api.md) — every public class and method
+- [Compatibility](docs/COMPATIBILITY.md) — what will not break, and how anything changes
 - [Architecture](docs/architecture.md) and [diagrams](docs/diagrams.md)
-- [Base module](docs/modules/base.md) — the data model, the supported type hints, thread safety
-- [Super module](docs/modules/super.md) — **writing your own operation**
+- [Base module](docs/modules/base.md) — the data model, type hints, serialization, caching
+- [Super module](docs/modules/super.md) — writing your own operation
+- [Mega module](docs/modules/mega.md) — interceptors, built-ins, the asynchronous surface
 - [Examples](docs/examples.md)
-- [Roadmap](docs/ROADMAP.md) — what is open, what is planned, and what 1.0.0 should mean
+- [Roadmap](docs/ROADMAP.md) — what comes after 1.0
 - [Changelog](CHANGELOG.md) — release history and upgrade notes
 
 ## Testing
@@ -197,4 +200,4 @@ For commercial use, a separate royalty-bearing license is required. Please conta
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 0.8.0
+- **Version**: 1.0.0

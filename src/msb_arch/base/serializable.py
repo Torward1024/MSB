@@ -795,8 +795,14 @@ class Serializable(ABC, metaclass=EntityMeta):
         try:
             seen.add(id(self))
             data = {"name": self.name, "isactive": self.isactive,
-                    "type": self.__class__.__name__,
-                    SCHEMA_FIELD: self.SCHEMA_VERSION}
+                    "type": self.__class__.__name__}
+            if self.SCHEMA_VERSION != 1:
+                # Written only by a class that has actually versioned itself. Writing it
+                # always put a key nobody asked for into everybody's data, and broke every
+                # hand-written `from_dict` override that reasonably rejected what it did not
+                # recognise. A class at version 1 therefore serializes exactly as it did
+                # before versioning existed, and data carrying no version reads as 1.
+                data[SCHEMA_FIELD] = self.SCHEMA_VERSION
             for key in self._fields:
                 if key.startswith('_'):
                     continue

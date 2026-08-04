@@ -132,8 +132,43 @@ def test_a_cycle_through_a_collection_terminates():
 
 # --- B4: the schema version ---------------------------------------------------------------
 
-def test_serialized_data_carries_the_version_that_wrote_it():
-    assert full_rig().to_dict()[SCHEMA_FIELD] == 1
+def test_a_class_that_has_not_versioned_itself_writes_no_version():
+    """The default must be invisible.
+
+    Writing the key always put it into everybody's data for a feature most models never use,
+    and broke every hand-written `from_dict` override that rejected what it did not recognise
+    -- which is what a careful override does. A class at version 1 now serializes exactly as
+    it did before versioning existed.
+    """
+    assert SCHEMA_FIELD not in full_rig().to_dict()
+
+
+def test_a_class_that_has_versioned_itself_says_so():
+    class Versioned(BaseEntity):
+        SCHEMA_VERSION = 3
+        value: int
+
+        @classmethod
+        def migrate(cls, data, from_version):
+            return data
+
+    assert Versioned(name="v", value=1).to_dict()[SCHEMA_FIELD] == 3
+
+
+def test_a_hand_written_from_dict_override_still_works():
+    """What broke downstream: an override that builds its class from the keys it knows."""
+    class Strict(BaseEntity):
+        value: int
+
+        @classmethod
+        def from_dict(cls, data):
+            known = {"name", "isactive", "type", "value"}
+            unexpected = set(data) - known
+            if unexpected:
+                raise AssertionError(f"unexpected keys in serialized data: {unexpected}")
+            return cls(name=data["name"], value=data["value"])
+
+    assert Strict.from_dict(Strict(name="s", value=7).to_dict()).value == 7
 
 
 def test_data_from_the_same_version_needs_no_migration():
@@ -143,7 +178,7 @@ def test_data_from_the_same_version_needs_no_migration():
 def test_data_with_no_version_is_read_as_version_one():
     """Everything written before versioning existed, which must keep loading."""
     payload = full_rig().to_dict()
-    del payload[SCHEMA_FIELD]
+    payload.pop(SCHEMA_FIELD, None)
     assert Rig.from_dict(payload).name == "r1"
 
 
