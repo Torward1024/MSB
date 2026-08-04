@@ -13,6 +13,53 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [Unreleased]
+
+Gives the framework its own exceptions, so what a caller may catch stops being decided one
+`raise ValueError` at a time.
+
+### Added
+
+- **`msb_arch.errors`**, with every type exported from `msb_arch` itself: `MSBError` at the
+  root, `ValidationError` and `OperationError` grouping beneath it, and thirteen specific
+  types under those. The 93 places that raised a built-in now raise one of them. The full
+  tree, and which built-in each answers to, is in
+  [the API reference](docs/api.md#exception-hierarchy).
+- **A cause on `HandlerError`**: `_apply_methods(strict=True)` attaches the exception the
+  handler actually raised, so a failure inside domain code keeps its traceback instead of
+  being reduced to a string. A facade raising with `raise_on_error=True` cannot, because by
+  then the failure has crossed into a response and only the message survives.
+- `BaseContainer._item_type_hint()`, one place that answers what a container was declared to
+  hold, replacing five copies of the same lookup.
+
+### Changed
+
+- **Nothing a caller catches.** Every new type also derives from the built-in it replaces, so
+  `except TypeError`, `except ValueError`, `except KeyError` and `except AttributeError` catch
+  exactly what they did before. This was the constraint the design was built around rather
+  than a happy accident: of 494 existing tests, none needed changing.
+- Two types answer to two built-ins, because the sites they replace did not agree on one:
+  `RequestError` is a `ValueError` and a `TypeError`, and so is `SerializationError`.
+
+### Fixed
+
+- **A container declared without its type parameter** -- `class Box(BaseContainer)` rather
+  than `BaseContainer[Item]` -- failed with `AttributeError: type object 'Serializable' has
+  no attribute '__args__'` from inside the framework. The guard meant to catch this looked up
+  `__orig_bases__` through inheritance, where it found `BaseContainer`'s own bases and so
+  never fired. It now raises `ResolutionError` naming the syntax to use. A subclass of an
+  already parameterized container still resolves, since that case relies on the same
+  inherited lookup.
+- A container whose bases put a mixin before `BaseContainer[Item]` could not resolve its item
+  type, because the lookup assumed the parameterized base was first.
+
+### Upgrading from 0.4.0
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| Nothing. | Every exception still derives from the built-in it replaces. | Nothing. Adopt the specific types where a narrower `except` would help. |
+| `ResolutionError: Cannot determine generic type` from a container that used to work | It was declared without a type parameter and failed later, obscurely, or silently resolved to the type variable. | Declare it as `BaseContainer[YourType]`. |
+
 ## [0.4.0] - 2026-08-03
 
 Moves the loop every handler was writing by hand into the framework, and makes the result

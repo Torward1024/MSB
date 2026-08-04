@@ -31,6 +31,9 @@ lets a session be logged and replayed.
   JSON.
 - **Logging that behaves**: a dedicated `msb_arch` logger that stays silent until the
   application configures it.
+- **Exceptions you can catch precisely**: everything derives from `MSBError`, and also from
+  the built-in it replaces, so `except TypeError` keeps working while `except
+  DuplicateNameError` becomes possible.
 - **No external dependencies**: Python >= 3.12 and nothing else.
 
 ## Installation

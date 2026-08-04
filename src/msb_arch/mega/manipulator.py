@@ -1,6 +1,7 @@
 # mega/manipulator.py
 from abc import ABC
 from typing import Dict, Any, Optional, Callable, List, Sequence, Type, Union
+from ..errors import DispatchError, HandlerError, RegistrationError, RequestError
 from ..utils.logging_setup import logger
 from ..results import MethodResults
 import inspect
@@ -96,10 +97,10 @@ class Manipulator(ABC):
         effective_obj = obj if obj is not None else self._managing_object
         if effective_obj is None:
             logger.error("No %s or managing object provided for operation", obj_type)
-            raise ValueError(f"No {obj_type} or managing object provided")
+            raise RequestError(f"No {obj_type} or managing object provided")
         if self._strict_type_check and type(effective_obj) not in self._registry:
             logger.error("Unsupported object type for %s: %s", obj_type, type(effective_obj))
-            raise ValueError(f"Unsupported object type: {type(effective_obj)}")
+            raise DispatchError(f"Unsupported object type: {type(effective_obj)}")
         return effective_obj
 
     def get_methods_for_type(self, obj_type: Type) -> Dict[str, Callable]:
@@ -116,7 +117,7 @@ class Manipulator(ABC):
         """
         if obj_type not in self._registry:
             logger.error("No methods registered for type %s", obj_type.__name__)
-            raise ValueError(f"No methods registered for type {obj_type.__name__}")
+            raise DispatchError(f"No methods registered for type {obj_type.__name__}")
         return self._registry[obj_type]
 
     def update_registry(self, additional_classes: Optional[List[Type]] = None, clear_operations: bool = False) -> None:
@@ -148,30 +149,30 @@ class Manipulator(ABC):
         """
         if not hasattr(super_instance, "execute"):
             logger.error("Super-instance must have 'execute' method")
-            raise ValueError(f"Super-instance must have 'execute' method")
+            raise RegistrationError(f"Super-instance must have 'execute' method")
 
         if operation is None:
             if hasattr(super_instance, 'OPERATION') and super_instance.OPERATION:
                 operation = super_instance.OPERATION
             else:
                 logger.error("No operation name provided and no OPERATION attribute in super_instance")
-                raise ValueError("Operation name required or set OPERATION in super_instance")
+                raise RegistrationError("Operation name required or set OPERATION in super_instance")
 
         if not isinstance(operation, str) or not operation:
             logger.error("Operation name must be a non-empty string")
-            raise ValueError("Operation name must be a non-empty string")
+            raise RegistrationError("Operation name must be a non-empty string")
 
         if operation in self._operations:
             logger.error("Operation '%s' already registered", operation)
-            raise ValueError(f"Operation '{operation}' already registered")
+            raise RegistrationError(f"Operation '{operation}' already registered")
 
         if not operation.isidentifier():
             logger.error("Operation name '%s' is not a valid identifier", operation)
-            raise ValueError(f"Operation name '{operation}' is not a valid identifier")
+            raise RegistrationError(f"Operation name '{operation}' is not a valid identifier")
 
         if hasattr(type(self), operation):
             logger.error("Operation '%s' would shadow %s.%s", operation, type(self).__name__, operation)
-            raise ValueError(
+            raise RegistrationError(
                 f"Operation '{operation}' would shadow the existing "
                 f"{type(self).__name__}.{operation}; choose another name"
             )
@@ -239,7 +240,7 @@ class Manipulator(ABC):
             if not raise_on_error:
                 return result
             if not result["status"]:
-                raise Exception(result.get("error", "Unknown error"))
+                raise HandlerError(result.get("error", "Unknown error"))
             return self._unwrap_single(result["result"])
 
         facade_wrapper.__doc__ = facade_wrapper.__doc__.format(operation=operation)
@@ -336,7 +337,7 @@ class Manipulator(ABC):
         """
         if not isinstance(request, dict):
             logger.error("Invalid request type: expected dict, got %s", type(request).__name__)
-            raise TypeError(f"Request must be a dictionary, got {type(request).__name__}")
+            raise RequestError(f"Request must be a dictionary, got {type(request).__name__}")
 
         is_potential_sequence = len(request) > 0 and "operation" not in request
 
@@ -501,14 +502,14 @@ class Manipulator(ABC):
         elif isinstance(requests, Sequence) and not isinstance(requests, (str, bytes)):
             numbered = {str(index): request for index, request in enumerate(requests)}
         else:
-            raise TypeError(f"Requests must be a sequence or a mapping, got {type(requests).__name__}")
+            raise RequestError(f"Requests must be a sequence or a mapping, got {type(requests).__name__}")
 
         if not numbered:
             return {}
 
         invalid = [key for key, value in numbered.items() if not isinstance(value, dict)]
         if invalid:
-            raise TypeError(f"Requests {invalid} are not dictionaries")
+            raise RequestError(f"Requests {invalid} are not dictionaries")
 
         logger.debug("Batch of %s request(s)", len(numbered))
         results = self.process_request(numbered)
@@ -516,7 +517,7 @@ class Manipulator(ABC):
         if raise_on_error:
             for key, response in results.items():
                 if not response.get("status"):
-                    raise Exception(f"Request '{key}' failed: {response.get('error', 'Unknown error')}")
+                    raise HandlerError(f"Request '{key}' failed: {response.get('error', 'Unknown error')}")
         return results
 
     def get_supported_operations(self) -> List[str]:

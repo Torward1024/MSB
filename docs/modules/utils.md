@@ -312,10 +312,16 @@ def check_custom_rule(value, name: str) -> None:
 
 ## Error Types
 
-The validation functions raise specific exception types:
+The validation functions raise the framework's own types:
 
-- `TypeError`: Type mismatches
-- `ValueError`: Value constraint violations
+- `TypeValidationError` for a type mismatch. It derives from `TypeError`, so `except TypeError`
+  still catches it.
+- `ConstraintError` for a value that is of the right type and still not allowed -- not
+  positive, out of range, empty. It derives from `ValueError`.
+
+Both derive from `ValidationError` and therefore from `MSBError`, so one `except` can cover
+every way the caller got the data wrong. The full tree is in the
+[API reference](../api.md#exception-hierarchy).
 
 All exceptions include descriptive messages with parameter names and expected values.
 

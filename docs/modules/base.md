@@ -342,10 +342,20 @@ new_inventory = MyContainer.from_dict(data)   # a concrete subclass, not the gen
 
 ## Error Handling
 
-The Base module raises specific exceptions:
+The Base module raises the framework's own types, each deriving from the built-in it
+replaces, so nothing written against an earlier version stops catching what it caught:
 
-- `TypeError`: When attribute types don't match annotations
-- `ValueError`: When validation rules are violated
-- `KeyError`: When accessing non-existent attributes
+| Raised | Also a | When |
+| --- | --- | --- |
+| `TypeValidationError` | `TypeError` | an attribute or a container item does not match its annotation |
+| `UnknownAttributeError` | `ValueError` | an attribute the class never declared |
+| `ItemNameError`, `DuplicateNameError` | `ValueError` | an item has no name, the wrong name, or one already taken |
+| `ResolutionError` | `TypeError` | a forward reference, a `TypeVar` or an unparameterized container cannot be resolved |
+| `NotFoundError` | `KeyError` | an attribute or item was looked up and is not there |
+| `SerializationError` | `ValueError`, `TypeError` | a round trip through a dictionary failed |
+
+All of them derive from `MSBError`, so `except MSBError` catches anything from the framework
+and `except ValidationError` catches anything the caller got wrong. The full tree is in the
+[API reference](../api.md#exception-hierarchy).
 
 All operations are logged with appropriate levels (debug, info, warning, error).

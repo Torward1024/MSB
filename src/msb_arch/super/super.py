@@ -1,6 +1,7 @@
 # super/super.py
 from abc import ABC
 from typing import Dict, Any, Callable, List, Type, Optional
+from ..errors import DispatchError, HandlerError, RegistrationError, RequestError
 from ..utils.logging_setup import logger
 from ..mega.manipulator import Manipulator
 from ..base.basecontainer import BaseContainer
@@ -121,7 +122,7 @@ class Super(ABC):
             return self._methods[obj_type]
         if self._manipulator:
             return self._manipulator.get_methods_for_type(obj_type)
-        raise ValueError(f"No methods available for {obj_type.__name__}")
+        raise DispatchError(f"No methods available for {obj_type.__name__}")
 
     def _get_nested_object(self, obj: Any, key: Any, getter_method: Callable) -> Any:
         """Retrieve a nested object from a container.
@@ -190,6 +191,13 @@ class Super(ABC):
 
         Returns:
             Dict[str, Any]: Response dictionary with status, object, method, result, and error if status is False.
+
+        Notes:
+            - When the method itself raised, the exception is kept under the private key
+              '_exception' so that a strict `_apply_methods` can chain it as the cause of the
+              `HandlerError` it raises. It is not part of the result protocol, is never copied
+              into `MethodResults`, and holds an exception object rather than anything
+              serializable.
         """
         if method_name not in valid_methods:
             logger.error("Invalid method '%s' for '%s'", method_name, type(obj).__name__)
@@ -240,10 +248,15 @@ class Super(ABC):
             return self._build_response(obj, True, method_name, result)
         except TypeError as e:
             logger.error("TypeError applying %s to %s: %s", method_name, type(obj).__name__, str(e))
-            return self._build_response(obj, False, method_name, None, f"TypeError: {str(e)}")
+            response = self._build_response(obj, False, method_name, None, f"TypeError: {str(e)}")
+            response["_exception"] = e
+            return response
         except Exception as e:
             logger.error("Failed to apply %s to %s: %s", method_name, type(obj).__name__, str(e))
-            return self._build_response(obj, False, method_name, None, f"Failed to apply {method_name}: {str(e)}")
+            response = self._build_response(obj, False, method_name, None,
+                                            f"Failed to apply {method_name}: {str(e)}")
+            response["_exception"] = e
+            return response
     
     def register_method(self, obj_type: Type, method_name: str, method: Callable) -> None:
         """Register a custom method for a specific object type.
@@ -294,7 +307,7 @@ class Super(ABC):
               first failure and let `execute` turn it into a failed response.
         """
         if not attributes:
-            raise ValueError(f"No methods requested for {type(obj).__name__}")
+            raise RequestError(f"No methods requested for {type(obj).__name__}")
 
         if valid_methods is None:
             valid_methods = self._get_methods(type(obj))
@@ -309,7 +322,7 @@ class Super(ABC):
                 if strict:
                     logger.warning("Method '%s' failed for %s: %s",
                                    method_name, type(obj).__name__, outcome["error"])
-                    raise ValueError(outcome["error"])
+                    raise HandlerError(outcome["error"]) from outcome.get("_exception")
 
         logger.debug("Applied %s method(s) to %s", len(results), type(obj).__name__)
         return results
@@ -424,7 +437,7 @@ class Super(ABC):
 
         try:
             if not self._operation:
-                raise ValueError(
+                raise RegistrationError(
                     f"{self.__class__.__name__} has no operation name: set OPERATION or register "
                     "it with a Manipulator"
                 )
@@ -439,7 +452,7 @@ class Super(ABC):
 
             handler_name = self._resolve_handler(obj, method_name)
             if handler_name is None:
-                raise ValueError(
+                raise DispatchError(
                     f"No suitable method found for operation '{self._operation}' and object "
                     f"'{type(obj).__name__.lower()}' in {self.__class__.__name__}"
                 )

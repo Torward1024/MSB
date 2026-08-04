@@ -3,6 +3,10 @@ from abc import ABC
 from typing import Any, Dict, List, Union
 
 from .serializable import CYCLIC_REFERENCE, EntityMeta, Serializable
+from ..errors import (NotFoundError,
+                      ResolutionError,
+                      TypeValidationError,
+                      UnknownAttributeError)
 from ..utils.logging_setup import logger
 
 __all__ = ["BaseEntity", "EntityMeta", "Serializable", "CYCLIC_REFERENCE"]
@@ -49,7 +53,7 @@ class BaseEntity(Serializable):
                 self._validate_type(key, value, self._fields.get(key))
                 setattr(self, key, value)
             else:
-                raise ValueError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
+                raise UnknownAttributeError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
         self._invalidate_cache()
         logger.debug("Updated attributes of %s: %s", self.__class__.__name__, list(params.keys()))
     def get(self, key: Union[str, List[str], None] = None) -> Union[Any, Dict[str, Any]]:
@@ -85,7 +89,7 @@ class BaseEntity(Serializable):
         elif isinstance(key, str):
             if key not in self._fields:
                 logger.error("Attribute '%s' not found in %s", key, self.__class__.__name__)
-                raise KeyError(f"Attribute '{key}' not found in {self.__class__.__name__}")
+                raise NotFoundError(f"Attribute '{key}' not found in {self.__class__.__name__}")
             value = getattr(self, key) if hasattr(self, key) else None
             logger.debug("Retrieved attribute '%s' from %s: %s", key, self.__class__.__name__, value)
             return value
@@ -93,12 +97,12 @@ class BaseEntity(Serializable):
             invalid_keys = [k for k in key if k not in self._fields]
             if invalid_keys:
                 logger.error("Attributes %s not found in %s", invalid_keys, self.__class__.__name__)
-                raise KeyError(f"Attributes {invalid_keys} not found in {self.__class__.__name__}")
+                raise NotFoundError(f"Attributes {invalid_keys} not found in {self.__class__.__name__}")
             result = {k: getattr(self, k) if hasattr(self, k) else None for k in key}
             logger.debug("Retrieved attributes %s from %s: %s", key, self.__class__.__name__, result)
             return result
         
-        raise TypeError(f"Argument 'key' must be str, list of str, or None, got {type(key)}")
+        raise TypeValidationError(f"Argument 'key' must be str, list of str, or None, got {type(key)}")
     def clone(self) -> 'BaseEntity':
         """Create a deep copy of the entity.
 
@@ -130,7 +134,7 @@ class BaseEntity(Serializable):
             if key in ("name", "isactive"):
                 continue
             if key not in cls._fields:
-                raise ValueError(f"Unknown attribute '{key}' for {cls.__name__}")
+                raise UnknownAttributeError(f"Unknown attribute '{key}' for {cls.__name__}")
             expected_type = cls._resolve_type(cls._fields[key])
             if isinstance(value, dict) and "type" in value:
                 type_cls = cls._resolve_entity_type(value["type"], expected_type)
@@ -142,7 +146,7 @@ class BaseEntity(Serializable):
                 module = getmodule(cls)
                 expected_type = getattr(module, expected_type, None) if module else globals().get(expected_type)
                 if expected_type is None:
-                    raise TypeError(f"Cannot resolve forward reference '{cls._fields[key]}' for attribute '{key}'")
+                    raise ResolutionError(f"Cannot resolve forward reference '{cls._fields[key]}' for attribute '{key}'")
             if isinstance(expected_type, type) and issubclass(expected_type, BaseEntity) and isinstance(value, dict):
                 kwargs[key] = expected_type.from_dict(value)
             else:
@@ -175,7 +179,7 @@ class BaseEntity(Serializable):
             KeyError: If the key is not found in the entity's fields.
         """
         if key not in self._fields:
-            raise KeyError(f"Attribute '{key}' not found in {self.__class__.__name__}")
+            raise NotFoundError(f"Attribute '{key}' not found in {self.__class__.__name__}")
         return getattr(self, key) if hasattr(self, key) else None
     def __setitem__(self, key: str, value: Any) -> None:
         """Set an attribute using dictionary-like syntax.
@@ -189,7 +193,7 @@ class BaseEntity(Serializable):
             TypeError: If the value does not match the annotated type.
         """
         if key not in self._fields:
-            raise KeyError(f"Attribute '{key}' not found in {self.__class__.__name__}")
+            raise NotFoundError(f"Attribute '{key}' not found in {self.__class__.__name__}")
         expected_type = self._resolve_type(self._fields[key])
         self._validate_type(key, value, expected_type)
         setattr(self, key, value)

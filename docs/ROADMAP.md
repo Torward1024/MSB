@@ -133,7 +133,7 @@ because only a finished contract can be frozen.
 | Wave | Items | Why here |
 | --- | --- | --- |
 | **0. Decide** | B7 async, B8 built-in Supers, B6 pipelines — **all three settled on 2026-08-04**, see *Decisions taken* | None of these was code, and each changed the shape of something built later. Async decides what an interceptor has to wrap; built-in Supers change the extension contract B5 defines; pipelines change the request shape B11 wraps. Deciding cost a conversation; deferring would have cost a rewrite |
-| **1. Foundation** | B3 exception taxonomy, P7 benchmark suite | Everything after this raises errors, so the types should exist before the code that raises them rather than be retrofitted through ninety sites. And every performance number so far was measured by hand; before touching P5 or P6 the measurement has to be permanent |
+| **1. Foundation** | ~~B3 exception taxonomy~~ **done**, P7 benchmark suite | Everything after this raises errors, so the types should exist before the code that raises them rather than be retrofitted through ninety sites. And every performance number so far was measured by hand; before touching P5 or P6 the measurement has to be permanent |
 | **2. Correctness, cheap and separable** | B1 TypeVar, P6 skip the idle invalidation walk, B5 the Super protocol | Three small, independent changes. B1 fixes a wrong type that ships today; P6 removes 277 µs of the 413 spent reaching nothing; B5 replaces a concrete dependency with a one-method protocol. Each lands on its own and none blocks another |
 | **3. The contract of data** | B2 value constraints, B4 schema version, B9 foreign input | All three change what serialized data and annotations mean. B2 needs B3 so a failed constraint raises the right type; B4 and B9 both rework `from_dict` and are cheaper together than apart |
 | **4. The contract of requests** | B11 interceptor chain, then P8 observability | B11 waits for wave 0, because what an interceptor wraps depends on whether a request can carry references and whether it may be awaited. P8 is not a feature of its own — it is the first thing plugged into B11 |
@@ -285,10 +285,25 @@ Meeting it costs nothing now and makes provenance an addition later rather than 
 
 The hard problem is not the graph. It is that entities are **mutable and addressed by `name`**:
 once an object is changed, the state that produced an earlier result is gone, so "this came
-from that version of the input" has nothing to point at. The two ways out are snapshots --
-cheap to take through `to_dict`, expensive to keep -- and content hashing. This is also
-exactly what incremental recomputation would need, so the two stand or fall together, and it
-should be settled before either is built.
+from that version of the input" has nothing to point at. Incremental recomputation needs the
+same answer, so the two stand or fall together.
+
+Four ways out, and they compose rather than compete:
+
+| Approach | Cost | What it actually gives |
+| --- | --- | --- |
+| **A revision counter** on every `Serializable`, bumped on write | one `int`, one increment | "did this change" and an ordering, not what it was. Nearly free here: the place that invalidates the cache and walks the ownership graph is the place that would bump it |
+| **A request journal**, written by B11's interceptor | O(operations), not O(model size) | provenance itself, and any past state by replay from a checkpoint. The natural fit, because a request is already data |
+| **A content hash**, cached and invalidated like `to_dict` | cheap in memory, a traversal in time | "is this the same input as last time", which is what memoisation and incremental recomputation need. Cannot reconstruct the input |
+| **Snapshots** through `to_dict` | O(model size) per snapshot | exact past states. Affordable as occasional checkpoints, not per step |
+
+The order that follows: revision counters first, since they ride on machinery that exists;
+then the journal, which is the provenance feature; then hashing, when memoisation is actually
+built; with snapshots only as checkpoints the journal replays from.
+
+One constraint this places on the journal: **replay assumes determinism**. A handler that
+reads the clock, a file or a random seed cannot be reconstructed from its request alone, so
+either such inputs are recorded too or handlers have to declare themselves pure.
 
 ### Blocking — each changes something a caller depends on
 
@@ -296,7 +311,7 @@ should be settled before either is built.
 | --- | --- | --- |
 | B1 | Fix `TypeVar` resolution: resolve by parameter position, treat constraints as a union, fall back to `Any` when unparameterized | Corrects a wrong type today, so it changes behaviour |
 | B2 | Value constraints on annotations, e.g. `Annotated[float, Positive()]`, wired to the helpers already in `utils/validation.py` | Adds to what an annotation means; `_check_type` already unwraps `Annotated`, so the hook exists |
-| B3 | An exception taxonomy: `MSBError` with `ValidationError`, `ResolutionError`, `OperationError` beneath it, each still deriving from the built-in it replaces | What a caller may catch is part of the contract |
+| B3 | An exception taxonomy: `MSBError` with `ValidationError`, `ResolutionError`, `OperationError` beneath it, each still deriving from the built-in it replaces | **Done, unreleased.** What a caller may catch is part of the contract. Sixteen types over 93 sites; the six real groupings the code turned out to have rather than the three guessed here. No existing test changed, which is the measure of the compatibility claim. A ratchet test fails the build if a bare built-in is raised again |
 | B4 | A schema version in serialized data, and a migration hook | Otherwise 1.0 promises to read files it will not be able to read |
 | B5 | A protocol for what `Super` needs from `Manipulator`, replacing the concrete reference | The extension contract must name an interface, not a class |
 | B6 | Decide P1 pipelines | **Settled**: shape reserved, built after 1.0, see above. What 1.0 owes is only not to foreclose it |

@@ -714,11 +714,60 @@ Batch operations return dictionaries mapping request IDs to responses:
 
 ## Exception Hierarchy
 
-- `TypeError`: Type validation failures
-- `ValueError`: Value constraint violations
-- `KeyError`: Missing keys or attributes
-- `AttributeError`: Missing object attributes
-- `NotImplementedError`: Abstract methods not implemented
+Everything MSB raises lives in `msb_arch.errors` and is exported from `msb_arch`. Each type
+derives from `MSBError` **and** from the built-in it replaces, so `except TypeError` and
+`except ValueError` written against earlier versions keep catching exactly what they caught.
+
+```text
+MSBError                          anything from the framework
+├── ValidationError               the data given to MSB is wrong   (grouping only)
+│   ├── TypeValidationError       a value does not match its annotation      (TypeError)
+│   ├── ConstraintError           a value fails a value constraint           (ValueError)
+│   ├── UnknownAttributeError     an attribute that was never declared       (ValueError)
+│   └── ItemNameError             an item's name is unusable in a container  (ValueError)
+│       └── DuplicateNameError    ...because something already has it
+├── ResolutionError               a type could not be resolved               (TypeError)
+├── NotFoundError                 a name was looked up and is not there      (KeyError)
+│   └── AttributeNotFoundError    ...and the name was an attribute      (+ AttributeError)
+├── SerializationError            a round trip failed          (ValueError and TypeError)
+└── OperationError                the operation layer              (grouping only)
+    ├── RegistrationError         an operation was registered wrongly        (ValueError)
+    ├── DispatchError             nothing can serve this object              (ValueError)
+    ├── RequestError              the request is malformed     (ValueError and TypeError)
+    └── HandlerError              a handler ran and failed                 (RuntimeError)
+```
+
+The built-in each one answers to is in the right-hand column. Three levels let a caller be
+as broad or as narrow as it wants:
+
+```python
+from msb_arch import MSBError, ValidationError, DuplicateNameError
+
+try:
+    ...
+except DuplicateNameError:      # exactly this
+    ...
+except ValidationError:         # anything the caller got wrong
+    ...
+except MSBError:                # anything from the framework
+    ...
+```
+
+`ValidationError` and `OperationError` group and are never raised on their own.
+`SerializationError` and `RequestError` each derive from two built-ins, because the sites
+they replace did not agree on one: a malformed request was a `TypeError` when it was not a
+dictionary and a `ValueError` when it was the wrong dictionary.
+
+`HandlerError` carries the original exception as its cause where the framework still holds
+it, which is the case in `_apply_methods(strict=True)`. Once a failure has crossed into a
+response it is only a message, so a facade raising with `raise_on_error=True` has no cause
+to attach.
+
+Method docstrings name the built-in base rather than the specific type, and remain accurate:
+a `TypeValidationError` is a `TypeError`.
+
+`NotImplementedError` is still raised directly for abstract methods that were not
+implemented, since that is Python's contract rather than MSB's.
 
 ## Type Annotations
 

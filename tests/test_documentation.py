@@ -11,7 +11,9 @@ Conventions, so the test is a rule rather than a curiosity:
 - A block illustrating a *shape* rather than code -- a request dictionary with placeholders,
   a response layout -- is fenced ```text instead. It is documentation, not an example.
 - A block that demonstrates an error declares it on its first line with `# raises: <Type>`,
-  and the test insists it really does raise that.
+  and the test insists it really does raise that. The name may be a built-in or one of the
+  types in `msb_arch.errors`, and a subclass satisfies it -- so a block declaring `TypeError`
+  still passes once the framework raises its own `TypeValidationError` beneath it.
 - `api.md` is excluded: it is a signature reference, and its blocks are declarations rather
   than programs.
 
@@ -19,6 +21,7 @@ Conventions, so the test is a rule rather than a curiosity:
 blocks that still fail. The number may only go down. A new breakage anywhere fails the test,
 and repairing an old one requires lowering the count, so the debt cannot be quietly kept.
 """
+import builtins
 import contextlib
 import io
 import logging
@@ -28,6 +31,7 @@ import re
 
 import pytest
 
+from msb_arch import errors
 from msb_arch.utils.logging_setup import logger as package_logger
 
 DOCS = pathlib.Path(__file__).resolve().parent.parent / "docs"
@@ -57,17 +61,26 @@ def blocks_of(path):
     return re.findall(r"```python\n(.*?)```", path.read_text(encoding="utf-8"), re.S)
 
 
+def declared_type(name):
+    """Resolve a name from a `# raises:` marker to the class it denotes."""
+    return getattr(errors, name, None) or getattr(builtins, name, None)
+
+
 def run_document(path):
     """Execute a document's blocks in order and return the failures."""
     namespace = {}
     failures = []
     for index, block in enumerate(blocks_of(path)):
         expected = RAISES.search(block)
+        wanted = declared_type(expected.group(1)) if expected else None
+        if expected and wanted is None:
+            failures.append(f"block {index}: `# raises: {expected.group(1)}` names no known type")
+            continue
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 exec(compile(block, f"{path.name}#{index}", "exec"), namespace)
         except Exception as exc:                          # noqa: BLE001 - reported below
-            if expected and type(exc).__name__ == expected.group(1):
+            if wanted and isinstance(exc, wanted):
                 continue
             failures.append(f"block {index}: {type(exc).__name__}: {exc}")
         else:
