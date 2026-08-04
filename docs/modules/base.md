@@ -193,10 +193,10 @@ Parameterized hints are checked structurally and nested to any depth, so
 | `Sequence[X]`, `Mapping[K, V]` and other abstract collections | `isinstance` against the origin only |
 | `Annotated[X, ...]` | unwrapped to X |
 
-- **A JSON round trip does not yet survive `Set[X]`, `FrozenSet[X]` or `Tuple[X, Y]`.**
-  `to_dict` emits the Python object as it is, so `json.dumps` fails on a set, and a tuple that
-  survives `dumps` as a list is then rejected by `from_dict` for not being a tuple. Item B12
-  in [the roadmap](../ROADMAP.md). Every other supported hint round-trips.
+- **Every hint above round-trips through JSON.** `to_dict` writes only data -- a set, a
+  frozenset and a tuple all become lists, and entities held inside a list or a dict are
+  serialized like any other -- and `from_dict` restores the declared type from the annotation.
+  A set is written in a stable order, so the same object always produces the same output.
 - `None` elements inside collections are skipped, mirroring the top-level rule for attributes.
 - Elements of abstract collections are deliberately left unchecked so that validation never
   consumes an arbitrary iterable.
@@ -326,6 +326,78 @@ new_inventory = MyContainer.from_dict(data)   # a concrete subclass, not the gen
 | `__repr__()` | Returns the official string representation of the object |
 | `__eq__(other)` | Compares two objects for equality |
 | `__hash__()` | Returns the hash value of the object |
+
+## Serialization
+
+`to_dict` produces plain data and nothing else: every entity is reduced to a mapping however
+deeply it is nested, and a `set`, `frozenset` or `tuple` becomes a list, because JSON has none
+of the three. `from_dict` restores the declared types from the annotations, which is the only
+thing that can say whether a JSON list was a list, a set or a tuple.
+
+```python
+import json
+
+restored = MyEntity.from_dict(json.loads(json.dumps(entity.to_dict())))
+assert restored == entity
+```
+
+A set is written in a stable order, so the same object always produces the same bytes. Without
+that, hashing or diffing serialized output would be meaningless.
+
+### Versioning a model
+
+Every mapping carries the version of the class that wrote it, under `schema_version`. Raise
+`SCHEMA_VERSION` when a field is renamed, removed or given a new meaning, and say how to read
+the older shape:
+
+```python
+class Telescope(BaseEntity):
+    SCHEMA_VERSION = 2
+    diameter: float                 # this was called 'size' in version 1
+
+    @classmethod
+    def migrate(cls, data, from_version):
+        if from_version == 1:
+            data["diameter"] = data.pop("size")
+        return data
+```
+
+`migrate` runs only when the version differs, so the ordinary case costs nothing. Raising
+`SCHEMA_VERSION` without overriding it is a declaration that old data cannot be read: the
+default raises `SerializationError` naming both versions, at the boundary, rather than failing
+later on a field that is no longer there. Data written before versioning existed carries no
+version and is read as version 1.
+
+### Reading data MSB did not write
+
+Foreign JSON has no `type` field, so the annotation answers instead: a mapping is built into
+whatever the field declares, through lists, dicts and containers alike.
+
+A `Union` is resolved by trying its members in order and keeping the first that accepts the
+data. That is correct whenever the members differ in shape and a guess when they do not. Where
+two members could both accept the same mapping, declare which key in the data decides:
+
+```python
+from typing import Union
+
+class Sensor(BaseEntity):
+    unit: str
+
+class LookAlike(BaseEntity):        # the same shape, so the data cannot tell them apart
+    unit: str
+
+class Station(BaseEntity):
+    DISCRIMINATORS = {"device": "kind"}     # the incoming data names the type under 'kind'
+    device: Union[Sensor, LookAlike]
+
+station = Station.from_dict({"name": "S1", "device": {"name": "d", "unit": "K",
+                                                     "kind": "LookAlike"}})
+assert isinstance(station.device, LookAlike)
+```
+
+The discriminator key is consumed rather than passed on, so the class being built does not see
+an attribute it never declared. It reaches inside collections too, so
+`List[Union[Sensor, LookAlike]]` works the same way.
 
 ## Caching and memory
 

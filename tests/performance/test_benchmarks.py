@@ -79,14 +79,13 @@ class PlainReading:
         self.name, self.value, self.label, self.isactive = name, value, label, isactive
 
 
-def test_an_entity_costs_no_more_than_sixty_five_plain_objects():
+def test_an_entity_costs_no_more_than_twenty_eight_plain_objects():
     """Defends the construction path.
 
     Compared against a plain class rather than a dict literal, because both then allocate an
     object and set the same four attributes, and the ratio is exactly what validation costs.
-    Measured at 44x on 2026-08-04: 13.1 us against 0.30. The budget carries about half again
-    in headroom, so it fails on a real regression rather than on a slow runner. **Tighten it
-    when P5 lands**, which is the item that should move this number.
+    Measured at 44x before P5 and 17x after it: 7.4 us against 0.43. The budget carries about
+    half again in headroom, so it fails on a real regression rather than on a slow runner.
     """
     def entities(count):
         for _ in range(count):
@@ -97,7 +96,7 @@ def test_an_entity_costs_no_more_than_sixty_five_plain_objects():
             PlainReading("r", 1.0, "x")
 
     ratio = per_operation(entities, 3000) / per_operation(plain, 3000)
-    assert ratio < 65, f"entity construction is {ratio:.1f}x a plain object, budget 65x"
+    assert ratio < 28, f"entity construction is {ratio:.1f}x a plain object, budget 28x"
 
 
 def test_a_cached_to_dict_is_much_cheaper_than_an_uncached_one():
@@ -117,20 +116,20 @@ def test_a_cached_to_dict_is_much_cheaper_than_an_uncached_one():
 # --- counts ------------------------------------------------------------------------------
 
 def test_construction_introspects_a_bounded_number_of_times_per_object(counted_introspection):
-    """Defends what P5 targets. Measured at 10 per object on 2026-08-04: five `get_origin`
-    and five `get_args`, for an entity declaring two fields beyond `name` and `isactive`.
+    """Defends P5. It was ten per object -- five `get_origin` and five `get_args` for an
+    entity declaring two fields -- and is now none: a validator is compiled once per class,
+    so resolution happens per annotation rather than per instance.
 
     A count is exact, so this catches a regression a timing assertion would miss entirely --
-    an extra `get_args` per field costs little on one object and everything on a million.
-    **P5 should drive this to nearly zero**, since a compiled per-class validator introspects
-    once per class rather than once per instance.
+    an extra `get_args` per field costs little on one object and everything on a million. The
+    budget of 2 leaves room for the first instance of a class to compile its table.
     """
     for index in range(500):
         Reading(name=f"r{index}", value=1.0, label="x")
 
     total = sum(counted_introspection.values())
     per_object = total / 500
-    assert per_object <= 12, f"{per_object:.1f} introspection calls per object, budget 12"
+    assert per_object <= 2, f"{per_object:.1f} introspection calls per object, budget 2"
 
 
 def test_resolving_a_field_type_is_cached_per_class(counted_introspection):
@@ -175,11 +174,12 @@ def test_serializing_a_container_stays_linear():
 
 
 def test_invalidation_does_not_grow_with_owners_that_do_not_cache():
-    """Defends P6 once it lands, and records the cost until then.
+    """Defends P6.
 
-    Invalidation climbs the ownership graph on every write. With 500 non-caching owners that
-    walk reached nothing and still cost 277 us of 413 on 2026-08-04. The budget is loose
-    because the skip is not built yet; tighten it with P6.
+    Invalidation climbs the ownership graph on every write, and with nothing caching that
+    walk reached nothing: 413 us at 500 owners against 3.3 with none. It now stops before
+    climbing, leaving only a pass over the direct owners to drop dead ones, and costs 39 us
+    at 500. The budget is set from that with headroom, and would fail if the walk returned.
     """
     item = Reading(name="shared", value=1.0, label="x")
     owners = [Readings(name=f"box{index}") for index in range(200)]
@@ -191,6 +191,6 @@ def test_invalidation_does_not_grow_with_owners_that_do_not_cache():
 
     alone = per_operation(lambda n: [setattr(lonely, "value", 2.0) for _ in range(n)], 2000)
     crowded = per_operation(lambda n: [setattr(shared, "value", 2.0) for _ in range(n)], 2000)
-    assert crowded < alone * 400, (
-        f"a write with 200 owners costs {crowded / alone:.0f}x one with none"
+    assert crowded < alone * 25, (
+        f"a write with 200 owners costs {crowded / alone:.0f}x one with none, budget 25x"
     )

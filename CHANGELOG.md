@@ -13,6 +13,65 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [0.6.0] - 2026-08-04
+
+The data contract. An annotation now says what a value may be as well as what type it is,
+serialized data survives a real JSON round trip and carries the version that wrote it, and the
+two hot paths in the base layer stop repeating work.
+
+Second stage on the road to 1.0.0. See [the roadmap](docs/ROADMAP.md).
+
+### Added
+
+- **Constraints on annotations.** `price: Annotated[float, Positive()]` is enforced by the
+  model. Six constraints -- `Positive`, `NonNegative`, `NonZero`, `NonEmpty`, `Range`,
+  `Predicate` -- wrap the helpers that had been in `utils/validation.py` all along with
+  nothing connecting them to a field. A `Constraint` subclass needs only a `check` method, and
+  several on one field all apply. They hold on construction, on `set`, on restoring from
+  serialized data and on adding to a container, because they run inside the one check every
+  path to a value goes through.
+- **`SCHEMA_VERSION` and `migrate`.** Every mapping carries the version of the class that
+  wrote it. Raise `SCHEMA_VERSION` when a field is renamed or given a new meaning, and
+  override `migrate(data, from_version)` to bring older data forward. The default refuses,
+  naming both versions, so a class that changes shape without saying how fails at the boundary
+  rather than later on a missing field.
+- **`DISCRIMINATORS`** for data MSB did not write: a mapping of field name to the key in the
+  incoming data that names the type. Needed only where a `Union`'s members have the same shape
+  and nothing else can tell them apart.
+
+### Fixed
+
+- **Serialization did not reach into collections.** `to_dict` descended into an entity held
+  directly by a field and stopped there, so an entity inside a `List` or a `Dict` was left in
+  the mapping as a live object: `json.dumps` refused such a mapping, `from_dict` could not
+  restore it, and a cached mapping held references that changed under it. The README's promise
+  of nesting to any depth did not hold through a collection.
+- **`Set`, `FrozenSet` and `Tuple` did not round-trip.** JSON has none of the three. They are
+  now written as lists and restored from the annotation, which is the only thing that can say
+  which of them a list was.
+- A set is serialized in a stable order, so the same object always produces the same output.
+  Without it, hashing or diffing serialized data was meaningless.
+
+### Changed
+
+- **`to_dict` output gains a `schema_version` key.** Anything comparing whole mappings against
+  a literal will see it. Data written before this carries none and is read as version 1.
+- Entity construction is **17x a plain object, down from 44x**, and introspects its
+  annotations **no times per instance, down from ten**: a validator is compiled once per class.
+  The structural walk still decides everything parameterized, and a test compares the two paths
+  so they cannot drift apart.
+- Cache invalidation **stops climbing the ownership graph when nothing caches**, which is the
+  default: 413 µs to 39 µs at 500 owners.
+
+### Upgrading from 0.5.0
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| A test comparing `to_dict()` to a literal mapping fails | The mapping now carries `schema_version`. | Compare the fields you mean, or add the key. |
+| An entity that used to serialize now writes nested mappings where it wrote objects | Collections are serialized properly. This is the fix. | Nothing, unless code depended on reaching a live object through `to_dict()` output. |
+| `SerializationError: cannot read data written under schema version N` | The class raised `SCHEMA_VERSION` without overriding `migrate`. | Override `migrate`, or leave `SCHEMA_VERSION` alone. |
+| A value that used to be accepted is now rejected | A constraint was added to that annotation. | Intended. Remove the constraint if it was wrong. |
+
 ## [0.5.0] - 2026-08-04
 
 Errors and measurement. The framework gains its own exceptions, a type variable resolves to

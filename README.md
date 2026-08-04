@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MSB%20Software%20License-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.5.0-orange.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-0.6.0-orange.svg)](https://github.com/Torward1024/MSB)
 
 Mega-Super-Base (MSB) is an architecture for Python applications built around a single entry
 point. You describe your data as typed entities, you describe what may be done to them as
@@ -22,14 +22,17 @@ lets a session be logged and replayed.
 
 - **Typed entities**: attributes validated against their annotations, nested to any depth,
   including `List`, `Dict`, `Tuple`, `Set`, `Union`, `Literal`, `Callable` and `Type[X]`.
+- **Constraints on values, not just types**: `price: Annotated[float, Positive()]` is enforced
+  on construction, on assignment and on restore, with no `__init__` of your own.
 - **Containers for collections**: named, queryable, serializable, with bulk operations.
 - **One entry point**: a `Manipulator` registers operations and processes requests; the
   per-operation facades are sugar so you rarely write a request dictionary by hand.
 - **Operations that write themselves**: a handler is usually one call to `_apply_methods`,
   which applies everything a request names and reports each outcome.
-- **Serialization**: nested objects to any depth, restored by type, with cycles detected
-  rather than followed. A JSON round trip is faithful except for `Set`, `FrozenSet` and
-  `Tuple` fields, which is item B12 in [the roadmap](docs/ROADMAP.md).
+- **Serialization that round-trips**: `json.loads(json.dumps(obj.to_dict()))` restores an
+  equal object, through lists, dicts, sets and tuples, for entities nested to any depth.
+  Cycles are detected rather than followed, and serialized data carries the version of the
+  class that wrote it, so a model can change shape and still read its old files.
 - **Logging that behaves**: a dedicated `msb_arch` logger that stays silent until the
   application configures it.
 - **Exceptions you can catch precisely**: everything derives from `MSBError`, and also from
@@ -186,4 +189,4 @@ For commercial use, a separate royalty-bearing license is required. Please conta
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 0.5.0
+- **Version**: 0.6.0

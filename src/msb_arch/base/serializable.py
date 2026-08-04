@@ -14,10 +14,18 @@ from typing import (Dict,
 import weakref
 from contextvars import ContextVar
 from threading import RLock
-from ..errors import ResolutionError, TypeValidationError, UnknownAttributeError
+from ..errors import (ResolutionError,
+                      SerializationError,
+                      TypeValidationError,
+                      UnknownAttributeError)
 from ..utils.logging_setup import logger
+from ..utils.validation import Constraint
 
 CYCLIC_REFERENCE = "<cyclic reference>"
+
+# The key serialized data carries its model version under. Data written before this existed
+# has no such key, which `from_dict` reads as version 1.
+SCHEMA_FIELD = "schema_version"
 
 # Sentinel for cache lookups: None is a legitimate cached value, so it cannot mark a miss.
 _MISSING = object()
@@ -30,6 +38,20 @@ _REGISTRY_LOCK = RLock()
 # in a parameter so that `to_dict()` keeps the signature subclasses override, and so that
 # concurrent serializations do not share marks.
 _TRAVERSAL: ContextVar = ContextVar("msb_arch_to_dict_seen", default=None)
+
+# Every live object with caching enabled. Invalidation climbs the ownership graph on every
+# write, and cannot know whether any ancestor caches without walking to it -- so with nothing
+# caching anywhere the whole walk reaches nothing, which was 277 us of the 413 measured at 500
+# owners. This makes that case one truthiness check.
+#
+# A stale read is harmless in both directions: a walk skipped for an object that has only just
+# enabled caching cannot leave a stale mapping, because a new object has none yet, and an
+# extra walk merely costs what it always cost.
+#
+# Keyed by identity rather than by the object, for the reason the ownership graph is: `__eq__`
+# and `__hash__` are defined on class and name, so two entities sharing a name are one member
+# of a set, and the death of either would stop tracking the other.
+_CACHING_OBJECTS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
 class EntityMeta(ABCMeta):
     """Metaclass for Serializable to handle type annotations and enforce attribute validation.
@@ -130,6 +152,20 @@ class Serializable(ABC, metaclass=EntityMeta):
     _cached_to_dict: Dict[str, Any]
     _use_cache: bool
 
+    # The version of *this class's* serialized shape, written into every mapping it produces.
+    # Raise it in a subclass when a field is renamed, removed or given a new meaning, and
+    # override `migrate` to bring older data forward. Data written before versioning existed
+    # carries no version and is read as 1.
+    # Deliberately unannotated: an annotation here would make it one of `_fields`, so every
+    # entity would carry it as an attribute and serialize it as None.
+    SCHEMA_VERSION = 1
+
+    # Field name -> the key in incoming data that names the type to build for it. Only needed
+    # for data MSB did not write: its own mappings carry `type`. Declare one where a field is
+    # a Union whose members have the same shape, since nothing else can tell them apart.
+    # Also unannotated, for the reason above.
+    DISCRIMINATORS = {}
+
     def __init__(self, *, name: str, isactive: bool = True, use_cache: bool = False, **kwargs):
         """Initialize with a name, activation status, and optional typed attributes.
 
@@ -165,7 +201,16 @@ class Serializable(ABC, metaclass=EntityMeta):
         unknown_attrs = set(kwargs.keys()) - set(self._fields.keys())
         if unknown_attrs:
             raise UnknownAttributeError(f"Unknown attributes provided for {self.__class__.__name__}: {unknown_attrs}")
-        
+
+        if self.__dict__.get('_use_cache'):
+            # Registered so that invalidation can tell, without walking, whether any cache
+            # exists to go stale. Weakly held, so this never keeps an object alive.
+            #
+            # Read from the attribute rather than from the `use_cache` argument: a container
+            # enables caching by passing `_use_cache` through kwargs, which the loop above
+            # applies, so the argument alone would miss every caching container.
+            _CACHING_OBJECTS[id(self)] = self
+
         logger.debug("Initialized %s instance with name=%s, isactive=%s", self.__class__.__name__, name, isactive)
     def _adopt(self, owner: Optional['Serializable'] = None, _seen: Optional[Set[int]] = None) -> None:
         """Record ownership for this entity and for everything it holds.
@@ -216,9 +261,21 @@ class Serializable(ABC, metaclass=EntityMeta):
               belongs to each container that holds it, and all of them go stale together.
             - The walk is guarded against a cycle in the ownership graph.
         """
+        if not _CACHING_OBJECTS:
+            # Nothing anywhere caches, so there is no stale mapping for the walk to find.
+            # Dead owners are still dropped, because pruning them is the walk's other job and
+            # they would otherwise accumulate for the lifetime of the object. That costs one
+            # pass over the direct owners rather than over the whole graph above them.
+            owners = self.__dict__.get('_parents')
+            if owners:
+                for key, ref in list(owners.items()):
+                    if ref() is None:
+                        del owners[key]
+            return
+
         if not self.__dict__.get('_parents'):
-            # Overwhelmingly the common case: nothing owns this entity, so there is no graph
-            # to walk and no reason to allocate one.
+            # Nothing owns this entity, so there is no graph to walk and no reason to
+            # allocate one.
             if self.__dict__.get('_use_cache') and '_cached_to_dict' in self.__dict__:
                 super().__setattr__('_cached_to_dict', None)
             return
@@ -264,7 +321,61 @@ class Serializable(ABC, metaclass=EntityMeta):
         if value is None:
             return
 
+        checker = self.__class__._compiled_validator(expected_type)
+        if checker is not None:
+            if not checker(value):
+                raise TypeValidationError(
+                    f"Attribute '{key}' must be of type {self._resolve_type(expected_type)}, "
+                    f"got {type(value)}")
+            return
+
         self._check_type(key, value, expected_type, f"Attribute '{key}'")
+
+    @classmethod
+    def _compiled_validator(cls, hint: Any):
+        """Return a one-call check for a hint, or None to use the structural walk.
+
+        Args:
+            hint (Any): The annotation to compile.
+
+        Returns:
+            Optional[Callable[[Any], bool]]: A predicate that is True for an acceptable
+                value, or None when the hint needs `_check_type`.
+
+        Notes:
+            - Compiled once per class and kept in the class's own dictionary, so a subclass
+              never reads a parent's table and resolution happens once rather than per
+              instance. Profiling put 42 `isinstance` calls and ten `get_origin`/`get_args`
+              calls into constructing a single entity, almost all of it re-deriving the same
+              answer about the same annotation.
+            - Only a plain class and `Any` compile. Everything parameterized keeps the
+              structural walk, which is where the meaning lives and where a second
+              implementation would eventually disagree with the first.
+            - Keyed by the hint rather than by the field name, because a container validates
+              its items under a key that carries the item's name, which would otherwise put
+              one entry in the table per item.
+        """
+        table = cls.__dict__.get('_compiled_validators')
+        if table is None:
+            table = {}
+            type.__setattr__(cls, '_compiled_validators', table)
+
+        try:
+            if hint in table:
+                return table[hint]
+        except TypeError:
+            return None                       # an unhashable hint cannot be tabulated
+
+        resolved = cls._resolve_type(hint)
+        checker = None
+        if not hasattr(resolved, '__metadata__'):
+            if resolved is Any:
+                checker = lambda value: True                              # noqa: E731
+            elif get_origin(resolved) is None and isinstance(resolved, type):
+                checker = lambda value, _type=resolved: isinstance(value, _type)  # noqa: E731
+
+        table[hint] = checker
+        return checker
     @classmethod
     def _check_type(cls, key: str, value: Any, expected_type: Any, subject: str) -> None:
         """Recursively check a non-None value against a (possibly generic) type hint.
@@ -293,9 +404,20 @@ class Serializable(ABC, metaclass=EntityMeta):
         """
         resolved_type = cls._resolve_type(expected_type)
 
-        # Unwrap Annotated[X, ...] down to X.
+        # Unwrap Annotated[X, ...] down to X, keeping the constraints it carries. They are
+        # applied after the type is known to hold, so a rule never sees a value it was not
+        # written for.
+        constraints = []
         while hasattr(resolved_type, '__metadata__'):
+            constraints.extend(item for item in resolved_type.__metadata__
+                               if isinstance(item, Constraint))
             resolved_type = cls._resolve_type(resolved_type.__origin__)
+
+        if constraints:
+            cls._check_type(key, value, resolved_type, subject)
+            for constraint in constraints:
+                constraint.check(value, subject)
+            return
 
         if resolved_type is Any:
             return
@@ -474,6 +596,171 @@ class Serializable(ABC, metaclass=EntityMeta):
         """
         return key in self._fields and hasattr(self, key)
 
+    @classmethod
+    def migrate(cls, data: dict, from_version: int) -> dict:
+        """Bring serialized data written by an older version of this class up to date.
+
+        Args:
+            data (dict): The mapping as it was written, with its original field names.
+            from_version (int): The `SCHEMA_VERSION` it was written under.
+
+        Returns:
+            dict: The same data in the shape the current version expects.
+
+        Raises:
+            SerializationError: By default, naming both versions. A class that raises its
+                `SCHEMA_VERSION` without overriding this is declaring that older data cannot
+                be read, and says so rather than failing later on a missing field.
+
+        Notes:
+            - Called by `from_dict` only when the version differs, so the common case costs
+              nothing.
+            - Migrate forward one step at a time when several versions have passed; each step
+              is easier to reason about than one jump, and the intermediate shapes are the
+              ones already tested.
+
+        Example:
+            ```python
+            class Telescope(BaseEntity):
+                SCHEMA_VERSION = 2
+                diameter: float          # was 'size' in version 1
+
+                @classmethod
+                def migrate(cls, data, from_version):
+                    if from_version == 1:
+                        data["diameter"] = data.pop("size")
+                    return data
+            ```
+        """
+        raise SerializationError(
+            f"{cls.__name__} cannot read data written under schema version {from_version}; "
+            f"it is now version {cls.SCHEMA_VERSION}. Override `migrate` to bring it forward."
+        )
+
+    @classmethod
+    def _deserialize_value(cls, value: Any, hint: Any, field_path: str = "",
+                           discriminator: Optional[str] = None) -> Any:
+        """Rebuild a value from plain data, guided by what the annotation declares.
+
+        Args:
+            value (Any): The data as it was read.
+            hint (Any): The annotation the value belongs to.
+            field_path (str, optional): Where it sits, for error messages. Defaults to "".
+            discriminator (Optional[str], optional): A key in the data naming the type to
+                build, for data that does not carry `type`. Defaults to None.
+
+        Returns:
+            Any: The value as the annotation declares it.
+
+        Notes:
+            - The annotation is the schema. JSON has no set, no tuple and no entity, so what
+              comes back is a list or a mapping, and only the declared type says which of the
+              three it was. This is why a `Tuple[float, float]` used to survive `json.dumps`
+              and then be rejected by `from_dict` for being a list.
+            - A mapping carrying a `type` field is an entity, and is restored through the
+              class that field names, so a subclass stored in a field typed as its base comes
+              back as the subclass. A `discriminator` names the key to read instead, for data
+              MSB did not write.
+            - **A `Union` without either is resolved by trying its members in order and
+              keeping the first that accepts the data.** That is right whenever the members
+              differ in shape, and a guess when they do not: declare a discriminator on such
+              a field rather than relying on the order.
+            - Anything the hint does not describe is returned unchanged, which keeps an exotic
+              annotation from blocking a restore.
+        """
+        if value is None:
+            return None
+
+        origin = get_origin(hint)
+        args = get_args(hint)
+
+        if isinstance(value, dict):
+            named = value.get(discriminator) if discriminator else value.get("type")
+            if named is not None:
+                entity_type = cls._resolve_entity_type(
+                    named, hint if isinstance(hint, type) else None)
+                if entity_type is not None:
+                    payload = value
+                    if discriminator and discriminator != "type":
+                        # The key belongs to the wire format, not to the model, so the class
+                        # being built would reject it as an attribute it never declared.
+                        payload = {k: v for k, v in value.items() if k != discriminator}
+                    return entity_type.from_dict(payload)
+
+        if origin is Union:
+            for member in args:
+                if member is type(None):
+                    continue
+                try:
+                    return cls._deserialize_value(value, member, field_path, discriminator)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+            return value
+
+        if origin in (list, List):
+            member = args[0] if args else Any
+            return [cls._deserialize_value(item, member, field_path, discriminator)
+                    for item in value]
+        if origin in (set, frozenset):
+            member = args[0] if args else Any
+            rebuilt = (cls._deserialize_value(item, member, field_path, discriminator)
+                       for item in value)
+            return origin(rebuilt)
+        if origin is tuple:
+            if len(args) == 2 and args[1] is Ellipsis:
+                return tuple(cls._deserialize_value(item, args[0], field_path, discriminator)
+                             for item in value)
+            if args:
+                return tuple(cls._deserialize_value(item, member, field_path, discriminator)
+                             for item, member in zip(value, args))
+            return tuple(value)
+        if origin is dict and isinstance(value, dict):
+            member = args[1] if len(args) == 2 else Any
+            return {key: cls._deserialize_value(item, member, field_path, discriminator)
+                    for key, item in value.items()}
+
+        if isinstance(hint, type) and issubclass(hint, Serializable) and isinstance(value, dict):
+            return hint.from_dict(value)
+
+        return value
+
+    @classmethod
+    def _serialize_value(cls, value: Any, seen: Set[int]) -> Any:
+        """Reduce a value to data that survives JSON, descending through collections.
+
+        Args:
+            value (Any): The value held by an attribute.
+            seen (Set[int]): Identities already serialized in this traversal.
+
+        Returns:
+            Any: The value as plain data.
+
+        Notes:
+            - Descent used to stop at the attribute: an entity held *directly* was serialized
+              and one held inside a list or a dict was not, so the mapping carried live
+              objects, `json.dumps` refused it and `from_dict` could not restore it.
+            - `set` and `frozenset` become lists, and `tuple` becomes a list, because JSON has
+              none of the three. The declared type is what restores them, in
+              `_deserialize_value`.
+            - A set is ordered before it is written. Its iteration order is arbitrary, so
+              without this the same object serializes differently on each run, and any later
+              comparison, hash or diff of the output is meaningless. Natural order is used
+              where the elements allow it and `repr` order otherwise, which is total.
+        """
+        if isinstance(value, Serializable):
+            return CYCLIC_REFERENCE if id(value) in seen else value.to_dict()
+        if isinstance(value, dict):
+            return {key: cls._serialize_value(item, seen) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [cls._serialize_value(item, seen) for item in value]
+        if isinstance(value, (set, frozenset)):
+            items = [cls._serialize_value(item, seen) for item in value]
+            try:
+                return sorted(items)
+            except TypeError:
+                return sorted(items, key=repr)
+        return value
+
     def to_dict(self) -> dict:
         """Convert the entity to a dictionary for serialization.
 
@@ -507,17 +794,15 @@ class Serializable(ABC, metaclass=EntityMeta):
         seen = _TRAVERSAL.get()
         try:
             seen.add(id(self))
-            data = {"name": self.name, "isactive": self.isactive, "type": self.__class__.__name__}
+            data = {"name": self.name, "isactive": self.isactive,
+                    "type": self.__class__.__name__,
+                    SCHEMA_FIELD: self.SCHEMA_VERSION}
             for key in self._fields:
                 if key.startswith('_'):
                     continue
                 if not hasattr(self, key):
                     continue
-                value = getattr(self, key)
-                if isinstance(value, Serializable):
-                    data[key] = CYCLIC_REFERENCE if id(value) in seen else value.to_dict()
-                else:
-                    data[key] = value
+                data[key] = self._serialize_value(getattr(self, key), seen)
         finally:
             if is_root:
                 _TRAVERSAL.reset(token)
