@@ -4,6 +4,7 @@ Mega-Super-Base (MSB) architecture package.
 """
 
 from .base import Serializable, BaseEntity, BaseContainer
+from .base.serializable import cache_statistics
 from .errors import (AttributeNotFoundError,
                      ConstraintError,
                      DispatchError,
@@ -20,7 +21,8 @@ from .errors import (AttributeNotFoundError,
                      TypeValidationError,
                      UnknownAttributeError,
                      ValidationError)
-from .protocols import MethodProvider
+from .interceptors import RequestJournal, RequestMetrics
+from .protocols import Interceptor, MethodProvider
 from .super import Super, Project
 from .super.builtins import Configurator, Inspector
 from .mega import Manipulator
@@ -39,6 +41,7 @@ __all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "M
            "DuplicateNameError", "ResolutionError", "NotFoundError", "AttributeNotFoundError", "SerializationError",
            "OperationError", "RegistrationError", "DispatchError", "RequestError", "HandlerError",
            "Constraint", "Positive", "NonNegative", "NonZero", "NonEmpty", "Range", "Predicate",
-           "MethodProvider", "Inspector", "Configurator"]
+           "MethodProvider", "Interceptor", "Inspector", "Configurator",
+           "RequestMetrics", "RequestJournal", "cache_statistics"]
 
 __version__ = "0.6.0"
