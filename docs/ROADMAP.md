@@ -118,6 +118,32 @@ Two further gaps came out of the same pass, neither of them on the list:
 A 1.0 is a promise that the contract will not break outside a major version. The work below
 is ordered by whether it blocks that promise, not by how interesting it is.
 
+### Where to start
+
+The items below are what has to happen, not the order it happens in. The order matters
+because some of them make the others cheaper or more expensive, so here it is, with the
+reason for each position rather than a bare sequence.
+
+Four rules decide it: **a decision before the code it shapes**, because a decision costs a
+conversation now and a rewrite later; **error types before the code that raises them**,
+because retrofitting ninety call sites twice is absurd; **a benchmark before an
+optimisation**, because otherwise nobody can tell whether it worked; and **the freeze last**,
+because only a finished contract can be frozen.
+
+| Wave | Items | Why here |
+| --- | --- | --- |
+| **0. Decide** | B7 async, B8 built-in Supers, B6 pipelines | None of these is code yet, and each changes the shape of something built later. If async wins, every signature changes and B5 and B11 are rewritten; if built-in Supers land, the extension contract B5 defines looks different; if pipelines land, the request shape B11 wraps looks different. Deciding costs nothing today and a rewrite tomorrow |
+| **1. Foundation** | B3 exception taxonomy, P7 benchmark suite | Everything after this raises errors, so the types should exist before the code that raises them rather than be retrofitted through ninety sites. And every performance number so far was measured by hand; before touching P5 or P6 the measurement has to be permanent |
+| **2. Correctness, cheap and separable** | B1 TypeVar, P6 skip the idle invalidation walk, B5 the Super protocol | Three small, independent changes. B1 fixes a wrong type that ships today; P6 removes 277 µs of the 413 spent reaching nothing; B5 replaces a concrete dependency with a one-method protocol. Each lands on its own and none blocks another |
+| **3. The contract of data** | B2 value constraints, B4 schema version, B9 foreign input | All three change what serialized data and annotations mean. B2 needs B3 so a failed constraint raises the right type; B4 and B9 both rework `from_dict` and are cheaper together than apart |
+| **4. The contract of requests** | B11 interceptor chain, then P8 observability | B11 waits for wave 0, because what an interceptor wraps depends on whether a request can carry references and whether it may be awaited. P8 is not a feature of its own — it is the first thing plugged into B11 |
+| **5. Performance** | P5 compiled per-class validators | After P7 can prove it worked and after B2, because constraints become part of what is compiled. Doing it earlier means compiling twice |
+| **6. Freeze** | B10 policy and public surface, P9 and P11 documentation | A contract can only be frozen once it has stopped moving. The documentation guide is the last thing written because it describes the finished shape |
+
+**Start with wave 0.** It is three conversations, not three tasks, and everything after it is
+cheaper once they are settled. The first code is B3, and B1 can travel with it since its own
+raises are two lines.
+
 ### Blocking — each changes something a caller depends on
 
 | # | Item | Why it blocks |
