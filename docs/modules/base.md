@@ -335,6 +335,8 @@ of the three. `from_dict` restores the declared types from the annotations, whic
 thing that can say whether a JSON list was a list, a set or a tuple.
 
 ```python
+import json
+
 restored = MyEntity.from_dict(json.loads(json.dumps(entity.to_dict())))
 assert restored == entity
 ```
@@ -376,9 +378,21 @@ data. That is correct whenever the members differ in shape and a guess when they
 two members could both accept the same mapping, declare which key in the data decides:
 
 ```python
+from typing import Union
+
+class Sensor(BaseEntity):
+    unit: str
+
+class LookAlike(BaseEntity):        # the same shape, so the data cannot tell them apart
+    unit: str
+
 class Station(BaseEntity):
     DISCRIMINATORS = {"device": "kind"}     # the incoming data names the type under 'kind'
     device: Union[Sensor, LookAlike]
+
+station = Station.from_dict({"name": "S1", "device": {"name": "d", "unit": "K",
+                                                     "kind": "LookAlike"}})
+assert isinstance(station.device, LookAlike)
 ```
 
 The discriminator key is consumed rather than passed on, so the class being built does not see
