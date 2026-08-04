@@ -294,6 +294,106 @@ Common error scenarios:
 
 5. **Error Handling**: Use `raise_on_error=False` for programmatic error handling.
 
+## Built-in operations
+
+A `Manipulator` answers `inspect` and `configure` without being told. They follow from the
+request model rather than from any domain -- an attribute names a method, and the method reads
+or writes -- so an application that only reads and writes its model needs no `Super` at all.
+
+```python
+from msb_arch import BaseEntity, Manipulator
+
+class Telescope(BaseEntity):
+    diameter: float
+
+    def get_diameter(self) -> float:
+        return self.diameter
+
+    def set_diameter(self, value: float) -> bool:
+        self.diameter = value
+        return True
+
+class Observatory(Manipulator):
+    pass
+
+manipulator = Observatory(base_classes=[Telescope])
+dish = Telescope(name="DSS14", diameter=70.0)
+
+manipulator.configure(dish, set_diameter=64.0)
+assert manipulator.inspect(dish, get_diameter=None) == 64.0
+```
+
+They differ in one thing. `Inspector` applies every method a request names and reports each
+outcome; `Configurator` stops at the first failure. A caller reading several things wants the
+whole picture, while a half-applied configuration is worse than a rejected one.
+
+**Registering your own replaces a built-in silently.** That is how every application written
+before they existed is already spelled, and it has to keep meaning the same thing. Two
+registrations of one name that are both yours still raise. Pass `builtins=False` to start with
+nothing registered.
+
+## Interceptors
+
+Something that sees a request before it runs and its response after. Metrics, auditing, rate
+limiting and authorisation are four uses of this one hook, which is why MSB supplies the hook
+and none of the four: a library that chose a metrics backend would stop being dependency-free,
+and one that chose an authorisation model would be wrong about somebody's.
+
+```python
+import time
+
+def timing(request, call_next):
+    started = time.perf_counter()
+    response = call_next(request)
+    print(request["operation"], time.perf_counter() - started)
+    return response
+
+manipulator.add_interceptor(timing)
+```
+
+An interceptor may pass the request on, do something either side of that, **refuse** by
+returning a response without calling `call_next` -- which is what rate limiting and
+authorisation need -- or **rewrite** the request before passing it on. The first added is the
+outermost. Each entry of a batch is intercepted separately, because a batch is a container of
+requests rather than a request.
+
+With none registered, a request pays one check.
+
+### What ships
+
+Both are ordinary interceptors with no privileged access, and neither is registered by default.
+
+```python
+from msb_arch import RequestJournal, RequestMetrics
+
+metrics = RequestMetrics()
+journal = RequestJournal()
+manipulator.add_interceptor(metrics)
+manipulator.add_interceptor(journal)
+
+manipulator.configure(dish, set_diameter=12.0)
+
+metrics.snapshot()["configure"]["calls"]      # 1
+journal.touching("DSS14")                     # everything that touched this object
+```
+
+`RequestMetrics` counts, times and records failures per operation. `snapshot()` gives a plain
+mapping to export wherever you like -- Prometheus, statsd, a log line, a status page.
+
+`RequestJournal` records what ran. Read backwards it answers *what produced this*; read
+forwards, `replay(manipulator)` runs the session again. It is nearly free here only because a
+request is data rather than a call, and a response already reports every method that ran.
+
+Two limits worth knowing. Entries hold the live object the request named, which is what makes
+replay exact and what stops a journal from being written to a file as it stands. And replay
+assumes handlers are deterministic: one that reads the clock, a file or a random seed cannot be
+reconstructed from its request alone.
+
+For the size of the serialization cache, `cache_statistics()` reports it on demand. Counters
+for how often invalidation runs, or how long serialization takes, are deliberately not
+maintained: both would put an unconditional increment into paths measured in microseconds, to
+answer a question most applications never ask.
+
 ## Integration Patterns
 
 ### With Base Classes
