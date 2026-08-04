@@ -47,7 +47,7 @@ Status: **done** (merged or on a branch), **next** (the item to pick up), **open
 | B1 | `TypeVar` resolution: resolve by parameter position, treat constraints as a union, fall back to `Any` when unparameterized | — | Corrects a type that is wrong today, so behaviour changes | `Generic[T, U]` resolves each parameter to its own type | **done** |
 | P7 | Benchmark suite in CI | — | None | A performance regression fails a build | **done** |
 | P9 | Document the cache's memory behaviour | — | None | The reader can predict the cost without measuring | **done** |
-| P11 | Repair the 11 documentation examples that no longer run | — | None | `STALE` in `tests/test_documentation.py` is empty | **next** |
+| P11 | Repair the 11 documentation examples that no longer run | — | None | `STALE` in `tests/test_documentation.py` is empty | **done** |
 
 ### 0.6.0 — the data contract
 

@@ -19,7 +19,12 @@ Conventions, so the test is a rule rather than a curiosity:
 
 `STALE` records documents whose examples are known to be out of date, with the number of
 blocks that still fail. The number may only go down. A new breakage anywhere fails the test,
-and repairing an old one requires lowering the count, so the debt cannot be quietly kept.
+and repairing an old one requires lowering the count, so the debt cannot be quietly kept. It
+is empty, and should stay that way.
+
+One thing this cannot catch: an example that runs and claims a wrong result in a comment.
+`print(x)  # 8` passes whatever `x` is. Where an example states what it produces, write it as
+an `assert` instead, and the claim is checked along with the code.
 """
 import builtins
 import contextlib
@@ -40,12 +45,10 @@ REPO = DOCS.parent
 # A signature reference, not a tutorial: its blocks declare rather than execute.
 EXCLUDED = {"api.md", "ROADMAP.md"}
 
-# Documents whose examples predate the current API. These numbers may only decrease.
-# See P11 in docs/ROADMAP.md.
-STALE = {
-    "docs/examples.md": 4,
-    "docs/modules/super.md": 7,
-}
+# Documents whose examples predate the current API. These numbers may only decrease, and as
+# of P11 there are none: every fenced Python block in the documentation runs. Adding an entry
+# here is admitting debt, so prefer fixing the example.
+STALE = {}
 
 RAISES = re.compile(r"^\s*#\s*raises:\s*(\w+)", re.M)
 
