@@ -275,7 +275,7 @@ print(data["items"]["Widget"])
 # {'name': 'Widget', 'isactive': True, 'price': 10.99, 'category': 'Tools', 'type': 'Product'}
 
 # Deserialize
-new_inventory = BaseContainer[Product].from_dict(data)
+new_inventory = MyContainer.from_dict(data)   # a concrete subclass, not the generic alias
 ```
 
 ### Container Methods

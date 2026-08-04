@@ -11,7 +11,7 @@ API, whatever drives the application.
 
 A request is data, not a call:
 
-```python
+```text
 {"operation": "configure", "obj": telescope, "attributes": {"set_diameter": 64.0}}
 ```
 

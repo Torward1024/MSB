@@ -91,6 +91,21 @@ evidence column is what was measured, not what was expected.
 | No profiling of hot spots | true | There is no benchmark suite, so a regression is only visible when someone measures by hand |
 | Tests are critical for maintenance | already done | 485 tests, 90% coverage, including concurrency tests that fail without their guards |
 
+A second list arrived the same day, about operating the framework in production. Most of it
+resolves to one thing rather than five:
+
+| Concern | Verdict |
+| --- | --- |
+| No metrics (Prometheus, statsd) | **A library should not choose a metrics backend.** MSB has no dependencies and that is a feature; importing `prometheus_client` would end it. What it owes the application is *events* — what ran, how long it took, what failed — and the application exports them wherever it likes |
+| No rate limiting in `Manipulator` | Rate limiting is a policy, and MSB knows nothing about callers or identity. But the orchestrator is the one place every request passes through, so a hook there is the right shape |
+| No change audit | **Fits the model best of all.** A request is already data and a response already reports every method that ran, so the audit trail is nearly free — it is the request history that motivated the uniform protocol in 0.4.0 |
+| No graceful shutdown | **Not applicable.** MSB owns no processes, connections or background tasks; there is nothing to wind down. It becomes a question only if P2 introduces task management, and belongs to whatever hosts the library |
+| No health checks | **Not applicable**, for the same reason. A library has no health; a service does |
+
+Metrics, rate limiting, auditing and authorisation are all *the same hook*: something that
+sees a request before it runs and its response after. One interceptor chain around
+`process_request` gives all four and keeps the dependency count at zero. Recorded as B11.
+
 Two further gaps came out of the same pass, neither of them on the list:
 
 | Gap | Evidence |
@@ -116,6 +131,7 @@ is ordered by whether it blocks that promise, not by how interesting it is.
 | B7 | Decide P2 asynchrony | Cannot be added later without touching every signature |
 | B8 | Decide P3 built-in `Inspector` and `Configurator` | Changes what a downstream handler looks like |
 | B9 | Ingesting foreign data: a declared discriminator, or a default type per field | Changes `from_dict` |
+| B11 | An interceptor chain around `process_request`: something that sees a request before it runs and its response after | Metrics, auditing, rate limiting and authorisation are one hook, not four features. Adding it later would change how a request is processed, so it belongs before the freeze |
 | B10 | Write down the deprecation policy and mark the public surface | The promise needs stating before it can be kept |
 
 ### Should be in 1.0, but breaks nothing

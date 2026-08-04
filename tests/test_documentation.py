@@ -1,0 +1,131 @@
+"""Execute the Python examples in the documentation.
+
+Documentation rots quietly: an example keeps looking right long after the API moved, and
+the only person who finds out is a reader following it. This runs every fenced Python block
+so that cannot happen silently.
+
+Conventions, so the test is a rule rather than a curiosity:
+
+- A ```python block must run. Blocks of one document execute in order, in one shared
+  namespace, exactly as a reader following the page would.
+- A block illustrating a *shape* rather than code -- a request dictionary with placeholders,
+  a response layout -- is fenced ```text instead. It is documentation, not an example.
+- A block that demonstrates an error declares it on its first line with `# raises: <Type>`,
+  and the test insists it really does raise that.
+- `api.md` is excluded: it is a signature reference, and its blocks are declarations rather
+  than programs.
+
+`STALE` records documents whose examples are known to be out of date, with the number of
+blocks that still fail. The number may only go down. A new breakage anywhere fails the test,
+and repairing an old one requires lowering the count, so the debt cannot be quietly kept.
+"""
+import contextlib
+import io
+import logging
+import os
+import pathlib
+import re
+
+import pytest
+
+from msb_arch.utils.logging_setup import logger as package_logger
+
+DOCS = pathlib.Path(__file__).resolve().parent.parent / "docs"
+REPO = DOCS.parent
+
+# A signature reference, not a tutorial: its blocks declare rather than execute.
+EXCLUDED = {"api.md", "ROADMAP.md"}
+
+# Documents whose examples predate the current API. These numbers may only decrease.
+# See P11 in docs/ROADMAP.md.
+STALE = {
+    "docs/examples.md": 4,
+    "docs/modules/super.md": 7,
+}
+
+RAISES = re.compile(r"^\s*#\s*raises:\s*(\w+)", re.M)
+
+
+def documents():
+    """Every documentation page that carries Python examples, plus the README."""
+    found = [p for p in sorted(DOCS.rglob("*.md")) if p.name not in EXCLUDED]
+    found.append(REPO / "README.md")
+    return [p for p in found if "```python" in p.read_text(encoding="utf-8")]
+
+
+def blocks_of(path):
+    return re.findall(r"```python\n(.*?)```", path.read_text(encoding="utf-8"), re.S)
+
+
+def run_document(path):
+    """Execute a document's blocks in order and return the failures."""
+    namespace = {}
+    failures = []
+    for index, block in enumerate(blocks_of(path)):
+        expected = RAISES.search(block)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                exec(compile(block, f"{path.name}#{index}", "exec"), namespace)
+        except Exception as exc:                          # noqa: BLE001 - reported below
+            if expected and type(exc).__name__ == expected.group(1):
+                continue
+            failures.append(f"block {index}: {type(exc).__name__}: {exc}")
+        else:
+            if expected:
+                failures.append(
+                    f"block {index}: declared `# raises: {expected.group(1)}` but did not raise"
+                )
+    return failures
+
+
+@pytest.fixture(autouse=True)
+def isolated(tmp_path):
+    """Run examples somewhere harmless and undo what they configure.
+
+    Examples legitimately call `setup_logging` and write files; without this they would
+    attach handlers to the package logger for the rest of the session and drop `app.log`
+    into the repository.
+    """
+    saved_handlers = package_logger.handlers[:]
+    saved_level = package_logger.level
+    saved_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    yield
+    os.chdir(saved_cwd)
+    for handler in package_logger.handlers[:]:
+        if handler not in saved_handlers:
+            package_logger.removeHandler(handler)
+            handler.close()
+    package_logger.handlers[:] = saved_handlers
+    package_logger.setLevel(saved_level)
+
+
+@pytest.mark.parametrize("path", documents(), ids=lambda p: p.name)
+def test_examples_run(path):
+    relative = path.relative_to(REPO).as_posix()
+    failures = run_document(path)
+    allowed = STALE.get(relative, 0)
+
+    if len(failures) > allowed:
+        detail = "\n  ".join(failures)
+        pytest.fail(
+            f"{relative}: {len(failures)} example(s) fail, {allowed} allowed\n  {detail}"
+        )
+    if len(failures) < allowed:
+        pytest.fail(
+            f"{relative}: only {len(failures)} example(s) fail but {allowed} are allowed. "
+            f"Lower the number in STALE."
+        )
+
+
+def test_stale_list_names_real_documents():
+    """A document that was repaired and removed must not linger in the list."""
+    for relative in STALE:
+        assert (REPO / relative).exists(), f"{relative} in STALE does not exist"
+
+
+def test_every_document_has_examples_or_is_excluded():
+    """A guide with no runnable example is worth noticing."""
+    guides = [p for p in (DOCS / "modules").glob("*.md")]
+    without = [p.name for p in guides if "```python" not in p.read_text(encoding="utf-8")]
+    assert not without, f"module guides with no examples: {without}"
