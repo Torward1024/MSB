@@ -149,7 +149,8 @@ class BaseEntity(Serializable):
                 expected_type = getattr(module, expected_type, None) if module else globals().get(expected_type)
                 if expected_type is None:
                     raise ResolutionError(f"Cannot resolve forward reference '{cls._fields[key]}' for attribute '{key}'")
-            kwargs[key] = cls._deserialize_value(value, expected_type, f"{cls.__name__}.{key}")
+            kwargs[key] = cls._deserialize_value(value, expected_type, f"{cls.__name__}.{key}",
+                                                 cls.DISCRIMINATORS.get(key))
         return cls(name=data.get("name"), isactive=data.get("isactive", True), **kwargs)
     def clear(self) -> None:
         """Clear all public attributes to release references.

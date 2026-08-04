@@ -16,7 +16,7 @@ The tests go through real `json.dumps`/`json.loads` rather than comparing dictio
 a dictionary comparison is exactly what failed to notice any of this.
 """
 import json
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Union
 
 import pytest
 
@@ -182,3 +182,79 @@ def test_a_migration_is_not_run_when_the_version_matches():
             raise AssertionError("migrate must not be called for matching versions")
 
     assert through_json(Guarded(name="g", value=1), Guarded).value == 1
+
+
+# --- B9: data MSB did not write -----------------------------------------------------------
+
+class Sensor(BaseEntity):
+    unit: str
+
+
+class Camera(BaseEntity):
+    pixels: int
+
+
+class LookAlike(BaseEntity):
+    """The same shape as `Sensor`, so nothing about the data distinguishes the two."""
+    unit: str
+
+
+class Station(BaseEntity):
+    primary: Sensor
+    devices: List[Sensor]
+    lookup: Dict[str, Sensor]
+
+
+FOREIGN = {
+    "name": "S1", "isactive": True,
+    "primary": {"name": "p", "unit": "K"},
+    "devices": [{"name": "d1", "unit": "V"}],
+    "lookup": {"a": {"name": "a", "unit": "A"}},
+}
+
+
+def test_json_without_a_type_field_loads_from_the_annotation():
+    """Data from another system carries no `type`, so the declared type has to answer."""
+    station = Station.from_dict(FOREIGN)
+    assert isinstance(station.primary, Sensor)
+    assert isinstance(station.devices[0], Sensor)
+    assert isinstance(station.lookup["a"], Sensor)
+
+
+def test_a_container_of_foreign_entities_loads():
+    class Stations(BaseContainer[Station]):
+        pass
+
+    box = Stations.from_dict({"name": "box", "isactive": True, "items": {"S1": FOREIGN}})
+    assert isinstance(box.get("S1"), Station)
+
+
+def test_a_union_picks_the_member_whose_shape_fits():
+    class Slot(BaseEntity):
+        device: Union[Sensor, Camera]
+
+    assert isinstance(Slot.from_dict({"name": "s", "device": {"name": "d", "pixels": 12}}).device,
+                      Camera)
+    assert isinstance(Slot.from_dict({"name": "s", "device": {"name": "d", "unit": "K"}}).device,
+                      Sensor)
+
+
+def test_a_discriminator_decides_where_the_shapes_cannot():
+    """Two members of one shape are indistinguishable, and order is not an answer."""
+    class Tagged(BaseEntity):
+        DISCRIMINATORS = {"device": "kind"}
+        device: Union[Sensor, LookAlike]
+
+    tagged = Tagged.from_dict({"name": "t", "device": {"name": "d", "unit": "K",
+                                                       "kind": "LookAlike"}})
+    assert isinstance(tagged.device, LookAlike)
+
+
+def test_a_discriminator_reaches_inside_a_collection():
+    class TaggedMany(BaseEntity):
+        DISCRIMINATORS = {"devices": "kind"}
+        devices: List[Union[Sensor, LookAlike]]
+
+    many = TaggedMany.from_dict({"name": "t", "devices": [{"name": "d", "unit": "K",
+                                                           "kind": "LookAlike"}]})
+    assert isinstance(many.devices[0], LookAlike)

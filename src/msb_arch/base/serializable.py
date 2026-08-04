@@ -145,6 +145,12 @@ class Serializable(ABC, metaclass=EntityMeta):
     # entity would carry it as an attribute and serialize it as None.
     SCHEMA_VERSION = 1
 
+    # Field name -> the key in incoming data that names the type to build for it. Only needed
+    # for data MSB did not write: its own mappings carry `type`. Declare one where a field is
+    # a Union whose members have the same shape, since nothing else can tell them apart.
+    # Also unannotated, for the reason above.
+    DISCRIMINATORS = {}
+
     def __init__(self, *, name: str, isactive: bool = True, use_cache: bool = False, **kwargs):
         """Initialize with a name, activation status, and optional typed attributes.
 
@@ -531,13 +537,16 @@ class Serializable(ABC, metaclass=EntityMeta):
         )
 
     @classmethod
-    def _deserialize_value(cls, value: Any, hint: Any, field_path: str = "") -> Any:
+    def _deserialize_value(cls, value: Any, hint: Any, field_path: str = "",
+                           discriminator: Optional[str] = None) -> Any:
         """Rebuild a value from plain data, guided by what the annotation declares.
 
         Args:
             value (Any): The data as it was read.
             hint (Any): The annotation the value belongs to.
             field_path (str, optional): Where it sits, for error messages. Defaults to "".
+            discriminator (Optional[str], optional): A key in the data naming the type to
+                build, for data that does not carry `type`. Defaults to None.
 
         Returns:
             Any: The value as the annotation declares it.
@@ -549,7 +558,12 @@ class Serializable(ABC, metaclass=EntityMeta):
               and then be rejected by `from_dict` for being a list.
             - A mapping carrying a `type` field is an entity, and is restored through the
               class that field names, so a subclass stored in a field typed as its base comes
-              back as the subclass.
+              back as the subclass. A `discriminator` names the key to read instead, for data
+              MSB did not write.
+            - **A `Union` without either is resolved by trying its members in order and
+              keeping the first that accepts the data.** That is right whenever the members
+              differ in shape, and a guess when they do not: declare a discriminator on such
+              a field rather than relying on the order.
             - Anything the hint does not describe is returned unchanged, which keeps an exotic
               annotation from blocking a restore.
         """
@@ -559,38 +573,49 @@ class Serializable(ABC, metaclass=EntityMeta):
         origin = get_origin(hint)
         args = get_args(hint)
 
+        if isinstance(value, dict):
+            named = value.get(discriminator) if discriminator else value.get("type")
+            if named is not None:
+                entity_type = cls._resolve_entity_type(
+                    named, hint if isinstance(hint, type) else None)
+                if entity_type is not None:
+                    payload = value
+                    if discriminator and discriminator != "type":
+                        # The key belongs to the wire format, not to the model, so the class
+                        # being built would reject it as an attribute it never declared.
+                        payload = {k: v for k, v in value.items() if k != discriminator}
+                    return entity_type.from_dict(payload)
+
         if origin is Union:
             for member in args:
                 if member is type(None):
                     continue
                 try:
-                    return cls._deserialize_value(value, member, field_path)
+                    return cls._deserialize_value(value, member, field_path, discriminator)
                 except (TypeError, ValueError, AttributeError):
                     continue
             return value
 
-        if isinstance(value, dict) and "type" in value:
-            entity_type = cls._resolve_entity_type(value["type"], hint if isinstance(hint, type) else None)
-            if entity_type is not None:
-                return entity_type.from_dict(value)
-
         if origin in (list, List):
             member = args[0] if args else Any
-            return [cls._deserialize_value(item, member, field_path) for item in value]
+            return [cls._deserialize_value(item, member, field_path, discriminator)
+                    for item in value]
         if origin in (set, frozenset):
             member = args[0] if args else Any
-            rebuilt = (cls._deserialize_value(item, member, field_path) for item in value)
+            rebuilt = (cls._deserialize_value(item, member, field_path, discriminator)
+                       for item in value)
             return origin(rebuilt)
         if origin is tuple:
             if len(args) == 2 and args[1] is Ellipsis:
-                return tuple(cls._deserialize_value(item, args[0], field_path) for item in value)
+                return tuple(cls._deserialize_value(item, args[0], field_path, discriminator)
+                             for item in value)
             if args:
-                return tuple(cls._deserialize_value(item, member, field_path)
+                return tuple(cls._deserialize_value(item, member, field_path, discriminator)
                              for item, member in zip(value, args))
             return tuple(value)
         if origin is dict and isinstance(value, dict):
             member = args[1] if len(args) == 2 else Any
-            return {key: cls._deserialize_value(item, member, field_path)
+            return {key: cls._deserialize_value(item, member, field_path, discriminator)
                     for key, item in value.items()}
 
         if isinstance(hint, type) and issubclass(hint, Serializable) and isinstance(value, dict):

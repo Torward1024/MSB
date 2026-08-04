@@ -327,6 +327,64 @@ new_inventory = MyContainer.from_dict(data)   # a concrete subclass, not the gen
 | `__eq__(other)` | Compares two objects for equality |
 | `__hash__()` | Returns the hash value of the object |
 
+## Serialization
+
+`to_dict` produces plain data and nothing else: every entity is reduced to a mapping however
+deeply it is nested, and a `set`, `frozenset` or `tuple` becomes a list, because JSON has none
+of the three. `from_dict` restores the declared types from the annotations, which is the only
+thing that can say whether a JSON list was a list, a set or a tuple.
+
+```python
+restored = MyEntity.from_dict(json.loads(json.dumps(entity.to_dict())))
+assert restored == entity
+```
+
+A set is written in a stable order, so the same object always produces the same bytes. Without
+that, hashing or diffing serialized output would be meaningless.
+
+### Versioning a model
+
+Every mapping carries the version of the class that wrote it, under `schema_version`. Raise
+`SCHEMA_VERSION` when a field is renamed, removed or given a new meaning, and say how to read
+the older shape:
+
+```python
+class Telescope(BaseEntity):
+    SCHEMA_VERSION = 2
+    diameter: float                 # this was called 'size' in version 1
+
+    @classmethod
+    def migrate(cls, data, from_version):
+        if from_version == 1:
+            data["diameter"] = data.pop("size")
+        return data
+```
+
+`migrate` runs only when the version differs, so the ordinary case costs nothing. Raising
+`SCHEMA_VERSION` without overriding it is a declaration that old data cannot be read: the
+default raises `SerializationError` naming both versions, at the boundary, rather than failing
+later on a field that is no longer there. Data written before versioning existed carries no
+version and is read as version 1.
+
+### Reading data MSB did not write
+
+Foreign JSON has no `type` field, so the annotation answers instead: a mapping is built into
+whatever the field declares, through lists, dicts and containers alike.
+
+A `Union` is resolved by trying its members in order and keeping the first that accepts the
+data. That is correct whenever the members differ in shape and a guess when they do not. Where
+two members could both accept the same mapping, declare which key in the data decides:
+
+```python
+class Station(BaseEntity):
+    DISCRIMINATORS = {"device": "kind"}     # the incoming data names the type under 'kind'
+    device: Union[Sensor, LookAlike]
+```
+
+The discriminator key is consumed rather than passed on, so the class being built does not see
+an attribute it never declared. It reaches inside collections too, so
+`List[Union[Sensor, LookAlike]]` works the same way.
+
 ## Caching and memory
 
 `use_cache=True` keeps the result of `to_dict` on the object. It is off by default, and what
