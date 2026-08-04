@@ -38,4 +38,4 @@ __all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "M
            "OperationError", "RegistrationError", "DispatchError", "RequestError", "HandlerError",
            "Constraint", "Positive", "NonNegative", "NonZero", "NonEmpty", "Range", "Predicate"]
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"

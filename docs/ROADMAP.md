@@ -57,7 +57,7 @@ Status: **done** (merged or on a branch), **next** (the item to pick up), **open
 | B4 | Schema version in serialized data, and a migration hook | B3 | Changes what `to_dict` writes | A file written by an earlier version still loads, or fails with a migration error naming the version | **done** |
 | B9 | Ingest foreign data: a declared discriminator, or a default type per field | B4 | Changes `from_dict` | JSON not produced by MSB restores into a declared model | **done** |
 | B12 | Make `to_dict`/`from_dict` actually round-trip through JSON | B4 | Changes what `to_dict` emits | `json.loads(json.dumps(obj.to_dict()))` restores an equal object for every supported annotation | **done**. Larger than the row implied: descent stopped at the attribute, so entities inside a list or dict were left as live objects, not just sets and tuples mis-typed |
-| P5 | Compile a validator per field once per class | B2, P7 | Rewrites the validation hot path | Entity construction measurably faster; the benchmark budgets of 65x and 12 introspection calls tightened to match | **next** |
+| P5 | Compile a validator per field once per class | B2, P7 | Rewrites the validation hot path | Entity construction measurably faster; the benchmark budgets of 65x and 12 introspection calls tightened to match | **done**. 44x to 17x, ten introspection calls to none |
 | P6 | Skip the invalidation walk when no owner caches | P7 | Small, isolated | The idle walk costs nothing when nothing caches | **done**. 413 µs to 39 at 500 owners |
 
 ### 0.7.0 — the request contract

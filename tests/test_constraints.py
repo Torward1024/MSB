@@ -10,7 +10,7 @@ arrives -- construction, `set`, and restoring from serialized data -- rather tha
 author remembered to check.
 """
 import json
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 import pytest
 
@@ -148,3 +148,76 @@ def test_an_unconstrained_annotation_is_untouched():
     assert plain.values == [1, 2]
     with pytest.raises(errors.TypeValidationError):
         Plain(name="p", values=["x"], table={})
+
+
+# --- the compiled validator (P5) ----------------------------------------------------------
+
+class Differential(BaseEntity):
+    """One field per shape the compiler might get wrong."""
+    plain: int
+    text: str
+    entity: Product
+    anything: Any
+    listed: List[int]
+    mapped: Dict[str, int]
+    either: Optional[int]
+    picked: Literal["a", "b"]
+    constrained: Annotated[int, Positive()]
+
+
+CORPUS = [
+    ("plain", 1, True), ("plain", "x", False), ("plain", True, True),
+    ("text", "x", True), ("text", 1, False),
+    ("anything", object(), True), ("anything", [1], True),
+    ("listed", [1, 2], True), ("listed", ["x"], False), ("listed", "no", False),
+    ("mapped", {"a": 1}, True), ("mapped", {"a": "x"}, False),
+    ("either", 5, True), ("either", "x", False),
+    ("picked", "a", True), ("picked", "z", False),
+    ("constrained", 5, True), ("constrained", -5, False),
+]
+
+
+@pytest.mark.parametrize("field, value, acceptable", CORPUS)
+def test_the_compiled_path_agrees_with_the_structural_walk(field, value, acceptable):
+    """Two implementations of one rule is how they drift apart, so they are compared here.
+
+    `_validate_type` takes a compiled one-call check where it can and the structural walk
+    otherwise. Whichever it takes, the answer has to be the same.
+    """
+    entity = Differential(name="d")
+
+    def structural():
+        Differential._check_type(field, value, Differential._fields[field], f"Attribute '{field}'")
+
+    def compiled():
+        entity._validate_type(field, value, Differential._fields[field])
+
+    structural_ok = True
+    try:
+        structural()
+    except (errors.TypeValidationError, errors.ConstraintError):
+        structural_ok = False
+
+    compiled_ok = True
+    try:
+        compiled()
+    except (errors.TypeValidationError, errors.ConstraintError):
+        compiled_ok = False
+
+    assert compiled_ok == structural_ok == acceptable, (
+        f"{field}={value!r}: compiled said {compiled_ok}, structural said {structural_ok}"
+    )
+
+
+def test_the_validator_table_belongs_to_the_class_that_built_it():
+    """A subclass reading its parent's table would validate against the parent's fields."""
+    class Parent(BaseEntity):
+        value: int
+
+    class Child(Parent):
+        value: str
+
+    Parent(name="p", value=1)
+    assert Child(name="c", value="text").value == "text"
+    with pytest.raises(errors.TypeValidationError):
+        Child(name="c", value=1)

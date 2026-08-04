@@ -321,7 +321,61 @@ class Serializable(ABC, metaclass=EntityMeta):
         if value is None:
             return
 
+        checker = self.__class__._compiled_validator(expected_type)
+        if checker is not None:
+            if not checker(value):
+                raise TypeValidationError(
+                    f"Attribute '{key}' must be of type {self._resolve_type(expected_type)}, "
+                    f"got {type(value)}")
+            return
+
         self._check_type(key, value, expected_type, f"Attribute '{key}'")
+
+    @classmethod
+    def _compiled_validator(cls, hint: Any):
+        """Return a one-call check for a hint, or None to use the structural walk.
+
+        Args:
+            hint (Any): The annotation to compile.
+
+        Returns:
+            Optional[Callable[[Any], bool]]: A predicate that is True for an acceptable
+                value, or None when the hint needs `_check_type`.
+
+        Notes:
+            - Compiled once per class and kept in the class's own dictionary, so a subclass
+              never reads a parent's table and resolution happens once rather than per
+              instance. Profiling put 42 `isinstance` calls and ten `get_origin`/`get_args`
+              calls into constructing a single entity, almost all of it re-deriving the same
+              answer about the same annotation.
+            - Only a plain class and `Any` compile. Everything parameterized keeps the
+              structural walk, which is where the meaning lives and where a second
+              implementation would eventually disagree with the first.
+            - Keyed by the hint rather than by the field name, because a container validates
+              its items under a key that carries the item's name, which would otherwise put
+              one entry in the table per item.
+        """
+        table = cls.__dict__.get('_compiled_validators')
+        if table is None:
+            table = {}
+            type.__setattr__(cls, '_compiled_validators', table)
+
+        try:
+            if hint in table:
+                return table[hint]
+        except TypeError:
+            return None                       # an unhashable hint cannot be tabulated
+
+        resolved = cls._resolve_type(hint)
+        checker = None
+        if not hasattr(resolved, '__metadata__'):
+            if resolved is Any:
+                checker = lambda value: True                              # noqa: E731
+            elif get_origin(resolved) is None and isinstance(resolved, type):
+                checker = lambda value, _type=resolved: isinstance(value, _type)  # noqa: E731
+
+        table[hint] = checker
+        return checker
     @classmethod
     def _check_type(cls, key: str, value: Any, expected_type: Any, subject: str) -> None:
         """Recursively check a non-None value against a (possibly generic) type hint.
