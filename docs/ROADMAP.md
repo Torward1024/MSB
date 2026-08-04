@@ -132,7 +132,7 @@ because only a finished contract can be frozen.
 
 | Wave | Items | Why here |
 | --- | --- | --- |
-| **0. Decide** | B7 async, B8 built-in Supers, B6 pipelines | None of these is code yet, and each changes the shape of something built later. If async wins, every signature changes and B5 and B11 are rewritten; if built-in Supers land, the extension contract B5 defines looks different; if pipelines land, the request shape B11 wraps looks different. Deciding costs nothing today and a rewrite tomorrow |
+| **0. Decide** | B7 async, B8 built-in Supers, B6 pipelines — **all three settled on 2026-08-04**, see *Decisions taken* | None of these was code, and each changed the shape of something built later. Async decides what an interceptor has to wrap; built-in Supers change the extension contract B5 defines; pipelines change the request shape B11 wraps. Deciding cost a conversation; deferring would have cost a rewrite |
 | **1. Foundation** | B3 exception taxonomy, P7 benchmark suite | Everything after this raises errors, so the types should exist before the code that raises them rather than be retrofitted through ninety sites. And every performance number so far was measured by hand; before touching P5 or P6 the measurement has to be permanent |
 | **2. Correctness, cheap and separable** | B1 TypeVar, P6 skip the idle invalidation walk, B5 the Super protocol | Three small, independent changes. B1 fixes a wrong type that ships today; P6 removes 277 µs of the 413 spent reaching nothing; B5 replaces a concrete dependency with a one-method protocol. Each lands on its own and none blocks another |
 | **3. The contract of data** | B2 value constraints, B4 schema version, B9 foreign input | All three change what serialized data and annotations mean. B2 needs B3 so a failed constraint raises the right type; B4 and B9 both rework `from_dict` and are cheaper together than apart |
@@ -140,9 +140,127 @@ because only a finished contract can be frozen.
 | **5. Performance** | P5 compiled per-class validators | After P7 can prove it worked and after B2, because constraints become part of what is compiled. Doing it earlier means compiling twice |
 | **6. Freeze** | B10 policy and public surface, P9 and P11 documentation | A contract can only be frozen once it has stopped moving. The documentation guide is the last thing written because it describes the finished shape |
 
-**Start with wave 0.** It is three conversations, not three tasks, and everything after it is
-cheaper once they are settled. The first code is B3, and B1 can travel with it since its own
-raises are two lines.
+**Wave 0 is done.** It was three conversations rather than three tasks, and all three were
+held on 2026-08-04; what each settled is recorded below. **Work now starts at wave 1**, whose
+first code is B3, with B1 travelling alongside it since its own raises are two lines.
+
+### Decisions taken
+
+#### B7 — asynchrony: an additive async surface (2026-08-04)
+
+The obvious move is to make the `Manipulator` asynchronous and leave the rest alone. It does
+not work, and the reason is worth writing down because it will be proposed again.
+
+`await` does not create concurrency; it marks a point where control *may* be yielded. A
+synchronous handler has no such point, so awaiting one blocks the event loop for its whole
+duration. Measured against a heartbeat task counting how often the loop got to run during one
+0.5-second operation:
+
+| | loop ran |
+| --- | --- |
+| a plain synchronous call, as today | **0 times** |
+| an `async def` entry point over a synchronous handler | **0 times** |
+| the handler moved onto an executor | **20 times** |
+
+So an asynchronous entry point alone changes the spelling and not the behaviour. What helps
+depends on what the handler does: a handler that waits on I/O genuinely benefits from being a
+coroutine, while a handler that computes -- the case in the numerical work MSB was written for
+-- benefits only from leaving the loop's thread. NumPy releases the GIL, so for that work a
+thread is real parallelism rather than a polite fiction.
+
+The decision is therefore neither "async everywhere" nor "nothing":
+
+- `Manipulator` gains an asynchronous surface alongside the synchronous one, not instead of
+  it. Every synchronous signature stays as it is.
+- Given a synchronous handler, the asynchronous path runs it on an executor, so the caller's
+  loop stays responsive. Given a handler that is itself a coroutine, it is awaited directly.
+- The executor is the framework's to own, so thread policy is configured once rather than at
+  every call site.
+- The response protocol is identical on both paths. This is the part that cannot be deferred:
+  B11's interceptors must wrap either path from the day they exist.
+
+**This corrects an earlier entry in this document**, which said asynchrony had to be settled
+first because retrofitting it would touch every signature. That is true of async-all-the-way-
+down and false of an additive surface. The *decision* still belongs in wave 0, because B11 is
+shaped by it; the *implementation* is additive, breaks nothing, and need not block 1.0.
+
+#### B8 — built-in `Inspector` and `Configurator`, registered by default (2026-08-04)
+
+They ship, and a `Manipulator` knows `inspect` and `configure` without being told. The
+evidence under P3 is not marginal: 20 of pAstroCORE's 21 handlers hold no domain logic, and
+those two operations serve 185 of its 194 facade calls. It is also the honest continuation of
+0.4.0 -- the framework took the loop, and the shell around the loop turned out to be empty
+too.
+
+Registering them by default cannot be done as the registry stands. A duplicate operation name
+raises `ValueError`, so every existing application would fail on import the moment the
+built-ins claimed `inspect` and `configure`. The rule therefore changes, narrowly:
+
+- **A user registration replaces a built-in, silently.** It is a default being overridden, not
+  a collision of two intentions. An application that registers its own `Inspector` behaves
+  exactly as it does today.
+- **Two user registrations of one name still raise.** That collision is a mistake and stays
+  one.
+
+Three things decide whether the built-ins are worth having, and all three are constraints on
+the implementation rather than open questions. The descent into nested objects is not uniform
+-- a container exposes `get(name)` while a `Project` exposes `get_observation(name)` -- so it
+needs a named hook, not a convention. A built-in `Configurator` returns `MethodResults` where
+today each handler invents its own value, which touches 2 of 62 downstream call sites because
+a configure result is almost never read. And both classes must stay thin over `_apply_methods`
+with named hooks, or a subclass will override everything and be worse off than with a
+hand-written handler.
+
+Only `inspect` and `configure` generalise: they fall straight out of the request model, where
+an attribute names a method. Operations like `calculate` and `visualize` are domain work and
+stay bespoke.
+
+#### B6 — pipelines: shape reserved, built after 1.0 (2026-08-04)
+
+Nothing is built for 1.0, because there is no dependent batch anywhere yet and an abstraction
+designed against no example is the wrong one to freeze. What 1.0 owes is only that it does not
+foreclose the feature. It does not: attribute *values* are passed to handlers unexamined, so a
+reference object already travels through `process_request` untouched, and the sequence form
+`{request_id: {...}}` already gives step identifiers something to address. The one obligation
+this places on 1.0 is that value validation, if it ever arrives, must not reject objects it
+does not recognise.
+
+Three things are settled about the shape, and they are what 1.0 must not contradict.
+
+**A step declares its input explicitly, by step identifier.** This is the decision that
+matters, and it is not "chain versus graph" -- it is whether a dependency is named or implied
+by position. Named, a chain is literally the one-edge case of a dependency graph, and widening
+to several inputs per step is additive. Implied by position, a graph arrives later as a second
+and incompatible syntax, and both live in the contract forever. So the chain is sugar over the
+general form, never a rival to it.
+
+**Adaptation between two steps is itself a step**, written as an ordinary `Super`, never a
+callable between steps. A callable would stop a request being data, and with it go
+serialization, history and replay -- the properties the orchestrator exists for. This holds in
+a chain and in a graph alike.
+
+**Substitution happens before B11's interceptors.** An interceptor must always see a concrete
+request, or a recorded session stops being replayable.
+
+What a dependency graph eventually buys is worth naming, because it is the reason not to
+foreclose it: execution order derived by topological sort rather than written out; independent
+branches run in parallel -- on the executor B7 just gave the framework, so the two wave-0
+decisions compound; incremental recomputation, where changing one parameter recomputes only
+what depends on it; and provenance, since a graph is data and can be drawn, stored and
+replayed. For numerical work the last two are the point. It is also a whole subsystem, needing
+cycle detection, failure semantics, and somewhere for a step's output to live until its
+dependents run -- which is P10. That is why it follows 1.0 rather than entering it.
+
+One observation reframes the problem and should be settled before anything is built: most MSB
+operations *mutate* their object rather than return a new one -- `configure` changes it,
+`inspect` reads it -- and a sequence of those over one object is an ordered batch, which
+already works. The genuinely unserved case is a step that **produces** an object for the next
+to consume, and that is where the one real ambiguity lives: a step reports every method it ran,
+so which result becomes the next input has to be declared rather than guessed. Choosing a
+chain does not avoid this question; it only leaves it unasked.
+
+**What unblocks this: one real dependent pipeline from pAstroCORE**, designed against rather
+than imagined.
 
 ### Blocking — each changes something a caller depends on
 
@@ -153,9 +271,9 @@ raises are two lines.
 | B3 | An exception taxonomy: `MSBError` with `ValidationError`, `ResolutionError`, `OperationError` beneath it, each still deriving from the built-in it replaces | What a caller may catch is part of the contract |
 | B4 | A schema version in serialized data, and a migration hook | Otherwise 1.0 promises to read files it will not be able to read |
 | B5 | A protocol for what `Super` needs from `Manipulator`, replacing the concrete reference | The extension contract must name an interface, not a class |
-| B6 | Decide P1 pipelines | Changes the shape of a request |
-| B7 | Decide P2 asynchrony | Cannot be added later without touching every signature |
-| B8 | Decide P3 built-in `Inspector` and `Configurator` | Changes what a downstream handler looks like |
+| B6 | Decide P1 pipelines | **Settled**: shape reserved, built after 1.0, see above. What 1.0 owes is only not to foreclose it |
+| B7 | Decide P2 asynchrony | **Settled**: an additive async surface, see above. Only the decision blocks, because B11 wraps both paths; the implementation breaks nothing |
+| B8 | Decide P3 built-in `Inspector` and `Configurator` | **Settled**: they ship, registered by default, a user registration replaces a built-in. Needs the duplicate-name rule to change, so it blocks |
 | B9 | Ingesting foreign data: a declared discriminator, or a default type per field | Changes `from_dict` |
 | B11 | An interceptor chain around `process_request`: something that sees a request before it runs and its response after | Metrics, auditing, rate limiting and authorisation are one hook, not four features. Adding it later would change how a request is processed, so it belongs before the freeze |
 | B10 | Write down the deprecation policy and mark the public surface | The promise needs stating before it can be kept |
@@ -180,14 +298,15 @@ raises are two lines.
 
 ## Planned, not scheduled
 
-Four directions that are wanted and deliberately not started. P1, P2 and P3 block 1.0 as
-decisions -- they have to be settled, not necessarily built -- while P4 follows it.
+Four directions that are wanted and deliberately not started. P1, P2 and P3 blocked 1.0 as
+decisions rather than as code; all three were settled on 2026-08-04 under B6, B7 and B8 above,
+and of them only P3 is built for 1.0. P4 follows the release.
 
 | # | Item | Notes |
 | --- | --- | --- |
-| P1 | **Pipelines**: a request in a batch that depends on the result of an earlier one | `batch` runs independent requests. Feeding one result into the next must not be done with callables between steps: a request would stop being data, and with it go serialization, history and replay -- the properties the orchestrator exists for, and the reason an external caller can drive it at all. The shape that keeps them is a reference inside the request, `Ref("step_id", "method_name")`, substituted before the step runs. Three things need deciding first: how a reference addresses a result now that a step reports every method it ran, what happens to steps that depend on a failed one, and whether substitution belongs in the Manipulator or in a layer above it. None of that should be guessed: there is no dependent batch anywhere yet, so there is nothing to design against |
-| P2 | **Asynchronous Manipulator**: `await manipulator.calculate(...)` | The calculations in the downstream project are long, and the GUI blocks on them today. The awkward part is not the plumbing but the contract: whether an operation may be sync and async at once, whether `Super` handlers become coroutines or run in an executor, and what a batch means when its requests overlap in time. The thread-safety work in 0.3.2 is a prerequisite and is done |
-| P3 | **Built-in `Inspector` and `Configurator`** | Requested by a downstream author on 2026-08-03, and the natural continuation of `_apply_methods`: the framework took the loop, and the handler around it turns out to be nearly empty too. Measured on pAstroCORE after that migration, 20 of its 21 handlers contain no domain logic at all -- six are literally a type check and one call, and the type check is redundant because dispatch already selected the handler by type. Shipping an `Inspector` and a `Configurator` would delete all of them but one, `_configure_scheduleproject`, which really does have domain logic. Three things decide whether it works: the nested descent is not uniform, since containers expose `get(name)` while a `Project` exposes `get_observation(name)`, so it needs a hook rather than a convention; a built-in `Configurator` returns `MethodResults` instead of the bespoke value each handler invents today, which touches 2 of 62 call sites because a configure result is almost never read; and the classes have to stay thin over `_apply_methods` with named hooks, or subclasses will override everything and end up worse off than with a hand-written handler. Only `inspect` and `configure` generalise -- they fall straight out of the request model, where an attribute names a method -- while operations such as `calculate` and `visualize` are domain work and stay bespoke. Those two cover 185 of the 194 facade calls downstream |
+| P1 | **Pipelines**: a request in a batch that depends on the result of an earlier one | Settled under B6: after 1.0, with position in a chain currently preferred over a reference. The reasoning below is what led there. `batch` runs independent requests. Feeding one result into the next must not be done with callables between steps: a request would stop being data, and with it go serialization, history and replay -- the properties the orchestrator exists for, and the reason an external caller can drive it at all. The shape that keeps them is a reference inside the request, `Ref("step_id", "method_name")`, substituted before the step runs. Three things need deciding first: how a reference addresses a result now that a step reports every method it ran, what happens to steps that depend on a failed one, and whether substitution belongs in the Manipulator or in a layer above it. None of that should be guessed: there is no dependent batch anywhere yet, so there is nothing to design against |
+| P2 | **Asynchronous Manipulator**: `await manipulator.calculate(...)` | The calculations in the downstream project are long, and the GUI blocks on them today. Shape settled under B7: an additive async surface that runs a synchronous handler on an executor and awaits a coroutine handler directly, with the synchronous API untouched. What is still open is what a batch means when its requests overlap in time. The thread-safety work in 0.3.2 is a prerequisite and is done |
+| P3 | **Built-in `Inspector` and `Configurator`** | Settled under B8: they ship in 1.0, registered by default. The measurements below are why. Requested by a downstream author on 2026-08-03, and the natural continuation of `_apply_methods`: the framework took the loop, and the handler around it turns out to be nearly empty too. Measured on pAstroCORE after that migration, 20 of its 21 handlers contain no domain logic at all -- six are literally a type check and one call, and the type check is redundant because dispatch already selected the handler by type. Shipping an `Inspector` and a `Configurator` would delete all of them but one, `_configure_scheduleproject`, which really does have domain logic. Three things decide whether it works: the nested descent is not uniform, since containers expose `get(name)` while a `Project` exposes `get_observation(name)`, so it needs a hook rather than a convention; a built-in `Configurator` returns `MethodResults` instead of the bespoke value each handler invents today, which touches 2 of 62 call sites because a configure result is almost never read; and the classes have to stay thin over `_apply_methods` with named hooks, or subclasses will override everything and end up worse off than with a hand-written handler. Only `inspect` and `configure` generalise -- they fall straight out of the request model, where an attribute names a method -- while operations such as `calculate` and `visualize` are domain work and stay bespoke. Those two cover 185 of the 194 facade calls downstream |
 | P4 | **Generating an application from the data model** | The downstream author is building a WYSIWYG editor that lays out entities and their Super classes and emits Python skeletons. Measuring pAstroCORE shows where the leverage actually is: 74.5% of it is already generated, by Qt Designer, and of the rest the data model is 4.4% and the operations 7.5% -- of which the handlers this would scaffold are 81 lines, four each. Skeletons that small are faster to type than to find in an editor. The 11.7% written by hand is GUI wiring: tables over containers, dialogs over entity attributes, validation, saving back. MSB already holds everything that needs -- `_fields` with types, which attributes are optional, `Literal` as a ready list of choices, nested entities, containers, validation -- so the target worth aiming at is generating those forms and tables, not the handler stubs. One constraint to design in from the start: a template carrying "your logic here" cannot be regenerated once it has been edited. Generating only what follows from the model, into files nobody edits, and leaving user code in subclasses beside them, keeps regeneration possible. For the digital-twin and platform cases mentioned alongside this, two things are missing first: persistence beyond `to_dict`/`from_dict`, and P2 |
 
 ## What 1.0.0 should mean
