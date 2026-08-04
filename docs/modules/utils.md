@@ -261,21 +261,67 @@ Product(name="Widget", price=-1.0, quantity=5)      # also accepted: -1.0 is a f
 Product(name="Widget", price="free", quantity=5)    # rejected: wrong type
 ```
 
-To constrain a value, call the check yourself, usually in the subclass:
+To constrain a value, attach a constraint to the annotation. The model then enforces it
+everywhere a value arrives -- construction, `set`, and restoring from serialized data --
+rather than wherever the author remembered to check:
 
 ```python
-from msb_arch.utils.validation import check_positive
+from typing import Annotated
+from msb_arch import BaseEntity, NonEmpty, Positive, Range
 
 class CheckedProduct(BaseEntity):
-    price: float
+    name:  Annotated[str, NonEmpty()]
+    price: Annotated[float, Positive()]
+    stock: Annotated[int, Range(0, 100)]
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        check_positive(self.price, "price")
+from msb_arch import ConstraintError
+
+CheckedProduct(name="Widget", price=10.99, stock=5)     # accepted
+
+try:
+    CheckedProduct(name="Widget", price=-1.0, stock=5)
+except ConstraintError as error:
+    print(error)        # Attribute 'price' must be positive, got -1.0
 ```
 
-Attaching constraints to annotations, so `Annotated[float, Positive()]` does this without a
-custom `__init__`, is item B2 in [the roadmap](../ROADMAP.md).
+### The constraints
+
+| Constraint | Rule | Delegates to |
+| --- | --- | --- |
+| `Positive()` | greater than zero | `check_positive` |
+| `NonNegative()` | zero or greater | `check_non_negative` |
+| `NonZero()` | not zero | `check_non_zero` |
+| `NonEmpty()` | a string with more than whitespace | `check_non_empty_string` |
+| `Range(min, max)` | between two bounds, inclusive | `check_range` |
+| `Predicate(test, description)` | anything a function can decide | -- |
+
+The type is checked first and the constraints after, so a rule never sees a value it was not
+written for. Several may sit on one field and all of them apply. `None` is still allowed
+wherever the annotation permits it, since an unset attribute starts as `None`.
+
+`Predicate` is the escape hatch for a one-off rule:
+
+```python
+from msb_arch import Predicate
+
+class Frame(BaseEntity):
+    width: Annotated[int, Predicate(lambda value: value % 2 == 0, "must be even")]
+```
+
+For a rule worth naming and reusing, subclass `Constraint`; `check(value, name)` is the whole
+interface:
+
+```python
+from msb_arch import Constraint, ConstraintError
+
+class EndsWith(Constraint):
+    def __init__(self, suffix):
+        self.suffix = suffix
+
+    def check(self, value, name):
+        if not value.endswith(self.suffix):
+            raise ConstraintError(f"{name} must end with {self.suffix!r}")
+```
 
 ### Logging Integration
 

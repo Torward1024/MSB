@@ -22,6 +22,8 @@ lets a session be logged and replayed.
 
 - **Typed entities**: attributes validated against their annotations, nested to any depth,
   including `List`, `Dict`, `Tuple`, `Set`, `Union`, `Literal`, `Callable` and `Type[X]`.
+- **Constraints on values, not just types**: `price: Annotated[float, Positive()]` is enforced
+  on construction, on assignment and on restore, with no `__init__` of your own.
 - **Containers for collections**: named, queryable, serializable, with bulk operations.
 - **One entry point**: a `Manipulator` registers operations and processes requests; the
   per-operation facades are sugar so you rarely write a request dictionary by hand.

@@ -19,6 +19,7 @@ from ..errors import (ResolutionError,
                       TypeValidationError,
                       UnknownAttributeError)
 from ..utils.logging_setup import logger
+from ..utils.validation import Constraint
 
 CYCLIC_REFERENCE = "<cyclic reference>"
 
@@ -314,9 +315,20 @@ class Serializable(ABC, metaclass=EntityMeta):
         """
         resolved_type = cls._resolve_type(expected_type)
 
-        # Unwrap Annotated[X, ...] down to X.
+        # Unwrap Annotated[X, ...] down to X, keeping the constraints it carries. They are
+        # applied after the type is known to hold, so a rule never sees a value it was not
+        # written for.
+        constraints = []
         while hasattr(resolved_type, '__metadata__'):
+            constraints.extend(item for item in resolved_type.__metadata__
+                               if isinstance(item, Constraint))
             resolved_type = cls._resolve_type(resolved_type.__origin__)
+
+        if constraints:
+            cls._check_type(key, value, resolved_type, subject)
+            for constraint in constraints:
+                constraint.check(value, subject)
+            return
 
         if resolved_type is Any:
             return

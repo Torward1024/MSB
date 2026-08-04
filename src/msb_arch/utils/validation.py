@@ -1,4 +1,7 @@
 # utils/validation.py
+from abc import ABC, abstractmethod
+from typing import Any, Callable
+
 from ..errors import ConstraintError, TypeValidationError
 from ..utils.logging_setup import logger
 
@@ -201,3 +204,103 @@ def check_non_zero(value: float, name: str) -> None:
     if value == 0:
         logger.error("%s must be non-zero, got %s", name, value)
         raise ConstraintError(f"{name} must be non-zero, got {value}")
+
+class Constraint(ABC):
+    """A rule an annotated value must satisfy beyond having the right type.
+
+    Attach one to a field with `Annotated`, and the model enforces it:
+
+        class Product(BaseEntity):
+            price: Annotated[float, Positive()]
+
+    The annotation is checked first, then every constraint on it, so a constraint only ever
+    sees a value of the declared type. Each delegates to the function of the same meaning
+    above, which is where the message and the logging live.
+
+    Subclass this to add a rule of your own; `check` is the whole interface.
+    """
+
+    @abstractmethod
+    def check(self, value: Any, name: str) -> None:
+        """Raise if the value is not allowed.
+
+        Args:
+            value (Any): The value assigned to the field.
+            name (str): What to call the field in the error message.
+
+        Raises:
+            ConstraintError: If the value violates the rule.
+        """
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}()"
+
+
+class Positive(Constraint):
+    """The value must be greater than zero."""
+
+    def check(self, value: Any, name: str) -> None:
+        check_positive(value, name)
+
+
+class NonNegative(Constraint):
+    """The value must be zero or greater."""
+
+    def check(self, value: Any, name: str) -> None:
+        check_non_negative(value, name)
+
+
+class NonZero(Constraint):
+    """The value must not be zero."""
+
+    def check(self, value: Any, name: str) -> None:
+        check_non_zero(value, name)
+
+
+class NonEmpty(Constraint):
+    """The value must be a string with something other than whitespace in it."""
+
+    def check(self, value: Any, name: str) -> None:
+        check_non_empty_string(value, name)
+
+
+class Range(Constraint):
+    """The value must lie between two bounds, inclusive."""
+
+    def __init__(self, minimum: float, maximum: float):
+        self.minimum = minimum
+        self.maximum = maximum
+
+    def check(self, value: Any, name: str) -> None:
+        check_range(value, self.minimum, self.maximum, name)
+
+    def __repr__(self) -> str:
+        return f"Range({self.minimum}, {self.maximum})"
+
+
+class Predicate(Constraint):
+    """The escape hatch: any rule expressible as a function returning True when allowed.
+
+    Args:
+        test (Callable[[Any], bool]): Returns True for a value that is allowed.
+        description (str): How to describe the rule in the error message, phrased to follow
+            the field name -- "must be even", "must be a valid ISO date".
+
+    Example:
+        ```python
+        class Frame(BaseEntity):
+            width: Annotated[int, Predicate(lambda v: v % 2 == 0, "must be even")]
+        ```
+    """
+
+    def __init__(self, test: Callable[[Any], bool], description: str):
+        self.test = test
+        self.description = description
+
+    def check(self, value: Any, name: str) -> None:
+        if not self.test(value):
+            logger.error("%s %s, got %r", name, self.description, value)
+            raise ConstraintError(f"{name} {self.description}, got {value!r}")
+
+    def __repr__(self) -> str:
+        return f"Predicate({self.description!r})"
