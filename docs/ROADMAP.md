@@ -74,7 +74,7 @@ Status: **done** (merged or on a branch), **next** (the item to pick up), **open
 
 | # | Item | Depends on | Risk | Exit criterion | Status |
 | --- | --- | --- | --- | --- | --- |
-| B7 | Additive async surface: `aprocess_request` and async facades, sync handler on an executor, coroutine handler awaited directly | B11 | Additive only; no sync signature changes | An event loop stays responsive during a long operation; the sync API is untouched | open |
+| B7 | Additive async surface: `aprocess_request` and async facades, sync handler on an executor, coroutine handler awaited directly | B11 | Additive only; no sync signature changes | An event loop stays responsive during a long operation; the sync API is untouched | **done**. The loop ran 0 times during a blocking call and 19 with the work on the executor |
 
 ### 1.0.0 — the freeze
 
@@ -93,7 +93,7 @@ Settled, with the reasoning compressed to its conclusion. Reopen only on new evi
 | B7 | Asynchrony | **Additive surface**, not async all the way down | An `async def` entry point over a synchronous handler let the event loop run 0 times during a 0.5 s operation — the same as a plain call. Only an executor helped (20 times) |
 | B8 | Built-in `Inspector` and `Configurator` | **Ship, registered by default.** A user registration replaces a built-in silently; two user registrations of one name still raise | 20 of 21 downstream handlers hold no domain logic; `inspect` and `configure` serve 185 of 194 facade calls |
 | — | Metrics, audit, rate limiting, authorisation | **One hook, not four features.** All are interceptors (B11) | A library choosing a metrics backend would end the zero-dependency property |
-| — | Graceful shutdown, health checks | **Not applicable.** MSB owns no processes or connections | A library has no health; the service hosting it does |
+| — | Graceful shutdown, health checks | **Was not applicable, and half of it now is.** MSB owned no processes or connections when this was written; since 0.8.0 it owns an executor, so `Manipulator.close()` and context-manager support exist. Health checks remain a property of a service rather than of a library |
 | — | Lineage | **Separable from scheduling, and precedes it.** Recording rides on B11 (P12); the graph is derived from the journal, not declared in advance | A request is already data and `to_dict` already exists, so the expensive precondition is met |
 | — | Mutable identity for lineage and incremental recompute | Revision counters first, then the journal, then content hashing, with snapshots only as checkpoints | A counter rides on the invalidation walk that already exists; a hash costs a traversal; snapshots cost the model size |
 | — | A dependency graph over `Super` classes | **Rejected.** Ordering between operations is a property of a workflow, not of a class; attaching it to the class freezes one scenario and destroys reuse. The real graph is over steps, which is B6 | The entity graph, by contrast, already exists twice: statically in `_fields` and `_item_type_hint()`, at runtime in `_parents` |

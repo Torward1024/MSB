@@ -13,6 +13,52 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [0.8.0] - 2026-08-04
+
+An asynchronous surface, added beside the synchronous one rather than in place of it. Every
+signature that existed is what it was.
+
+Fourth stage on the road to 1.0.0, and the last one carrying code. See
+[the roadmap](docs/ROADMAP.md).
+
+### Added
+
+- **An `a`-prefixed twin of every facade**, plus `aprocess_request` and `abatch`:
+  `await manipulator.ainspect(dish, get_diameter=None)`.
+- **`Manipulator.close()` and context-manager support**, to shut the executor down. The
+  executor is the one resource MSB owns, and it is created on first asynchronous use and never
+  before, so an application that stays synchronous never starts a thread. Size it with
+  `Manipulator(max_workers=...)`.
+- **Coroutine methods on entities.** An entity may declare `async def fetch(self)`, and the
+  asynchronous surface awaits it back on the loop.
+
+### Notes on the design
+
+Making the entry point `async def` and leaving everything below it alone does nothing, and the
+suite contains the measurement that says so. Awaiting does not create concurrency; it marks a
+point where control *may* be yielded, and a synchronous handler has none. During one 0.5-second
+operation an event loop ran **zero** times for a plain call, **zero** for an `async def` entry
+point over a synchronous handler, and **nineteen** once the work moved onto an executor.
+
+So the whole synchronous pipeline runs on the executor, **interceptors included**. That is what
+lets one interceptor serve both paths with no changes, and it means an interceptor runs on a
+worker thread on the asynchronous path and cannot await inside it.
+
+Threads rather than processes: the numerical libraries this was written for release the GIL, so
+a thread is real parallelism there, and a process would have to pickle the model to reach the
+work.
+
+`abatch` still runs its requests one after another. They are independent and could overlap;
+what concurrent requests touching one object should mean is the pipeline question, and it waits
+for a real one to design against.
+
+### Upgrading from 0.7.0
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| Nothing. | Everything here is additive. | Nothing. Use the `a`-prefixed facades where a loop must stay responsive. |
+| A thread pool outlives the application | An orchestrator that went asynchronous was never closed. | Call `close()`, or use it as a context manager. |
+
 ## [0.7.0] - 2026-08-04
 
 The request contract. Every request can now be wrapped, an operation names the interface it
