@@ -67,10 +67,79 @@ upgrade table in [`CHANGELOG.md`](../CHANGELOG.md).
 | R33 | The sequence form of `process_request` had no facade, hence no users and no coverage. `Manipulator.batch` is that facade | no |
 | R30 | Consumer side: the 22 handlers in pAstroCORE moved onto `_apply_methods`, 667 lines becoming 81, and the failure policy they disagreed on was settled | the policy changed for `configure` |
 
+## Audit of the 2026-08-04 feedback list
+
+A list of concerns was raised for review. Each was checked against the code rather than
+accepted, because several turned out to describe something other than what is there. The
+evidence column is what was measured, not what was expected.
+
+| Concern | Verdict | Evidence |
+| --- | --- | --- |
+| `TypeVar` in `_resolve_type` breaks on complex annotations | **confirmed, three separate bugs** | `Generic[T, U]` resolves both parameters to `args[0]`, so the second field gets the first type; `TypeVar('V', int, str)` accepts only `int`; an unparameterized `Generic[U]` raises at construction |
+| `_resolve_type` for `Union` in `from_dict` may pick the wrong type | **not confirmed** | `to_dict` always writes `type`, and both entity attributes and container items restore correctly. Without it the call fails loudly rather than guessing |
+| — but nothing can read foreign JSON that has no `type` | **real gap, newly found** | There is no way to declare a discriminator or a default, so data not produced by MSB cannot be ingested |
+| `_invalidate_cache` walks the graph synchronously and may be expensive | **confirmed, and worse than stated** | 3.3 µs with no owners against 413 µs with 500. The walk also runs when nothing caches at all, costing 277 µs of the 413 for no result |
+| The `to_dict` cache has no size limit and may grow | **not as stated** | One mapping per object with `use_cache=True`, so it is bounded by the object graph: 3.8 MB for a 20 000-item container. It is never evicted and duplicates the data, which is worth documenting rather than capping |
+| No object pooling for many small objects | **real cost, wrong remedy** | Constructing an entity costs 10.5 µs against 0.56 µs for a plain dict. Profiling puts the time in repeated type-hint introspection — `get_origin` and `get_args` are each called 150 000 times for 30 000 objects — not in allocation, which pooling would not touch |
+| No runtime contract checking, Pydantic style | **confirmed** | Types are checked, values are not: a dish accepts `diameter=-5.0` and an empty band. `utils/validation.py` already has `check_positive`, `check_range` and the rest, but nothing connects them to annotations |
+| `Manipulator` and `Super` are tightly coupled through `_manipulator` | **confirmed, and small** | `Super` calls exactly one method on it, `get_methods_for_type`, so a one-method protocol replaces the dependency |
+| No asynchrony | true | Recorded as P2 |
+| No persistence | true | Recorded below |
+| No monitoring, hard to debug in production | true | Recorded below |
+| Parallel serialization with `asyncio.gather` | **wrong** | `to_dict` is pure CPU. Gathering eight containers of 3 000 items takes 1.69x the sequential time; a thread pool takes 1.11x |
+| Asynchronous `_invalidate_cache` | **wrong** | Microseconds of pure CPU; awaiting it costs more than doing it |
+| No profiling of hot spots | true | There is no benchmark suite, so a regression is only visible when someone measures by hand |
+| Tests are critical for maintenance | already done | 485 tests, 90% coverage, including concurrency tests that fail without their guards |
+
+Two further gaps came out of the same pass, neither of them on the list:
+
+| Gap | Evidence |
+| --- | --- |
+| **No exception taxonomy** | Ninety `raise` statements, all of them bare `ValueError`, `TypeError` or `KeyError`, and no exception type of the framework's own. A caller cannot tell a validation failure from a misconfiguration from an ordinary Python error |
+| **No schema version in serialized data** | `to_dict` writes `type` but nothing about the shape it was written with. Rename a field and every file saved before it becomes unreadable, with no way to migrate. pAstroCORE saves projects to disk, so this is not hypothetical |
+
+## The road to 1.0.0
+
+A 1.0 is a promise that the contract will not break outside a major version. The work below
+is ordered by whether it blocks that promise, not by how interesting it is.
+
+### Blocking — each changes something a caller depends on
+
+| # | Item | Why it blocks |
+| --- | --- | --- |
+| B1 | Fix `TypeVar` resolution: resolve by parameter position, treat constraints as a union, fall back to `Any` when unparameterized | Corrects a wrong type today, so it changes behaviour |
+| B2 | Value constraints on annotations, e.g. `Annotated[float, Positive()]`, wired to the helpers already in `utils/validation.py` | Adds to what an annotation means; `_check_type` already unwraps `Annotated`, so the hook exists |
+| B3 | An exception taxonomy: `MSBError` with `ValidationError`, `ResolutionError`, `OperationError` beneath it, each still deriving from the built-in it replaces | What a caller may catch is part of the contract |
+| B4 | A schema version in serialized data, and a migration hook | Otherwise 1.0 promises to read files it will not be able to read |
+| B5 | A protocol for what `Super` needs from `Manipulator`, replacing the concrete reference | The extension contract must name an interface, not a class |
+| B6 | Decide P1 pipelines | Changes the shape of a request |
+| B7 | Decide P2 asynchrony | Cannot be added later without touching every signature |
+| B8 | Decide P3 built-in `Inspector` and `Configurator` | Changes what a downstream handler looks like |
+| B9 | Ingesting foreign data: a declared discriminator, or a default type per field | Changes `from_dict` |
+| B10 | Write down the deprecation policy and mark the public surface | The promise needs stating before it can be kept |
+
+### Should be in 1.0, but breaks nothing
+
+| # | Item | Measured reason |
+| --- | --- | --- |
+| P5 | Compile a validator per field once per class instead of re-deriving `get_origin`/`get_args` per instance | 150 000 introspection calls for 30 000 objects; entity construction is 19x a plain dict |
+| P6 | Skip the invalidation walk when no owner caches | 277 µs of the 413 µs at 500 owners is spent reaching nothing |
+| P7 | A benchmark suite in CI, so a performance regression fails a build | Yesterday every performance number was measured by hand |
+| P8 | Observability hooks: serialization time, cache size, invalidation frequency, validation failures | Asked for, and cheap once there is one place to hang them |
+| P11 | Repair the ten documentation examples that no longer run, and add a test that executes every fenced Python block so they cannot rot again | Executing each document's blocks in order, as a reader would: `mega.md` 6 of 17 broken, `super.md` 2, `base.md` 1, `examples.md` 1. `api.md` blocks are signature fragments and are not meant to run |
+| P9 | Documented memory behaviour of the cache: one mapping per object, duplicated, never evicted | Cheaper than capping it, and enough for a reader to decide |
+
+### After 1.0
+
+| # | Item | Note |
+| --- | --- | --- |
+| P4 | Generating an application from the data model | The WYSIWYG editor. Aim at the GUI wiring rather than the handler stubs — see the entry below |
+| P10 | Persistence beyond `to_dict`/`from_dict` | A store is a product of its own; 1.0 should not carry it |
+
 ## Planned, not scheduled
 
-Four directions that are wanted and deliberately not started. Each was raised on 2026-08-03
-and left until there is a real case to design against.
+Four directions that are wanted and deliberately not started. P1, P2 and P3 block 1.0 as
+decisions -- they have to be settled, not necessarily built -- while P4 follows it.
 
 | # | Item | Notes |
 | --- | --- | --- |
@@ -82,28 +151,32 @@ and left until there is a real case to design against.
 ## What 1.0.0 should mean
 
 A 1.0 is a promise rather than a feature count: that the contract will not break outside a
-major version. Four releases went out on 2026-08-03, three of them changing the contract, so
-the promise is not close yet. It becomes possible when there is nothing left that would
-force a break, which puts these in the way.
+major version. Five releases went out on 2026-08-03, four of them changing the contract, so
+the promise is not close. It becomes possible when nothing is left that would force a break
+— which is what the blocking list above enumerates.
 
-**Decisions that must be made first.** Each of the three planned directions changes
-something a caller depends on, so 1.0 cannot precede them -- they have to be decided, not
-necessarily built:
-
-- P1 changes the shape of a request, by putting references to earlier results inside it.
-- P2 changes every signature, because retrofitting async is not additive.
-- P3 changes what a handler looks like, and therefore what a downstream author writes.
-
-**What must then hold:**
+**What must hold when the blocking work is done:**
 
 | | |
 | --- | --- |
 | The request and response protocol is frozen | Including `MethodResults` and what a facade unwraps |
-| The extension contract is frozen | What a `Super` subclass implements and which helpers it may call |
-| The entity model is frozen | Settled in 0.3.0 when `Serializable` split the hierarchy |
+| The extension contract is frozen | What a `Super` subclass implements, which helpers it may call, and the protocol it sees instead of a `Manipulator` |
+| The entity model is frozen | Settled in 0.3.0 when `Serializable` split the hierarchy; B1 and B2 are the last changes to what an annotation means |
+| Serialized data carries its version | So a file written by 1.0 is still readable by 1.9 |
+| Errors are the framework's own types | So a caller can catch precisely rather than by string matching |
 | A deprecation policy is written down | How long a name survives after it is superseded, and how it is announced |
-| There is a guide to building an application | The docs describe the API well and never show how to start a project on it |
+| The public surface is marked | Which underscore-prefixed names are protected extension points and which are genuinely private |
+| There is a guide to building an application | The docs describe the API well and still never show how to start a project on it |
+| Performance is defended by CI | A benchmark suite, so a regression fails a build instead of being noticed months later |
 | More than one project depends on it in earnest | Already true: pAstroCORE and an observatory scheduling system |
 
-**What 1.0 is not.** Not persistence, not a UI generator, not a plugin system. Those belong
-to whatever is built on MSB. A framework earns 1.0 by holding still, not by growing.
+**What 1.0 is not.** Not persistence, not a UI generator, not a plugin system, not
+asynchrony unless P2 is decided in its favour. Those belong to whatever is built on MSB, or
+to a later minor. A framework earns 1.0 by holding still, not by growing.
+
+**On "enterprise-grade".** Nothing in the list above is specific to large organisations. A
+scientist writing a simulation and a team running a service want the same things from a
+framework: that it says no to bad data early, that its errors can be caught precisely, that
+files written last year still open, that a mistake is visible in logs, and that the API they
+learned still works. The only thing genuinely peculiar to scale is P2 and P10 — concurrency
+and a store — and both are recorded as decisions rather than assumptions.
