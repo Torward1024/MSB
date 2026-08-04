@@ -46,8 +46,8 @@ Status: **done** (merged or on a branch), **next** (the item to pick up), **open
 | B3 | Exception taxonomy: `MSBError` root, 16 types, each also deriving from the built-in it replaces | — | Behaviour visible to anyone catching exceptions | No bare built-in raised in the package; no existing test changed | **done** |
 | B1 | `TypeVar` resolution: resolve by parameter position, treat constraints as a union, fall back to `Any` when unparameterized | — | Corrects a type that is wrong today, so behaviour changes | `Generic[T, U]` resolves each parameter to its own type | **done** |
 | P7 | Benchmark suite in CI | — | None | A performance regression fails a build | **done** |
-| P9 | Document the cache's memory behaviour | — | None | The reader can predict the cost without measuring | **next** |
-| P11 | Repair the 11 documentation examples that no longer run | — | None | `STALE` in `tests/test_documentation.py` is empty | open |
+| P9 | Document the cache's memory behaviour | — | None | The reader can predict the cost without measuring | **done** |
+| P11 | Repair the 11 documentation examples that no longer run | — | None | `STALE` in `tests/test_documentation.py` is empty | **next** |
 
 ### 0.6.0 — the data contract
 
@@ -112,7 +112,7 @@ The stop list. Each of these is a reasonable idea, and each is out.
 | A metrics backend, a rate limiter, an auth model | Policies. MSB provides the hook (B11) and no dependencies |
 | Object pooling | Profiling puts entity construction cost in type-hint introspection, which P5 removes; pooling would not touch it |
 | Parallel serialization, async invalidation | Measured as slower. `to_dict` of 8 containers × 3 000 items: 1.69× sequential with `asyncio.gather`, 1.11× with threads |
-| A cache size limit | Bounded by the object graph already: 3.8 MB for 20 000 items. Documented (P9) rather than capped |
+| A cache size limit | Bounded by the object graph already, not by traffic: one mapping per caching object, 275 bytes per item, 5.25 MB at 20 000. Documented (P9) rather than capped |
 
 ## After 1.0
 
