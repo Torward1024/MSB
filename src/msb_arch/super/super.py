@@ -3,7 +3,7 @@ from abc import ABC
 from typing import Dict, Any, Callable, List, Type, Optional
 from ..errors import DispatchError, HandlerError, RegistrationError, RequestError
 from ..utils.logging_setup import logger
-from ..mega.manipulator import Manipulator
+from ..protocols import MethodProvider
 from ..base.basecontainer import BaseContainer
 from ..results import MethodResults
 from collections import OrderedDict
@@ -22,7 +22,8 @@ class Super(ABC):
     by defining methods with naming conventions like `_<operation>_<type>` or `_<operation>`.
 
     Attributes:
-        _manipulator (Manipulator): The associated Manipulator instance for method lookup.
+        _manipulator (MethodProvider): Whatever answers which methods a type allows, usually
+            a Manipulator. Only `get_methods_for_type` is ever called on it.
         _methods (Dict[Type, Dict[str, Callable]]): Custom method registry for specific object types.
         _method_cache (OrderedDict): LRU cache of resolved handler lookups, keyed by the
             requested name and the type of the object.
@@ -58,12 +59,13 @@ class Super(ABC):
 
     OPERATION: Optional[str] = None # Default operation name for auto-registration
 
-    def __init__(self, manipulator: 'Manipulator' = None, methods: Optional[Dict[Type, Dict[str, Callable]]] = None,
+    def __init__(self, manipulator: Optional[MethodProvider] = None, methods: Optional[Dict[Type, Dict[str, Callable]]] = None,
                  cache_size: int = 2048):
         """Initialize a Super instance with an optional Manipulator and method registry.
 
         Args:
-            manipulator (Manipulator, optional): The Manipulator instance to associate with. Defaults to None.
+            manipulator (MethodProvider, optional): Anything answering `get_methods_for_type`,
+                usually a Manipulator. Defaults to None.
             methods (Optional[Dict[Type, Dict[str, Callable]]]): Custom method registry. Defaults to None (empty dict).
             cache_size (int): Maximum number of resolved handler lookups to remember. Defaults to 2048.
 
@@ -116,7 +118,7 @@ class Super(ABC):
             Dict[str, Callable]: Dictionary of method names mapped to their callable implementations.
 
         Raises:
-            ValueError: If no methods are available for the type in either _methods or the Manipulator.
+            DispatchError: If no methods are available for the type in either _methods or the provider.
         """
         if obj_type in self._methods:
             return self._methods[obj_type]

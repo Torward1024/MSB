@@ -45,8 +45,14 @@ class TestManipulatorInit:
     def test_init_basic(self, mock_logger):
         manip = TestManipulator()
         assert manip._managing_object is None
-        assert manip._operations == {}
+        # `inspect` and `configure` are supplied, so an application that only reads and
+        # writes its model needs no Super of its own.
+        assert set(manip._operations) == {"inspect", "configure"}
         mock_logger.debug.assert_called()
+
+    def test_init_without_builtins(self):
+        manip = TestManipulator(builtins=False)
+        assert manip._operations == {}
 
     def test_init_with_managing_object(self):
         obj = [1, 2, 3]

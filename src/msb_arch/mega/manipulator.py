@@ -1,7 +1,8 @@
 # mega/manipulator.py
 from abc import ABC
 from typing import Dict, Any, Optional, Callable, List, Sequence, Type, Union
-from ..errors import DispatchError, HandlerError, RegistrationError, RequestError
+from ..errors import DispatchError, HandlerError, NotFoundError, RegistrationError, RequestError
+from ..protocols import Interceptor
 from ..utils.logging_setup import logger
 from ..results import MethodResults
 import inspect
@@ -37,7 +38,8 @@ class Manipulator(ABC):
     def __init__(self, managing_object: Optional[Any] = None,
                  base_classes: Optional[List[Type]] = None,
                  operations: Optional[Dict[str, Callable]] = None,
-                 strict_type_check: bool = False):
+                 strict_type_check: bool = False,
+                 builtins: bool = True):
         """Initialize a Manipulator with an optional managing object, base classes, and operations.
 
         Args:
@@ -45,6 +47,16 @@ class Manipulator(ABC):
             base_classes (Optional[List[Type]]): List of base classes for method registration. Defaults to None.
             operations (Optional[Dict[str, Callable]]): Initial operations to register. Defaults to None.
             strict_type_check (bool): If True, enforce strict type checking for objects. Defaults to False.
+            builtins (bool): Register the built-in `inspect` and `configure` operations.
+                Defaults to True.
+
+        Notes:
+            - The built-ins make an application that only reads and writes its model need no
+              `Super` of its own. Registering an operation of the same name replaces one
+              silently, so an application that supplies its own `Inspector` behaves exactly as
+              it did before they existed. Two registrations of one name that are both yours
+              still raise.
+            - Pass `builtins=False` to start with nothing registered.
         """
         self._managing_object = managing_object
         self._strict_type_check = strict_type_check
@@ -53,6 +65,14 @@ class Manipulator(ABC):
             self._base_classes.append(type(managing_object))
         self._operations = {}
         self._registry = {}
+        self._builtin_operations = set()
+        self._interceptors = []
+        self._chain = None
+        if builtins:
+            from ..super.builtins import Configurator, Inspector
+            for builtin in (Inspector(self), Configurator(self)):
+                self.register_operation(builtin)
+                self._builtin_operations.add(builtin.OPERATION)
         if operations:
             for op_name, super_inst in operations.items():
                 self.register_operation(super_inst, operation=op_name)
@@ -163,8 +183,15 @@ class Manipulator(ABC):
             raise RegistrationError("Operation name must be a non-empty string")
 
         if operation in self._operations:
-            logger.error("Operation '%s' already registered", operation)
-            raise RegistrationError(f"Operation '{operation}' already registered")
+            if operation in self._builtin_operations:
+                # A default being overridden, not two intentions colliding. Registering an
+                # `Inspector` of your own is how it has always been written, and must keep
+                # meaning the same thing now that one is supplied.
+                logger.debug("Operation '%s' replaces the built-in", operation)
+                self._builtin_operations.discard(operation)
+            else:
+                logger.error("Operation '%s' already registered", operation)
+                raise RegistrationError(f"Operation '{operation}' already registered")
 
         if not operation.isidentifier():
             logger.error("Operation name '%s' is not a valid identifier", operation)
@@ -411,7 +438,87 @@ class Manipulator(ABC):
 
         return self._process_single_request(request)
 
+    def add_interceptor(self, interceptor: Interceptor) -> None:
+        """Add an interceptor around every request this orchestrator processes.
+
+        Args:
+            interceptor (Interceptor): Called as `interceptor(request, call_next)` and
+                expected to return a response.
+
+        Raises:
+            RegistrationError: If the interceptor is not callable.
+
+        Notes:
+            - The first added is the outermost: it sees a request first and its response last.
+            - Metrics, auditing, rate limiting and authorisation are all this hook. MSB
+              supplies it and none of them, because a library that chose a metrics backend
+              would end the promise of no dependencies.
+            - Each entry of a batch is intercepted separately, since a batch is a container of
+              requests rather than a request.
+        """
+        if not callable(interceptor):
+            logger.error("Interceptor must be callable, got %s", type(interceptor).__name__)
+            raise RegistrationError(
+                f"Interceptor must be callable, got {type(interceptor).__name__}")
+        self._interceptors.append(interceptor)
+        self._chain = None
+        logger.debug("Added interceptor %s", getattr(interceptor, '__name__', interceptor))
+
+    def remove_interceptor(self, interceptor: Interceptor) -> None:
+        """Remove an interceptor added earlier.
+
+        Args:
+            interceptor (Interceptor): The one to remove.
+
+        Raises:
+            NotFoundError: If it was never added.
+        """
+        if interceptor not in self._interceptors:
+            raise NotFoundError(f"Interceptor {interceptor!r} is not registered")
+        self._interceptors.remove(interceptor)
+        self._chain = None
+        logger.debug("Removed interceptor %s", getattr(interceptor, '__name__', interceptor))
+
+    def get_interceptors(self) -> List[Interceptor]:
+        """Return the interceptors in the order they wrap a request, outermost first."""
+        return list(self._interceptors)
+
+    def _build_chain(self) -> Callable[[Dict[str, Any]], Any]:
+        """Fold the interceptors around `_dispatch_request`, outermost first.
+
+        Returns:
+            Callable[[Dict[str, Any]], Any]: The entry point of the chain.
+
+        Notes:
+            - Built once and kept until the list changes, rather than per request.
+        """
+        call_next = self._dispatch_request
+        for interceptor in reversed(self._interceptors):
+            def step(request, _interceptor=interceptor, _next=call_next):
+                return _interceptor(request, _next)
+            call_next = step
+        return call_next
+
     def _process_single_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Run one request through the interceptor chain, if there is one.
+
+        Args:
+            request (Dict[str, Any]): The request to process.
+
+        Returns:
+            Dict[str, Any]: The response.
+
+        Notes:
+            - With no interceptors registered, which is the default, this costs one check and
+              a direct call.
+        """
+        if not self._interceptors:
+            return self._dispatch_request(request)
+        if self._chain is None:
+            self._chain = self._build_chain()
+        return self._chain(request)
+
+    def _dispatch_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Process a single request by executing the specified operation.
 
         Args:

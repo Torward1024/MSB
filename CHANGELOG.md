@@ -13,6 +13,55 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [0.7.0] - 2026-08-04
+
+The request contract. Every request can now be wrapped, an operation names the interface it
+needs rather than the class it was handed, and reading and writing a model no longer require
+writing any operation at all.
+
+Third stage on the road to 1.0.0. See [the roadmap](docs/ROADMAP.md).
+
+### Added
+
+- **Interceptors.** `manipulator.add_interceptor(f)`, where `f(request, call_next)` returns a
+  response. It may observe, time, **refuse** without running anything, or **rewrite** the
+  request on the way through. Metrics, auditing, rate limiting and authorisation are four uses
+  of this one hook, which is why MSB supplies the hook and none of the four: choosing a metrics
+  backend would end the promise of no dependencies. Each entry of a batch is intercepted
+  separately, and with none registered a request pays one check.
+- **`RequestMetrics`**, an interceptor counting calls, failures and timings per operation, with
+  `snapshot()` returning a plain mapping to export wherever you like.
+- **`RequestJournal`**, an interceptor recording what ran. Read backwards it answers what
+  produced a result -- `touching(name)` gives an object's whole history -- and read forwards,
+  `replay(manipulator)` runs the session again.
+- **`cache_statistics()`**, reporting how many objects cache, how many hold a mapping and how
+  many entries those hold, computed on demand.
+- **Built-in `inspect` and `configure`.** A `Manipulator` registers them unless told
+  `builtins=False`, so an application that only reads and writes its model needs no `Super` of
+  its own. `Inspector` applies every method a request names and reports each outcome;
+  `Configurator` stops at the first failure, because a half-applied configuration is worse than
+  a rejected one.
+- **`MethodProvider` and `Interceptor` protocols**, in `msb_arch.protocols`.
+
+### Changed
+
+- **A fresh `Manipulator` has two operations rather than none.** Registering an operation of
+  the same name replaces a built-in silently -- a default being overridden, not two intentions
+  colliding -- so an application supplying its own `Inspector` behaves exactly as before. Two
+  registrations of one name that are both yours still raise.
+- **`Super.__init__` takes a `MethodProvider`, not a `Manipulator`.** It calls exactly one
+  method on it. Nothing has to change: `Manipulator` satisfies the protocol structurally. The
+  operation layer also stops importing the entry-point layer above it, an import that existed
+  only to spell a type hint that was already a string.
+
+### Upgrading from 0.6.0
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| A test asserting a new `Manipulator` has no operations fails | It now has `inspect` and `configure`. | Assert what you mean, or construct with `builtins=False`. |
+| `RegistrationError: Operation 'inspect' already registered` | The name was registered twice by your own code. Replacing a built-in is silent; replacing your own is not. | Register it once. |
+| Nothing else. | Interceptors are opt-in, and the protocol change is structural. | Nothing. |
+
 ## [0.6.0] - 2026-08-04
 
 The data contract. An annotation now says what a value may be as well as what type it is,

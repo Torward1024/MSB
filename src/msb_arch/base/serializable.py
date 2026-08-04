@@ -1042,3 +1042,31 @@ class Serializable(ABC, metaclass=EntityMeta):
             logger.debug("Set attribute '%s' of %s", key, self.__class__.__name__)
         else:
             raise UnknownAttributeError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
+
+
+def cache_statistics() -> Dict[str, int]:
+    """Report what the serialization cache is holding, right now.
+
+    Returns:
+        Dict[str, int]: `objects` -- how many live objects have caching enabled; `populated`
+            -- how many of them currently hold a mapping; `entries` -- the total number of
+            keys across those mappings, which is what grows with the model.
+
+    Notes:
+        - Computed on demand from the registry invalidation already keeps, so nothing is
+          counted while the framework runs and the hot paths stay as they were measured.
+        - Counters for how often invalidation runs, or how long serialization takes, are
+          deliberately **not** maintained here. Both would put an unconditional increment into
+          paths that were just measured down to 39 µs and 7.4 µs, to serve a question most
+          applications never ask. An application that does ask can wrap `to_dict` on its own
+          classes, or read request timings from `RequestMetrics`, which costs nothing until it
+          is registered.
+    """
+    populated = 0
+    entries = 0
+    for obj in list(_CACHING_OBJECTS.values()):
+        cached = obj.__dict__.get('_cached_to_dict')
+        if cached is not None:
+            populated += 1
+            entries += len(cached)
+    return {"objects": len(_CACHING_OBJECTS), "populated": populated, "entries": entries}
