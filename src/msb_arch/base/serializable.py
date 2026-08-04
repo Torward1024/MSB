@@ -39,6 +39,20 @@ _REGISTRY_LOCK = RLock()
 # concurrent serializations do not share marks.
 _TRAVERSAL: ContextVar = ContextVar("msb_arch_to_dict_seen", default=None)
 
+# Every live object with caching enabled. Invalidation climbs the ownership graph on every
+# write, and cannot know whether any ancestor caches without walking to it -- so with nothing
+# caching anywhere the whole walk reaches nothing, which was 277 us of the 413 measured at 500
+# owners. This makes that case one truthiness check.
+#
+# A stale read is harmless in both directions: a walk skipped for an object that has only just
+# enabled caching cannot leave a stale mapping, because a new object has none yet, and an
+# extra walk merely costs what it always cost.
+#
+# Keyed by identity rather than by the object, for the reason the ownership graph is: `__eq__`
+# and `__hash__` are defined on class and name, so two entities sharing a name are one member
+# of a set, and the death of either would stop tracking the other.
+_CACHING_OBJECTS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+
 class EntityMeta(ABCMeta):
     """Metaclass for Serializable to handle type annotations and enforce attribute validation.
 
@@ -187,7 +201,16 @@ class Serializable(ABC, metaclass=EntityMeta):
         unknown_attrs = set(kwargs.keys()) - set(self._fields.keys())
         if unknown_attrs:
             raise UnknownAttributeError(f"Unknown attributes provided for {self.__class__.__name__}: {unknown_attrs}")
-        
+
+        if self.__dict__.get('_use_cache'):
+            # Registered so that invalidation can tell, without walking, whether any cache
+            # exists to go stale. Weakly held, so this never keeps an object alive.
+            #
+            # Read from the attribute rather than from the `use_cache` argument: a container
+            # enables caching by passing `_use_cache` through kwargs, which the loop above
+            # applies, so the argument alone would miss every caching container.
+            _CACHING_OBJECTS[id(self)] = self
+
         logger.debug("Initialized %s instance with name=%s, isactive=%s", self.__class__.__name__, name, isactive)
     def _adopt(self, owner: Optional['Serializable'] = None, _seen: Optional[Set[int]] = None) -> None:
         """Record ownership for this entity and for everything it holds.
@@ -238,9 +261,21 @@ class Serializable(ABC, metaclass=EntityMeta):
               belongs to each container that holds it, and all of them go stale together.
             - The walk is guarded against a cycle in the ownership graph.
         """
+        if not _CACHING_OBJECTS:
+            # Nothing anywhere caches, so there is no stale mapping for the walk to find.
+            # Dead owners are still dropped, because pruning them is the walk's other job and
+            # they would otherwise accumulate for the lifetime of the object. That costs one
+            # pass over the direct owners rather than over the whole graph above them.
+            owners = self.__dict__.get('_parents')
+            if owners:
+                for key, ref in list(owners.items()):
+                    if ref() is None:
+                        del owners[key]
+            return
+
         if not self.__dict__.get('_parents'):
-            # Overwhelmingly the common case: nothing owns this entity, so there is no graph
-            # to walk and no reason to allocate one.
+            # Nothing owns this entity, so there is no graph to walk and no reason to
+            # allocate one.
             if self.__dict__.get('_use_cache') and '_cached_to_dict' in self.__dict__:
                 super().__setattr__('_cached_to_dict', None)
             return

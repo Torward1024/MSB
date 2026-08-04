@@ -175,11 +175,12 @@ def test_serializing_a_container_stays_linear():
 
 
 def test_invalidation_does_not_grow_with_owners_that_do_not_cache():
-    """Defends P6 once it lands, and records the cost until then.
+    """Defends P6.
 
-    Invalidation climbs the ownership graph on every write. With 500 non-caching owners that
-    walk reached nothing and still cost 277 us of 413 on 2026-08-04. The budget is loose
-    because the skip is not built yet; tighten it with P6.
+    Invalidation climbs the ownership graph on every write, and with nothing caching that
+    walk reached nothing: 413 us at 500 owners against 3.3 with none. It now stops before
+    climbing, leaving only a pass over the direct owners to drop dead ones, and costs 39 us
+    at 500. The budget is set from that with headroom, and would fail if the walk returned.
     """
     item = Reading(name="shared", value=1.0, label="x")
     owners = [Readings(name=f"box{index}") for index in range(200)]
@@ -191,6 +192,6 @@ def test_invalidation_does_not_grow_with_owners_that_do_not_cache():
 
     alone = per_operation(lambda n: [setattr(lonely, "value", 2.0) for _ in range(n)], 2000)
     crowded = per_operation(lambda n: [setattr(shared, "value", 2.0) for _ in range(n)], 2000)
-    assert crowded < alone * 400, (
-        f"a write with 200 owners costs {crowded / alone:.0f}x one with none"
+    assert crowded < alone * 25, (
+        f"a write with 200 owners costs {crowded / alone:.0f}x one with none, budget 25x"
     )
