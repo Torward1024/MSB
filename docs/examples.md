@@ -360,12 +360,7 @@ class OrderProcessor(Super):
         customer = obj["customers"].get(customer_name)
         products = [obj["products"].get(name) for name in product_names]
 
-        for name in product_names:
-            product = obj["products"].get(name)
-            if product:
-                products.append(product)
-
-        if not customer or len(products) != len(product_names):
+        if not customer or not all(products):
             return False
 
         total = sum(p.price for p in products)
@@ -403,12 +398,10 @@ order_result = manipulator.order(
     raise_on_error=False
 )
 
-if order_result["status"]:
-    order = order_result["result"]
-    print(f"Order created: ${order.total}")
-    orders.add(order)
-else:
-    print(f"Order creation failed: {order_result.get('error', 'Unknown error')}")
+assert order_result["status"], order_result.get("error", "Unknown error")
+order = order_result["result"]
+assert order.total == 1019.98            # 999.99 + 19.99
+orders.add(order)
 ```
 
 ## Error Handling Examples
@@ -432,19 +425,22 @@ except TypeError as e:
 ### Operation Errors
 
 ```python
-# Handle operation errors gracefully
-result = manipulator.process_request({
-    "operation": "nonexistent",
-    "attributes": {}
-})
+class Calculator(Super):
+    OPERATION = "calculate"
 
-if not result["status"]:
-    print(f"Operation failed: {result['error']}")
+    def _calculate_add(self, obj, attributes):
+        return attributes.get("a", 0) + attributes.get("b", 0)
 
-# Or use raise_on_error=False
+manipulator.register_operation(Calculator(manipulator))
+
+# An unregistered operation is reported, not raised
+result = manipulator.process_request({"operation": "nonexistent", "attributes": {}})
+assert result["status"] is False
+assert "error" in result
+
+# raise_on_error=False gives the whole response back instead of raising
 result = manipulator.calculate(a=1, b=2, method="invalid_method", raise_on_error=False)
-if not result["status"]:
-    print(f"Method error: {result['error']}")
+assert result["status"] is False
 ```
 
 ## Performance Optimization
@@ -469,29 +465,24 @@ person._invalidate_cache()
 ### Batch Operations for Performance
 
 ```python
-# Instead of multiple individual calls
-results = []
-for i in range(10):
-    result = manipulator.calculate(int, a=i, b=i+1, method="add")
-    results.append(result)
+# Instead of ten individual calls
+results = [manipulator.calculate(a=i, b=i + 1, method="add") for i in range(10)]
+assert results[3] == 7
 
-# Use batch processing
-batch = {}
-for i in range(10):
-    batch[f"calc_{i}"] = {
-        "operation": "calculate",
-        "obj": int,
-        "attributes": {"method": "add", "a": i, "b": i+1}
-    }
-
+# Send them as one batch, keyed by an identifier of your choosing
+batch = {
+    f"calc_{i}": {"operation": "calculate", "attributes": {"method": "add", "a": i, "b": i + 1}}
+    for i in range(10)
+}
 batch_results = manipulator.process_request(batch)
+assert batch_results["calc_3"]["result"] == 7
 ```
 
 ## Integration with External Systems
 
 ### REST API Example
 
-```python
+```text
 import json
 from flask import Flask, request, jsonify
 

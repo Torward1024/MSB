@@ -14,6 +14,15 @@ from typing import (Dict,
                     get_args, 
                     get_origin)
 from ..base.serializable import CYCLIC_REFERENCE, Serializable, _TRAVERSAL
+from ..errors import (AttributeNotFoundError,
+                      ConstraintError,
+                      DuplicateNameError,
+                      ItemNameError,
+                      NotFoundError,
+                      ResolutionError,
+                      SerializationError,
+                      TypeValidationError,
+                      UnknownAttributeError)
 from ..utils.logging_setup import logger
 
 T = TypeVar('T', bound=Serializable)
@@ -59,6 +68,32 @@ class BaseContainer(Serializable, ABC, Generic[T]):
     _cached_to_dict: Dict[str, Any]
     _item_type: type
 
+    @classmethod
+    def _item_type_hint(cls) -> Any:
+        """Return the type argument the container was declared with.
+
+        Looked up along the inheritance chain rather than on the class alone, so a subclass
+        of an already parameterized container keeps working, and by scanning the bases
+        rather than assuming the first one, so a container that also inherits a mixin still
+        resolves. Only a base that is a parameterized container counts: an unparameterized
+        subclass inherits `BaseContainer`'s own bases, and the `Generic[T]` among them would
+        otherwise answer with the type variable itself.
+
+        Raises:
+            ResolutionError: If the container was declared without a type parameter. That
+                case used to reach this far and fail on `__args__`, because the attribute
+                lookup found the unparameterized bases of `BaseContainer` itself.
+        """
+        for base in getattr(cls, '__orig_bases__', ()) or ():
+            origin = get_origin(base)
+            args = get_args(base)
+            if args and isinstance(origin, type) and issubclass(origin, BaseContainer):
+                return args[0]
+        raise ResolutionError(
+            f"Cannot determine generic type for {cls.__name__}. "
+            "Make sure you use BaseContainer[YourType] syntax."
+        )
+
     def __init__(self, items: Dict[str, T] = None, name: str = None, isactive: bool = True, use_cache: bool = False):
         """Initialize the BaseContainer with a name, activation status, and optional items.
 
@@ -77,20 +112,15 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             self.__class__._fields = get_type_hints(self.__class__)
     
         if items is not None and not isinstance(items, dict):
-            raise TypeError(f"'items' must be a dict, got {type(items)}")
+            raise TypeValidationError(f"'items' must be a dict, got {type(items)}")
         # Copy: the container owns its mapping, so clear() must not empty the caller's dict.
         initial_items = dict(items) if items else {}
         
-        if not (hasattr(self, '__orig_bases__') and self.__orig_bases__):
-            raise TypeError(f"Cannot determine generic type for {self.__class__.__name__}. "
-                "Make sure you use BaseContainer[YourType] syntax.")
-        
-        generic_base = self.__orig_bases__[0]
-        item_type = self._resolve_type(generic_base.__args__[0])
+        item_type = self._resolve_type(self._item_type_hint())
 
         for key, item in initial_items.items():
             if not isinstance(key, str):
-                raise TypeError(f"Keys in '_items' must be str, got {type(key)}")
+                raise TypeValidationError(f"Keys in '_items' must be str, got {type(key)}")
             self._validate_type(f"_items[{key}]", item, item_type)
         
         resolved_items_type = Dict[str, item_type]
@@ -125,7 +155,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         """
         for key, item in items.items():
             if item.name != key:
-                raise ValueError(f"Item name '{item.name}' does not match key '{key}' in {self.__class__.__name__}")
+                raise ItemNameError(f"Item name '{item.name}' does not match key '{key}' in {self.__class__.__name__}")
             self._validate_item(item)
 
     def _adopt(self, owner: Optional['Serializable'] = None, _seen: Optional[Set[int]] = None) -> None:
@@ -181,20 +211,15 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             - Copying costs roughly three times as much as storing the reference; on 4000
               items that is about 57 ms against 17 ms.
         """
-        if hasattr(self, '__orig_bases__') and self.__orig_bases__:
-            generic_base = self.__orig_bases__[0]
-        else:
-            raise TypeError(f"Cannot determine generic type for {self.__class__.__name__}. "
-                            "Make sure you use BaseContainer[YourType] syntax.")
-        item_type = self._resolve_type(generic_base.__args__[0])
+        item_type = self._resolve_type(self._item_type_hint())
 
         if isinstance(item, item_type):
             item_to_add = deepcopy(item) if copy_items else item
             if item_to_add.name is None:
-                raise ValueError(f"Cannot add item with no name to {self.__class__.__name__}")
+                raise ItemNameError(f"Cannot add item with no name to {self.__class__.__name__}")
             self._validate_item(item_to_add)
             if item_to_add.name in self._items:
-                raise ValueError(f"Item with name '{item_to_add.name}' already exists in {self.__class__.__name__}")
+                raise DuplicateNameError(f"Item with name '{item_to_add.name}' already exists in {self.__class__.__name__}")
             self._items[item_to_add.name] = item_to_add
             item_to_add._adopt(self)
             logger.debug("Added item with name '%s' to %s", item_to_add.name, self.__class__.__name__)
@@ -203,39 +228,33 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             for i, single_item in enumerate(item):
                 item_to_add = deepcopy(single_item) if copy_items else single_item
                 if not isinstance(item_to_add, item_type):
-                    raise TypeError(f"Item at index {i} must be of type {item_type.__name__}, got {type(single_item).__name__}")
+                    raise TypeValidationError(f"Item at index {i} must be of type {item_type.__name__}, got {type(single_item).__name__}")
                 if item_to_add.name is None:
-                    raise ValueError(f"Cannot add item at index {i} with no name to {self.__class__.__name__}")
+                    raise ItemNameError(f"Cannot add item at index {i} with no name to {self.__class__.__name__}")
                 self._validate_item(item_to_add)
                 if item_to_add.name in self._items:
-                    raise ValueError(f"Item with name '{item_to_add.name}' at index {i} already exists in {self.__class__.__name__}")
+                    raise DuplicateNameError(f"Item with name '{item_to_add.name}' at index {i} already exists in {self.__class__.__name__}")
                 self._items[item_to_add.name] = item_to_add
                 item_to_add._adopt(self)
                 logger.debug("Added item with name '%s' to %s", item_to_add.name, self.__class__.__name__)
 
         elif isinstance(item, BaseContainer):
-            if not (hasattr(item, '__orig_bases__') and item.__orig_bases__):
-                raise TypeError(
-                    f"Cannot determine generic type for other container {item.__class__.__name__}. "
-                    "Make sure you use BaseContainer[YourType] syntax."
-                )
-            other_generic_base = item.__orig_bases__[0]
-            other_item_type = item._resolve_type(other_generic_base.__args__[0])
+            other_item_type = item._resolve_type(item._item_type_hint())
             if other_item_type != item_type:
-                raise TypeError(f"BaseContainer items must be of type {item_type.__name__}, got {other_item_type.__name__}")
+                raise TypeValidationError(f"BaseContainer items must be of type {item_type.__name__}, got {other_item_type.__name__}")
             for single_item in item.get_items():
                 item_to_add = deepcopy(single_item) if copy_items else single_item
                 if item_to_add.name is None:
-                    raise ValueError(f"Cannot add item with no name from BaseContainer to {self.__class__.__name__}")
+                    raise ItemNameError(f"Cannot add item with no name from BaseContainer to {self.__class__.__name__}")
                 self._validate_item(item_to_add)
                 if item_to_add.name in self._items:
-                    raise ValueError(f"Item with name '{item_to_add.name}' from BaseContainer already exists in {self.__class__.__name__}")
+                    raise DuplicateNameError(f"Item with name '{item_to_add.name}' from BaseContainer already exists in {self.__class__.__name__}")
                 self._items[item_to_add.name] = item_to_add
                 item_to_add._adopt(self)
                 logger.debug("Added item with name '%s' from BaseContainer to %s", item_to_add.name, self.__class__.__name__)
 
         else:
-            raise TypeError(f"Item must be of type {item_type.__name__}, List[{item_type.__name__}], or BaseContainer[{item_type.__name__}], got {type(item).__name__}")
+            raise TypeValidationError(f"Item must be of type {item_type.__name__}, List[{item_type.__name__}], or BaseContainer[{item_type.__name__}], got {type(item).__name__}")
 
         self._invalidate_cache()
 
@@ -250,16 +269,11 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             ValueError: If the item's name does not match the provided name or if it fails validation.
             TypeError: If the item's type does not match the expected type T.
         """
-        if hasattr(self, '__orig_bases__') and self.__orig_bases__:
-            generic_base = self.__orig_bases__[0]
-        else:
-            raise TypeError(f"Cannot determine generic type for {self.__class__.__name__}. "
-                            "Make sure you use BaseContainer[YourType] syntax.")
-        item_type = self._resolve_type(generic_base.__args__[0])
+        item_type = self._resolve_type(self._item_type_hint())
         if not isinstance(item, item_type):
-            raise TypeError(f"Item must be of type {item_type.__name__}, got {type(item).__name__}")
+            raise TypeValidationError(f"Item must be of type {item_type.__name__}, got {type(item).__name__}")
         if item.name != name:
-            raise ValueError(f"Item name '{item.name}' does not match key '{name}' in {self.__class__.__name__}")
+            raise ItemNameError(f"Item name '{item.name}' does not match key '{name}' in {self.__class__.__name__}")
         self._validate_item(item)
         self._items[name] = item
         item._adopt(self)
@@ -280,7 +294,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
               warning prevented nothing and the error said nothing about the container.
         """
         if name not in self._items:
-            raise KeyError(f"Name '{name}' not found in {self.__class__.__name__}")
+            raise NotFoundError(f"Name '{name}' not found in {self.__class__.__name__}")
         del self._items[name]
         self._invalidate_cache()
         logger.debug("Removed item with name '%s' from %s", name, self.__class__.__name__)
@@ -349,7 +363,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         except AttributeError as e:
             missing_attr = next((attr for attr in conditions if not hasattr(self._item_type, attr)), None)
             logger.error("Attribute '%s' does not exist in items of %s", missing_attr, self.__class__.__name__)
-            raise AttributeError(f"Attribute '{missing_attr}' does not exist in items") from e
+            raise AttributeNotFoundError(f"Attribute '{missing_attr}' does not exist in items") from e
 
     def get_active_items(self) -> List[T]:
         """Retrieve all active items in the container.
@@ -381,7 +395,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             if key == "_items":
                 self.set_items(value)
             elif key not in self._fields:
-                raise ValueError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
+                raise UnknownAttributeError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
             else:
                 expected_type = self._resolve_type(self._fields[key])
                 self._validate_type(key, value, expected_type)
@@ -541,7 +555,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
               it as read only: mutating it corrupts the cache.
         """
         if handle_cyclic_refs not in ("mark", "ignore", "raise"):
-            raise ValueError(f"Invalid handle_cyclic_refs value: {handle_cyclic_refs}")
+            raise ConstraintError(f"Invalid handle_cyclic_refs value: {handle_cyclic_refs}")
         if self._use_cache and self._cached_to_dict is not None:
             return self._cached_to_dict
 
@@ -554,7 +568,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             for name, item in self._items.items():
                 if id(item) in seen:
                     if handle_cyclic_refs == "raise":
-                        raise ValueError(f"Cyclic reference detected for item '{name}'")
+                        raise SerializationError(f"Cyclic reference detected for item '{name}'")
                     if handle_cyclic_refs == "ignore":
                         continue
                     items_dict[name] = CYCLIC_REFERENCE
@@ -586,18 +600,11 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             TypeError: If the item type cannot be resolved or if data is invalid.
             ValueError: If item data cannot be mapped to a valid type in a Union.
         """
-        if not (hasattr(cls, '__orig_bases__') and cls.__orig_bases__):
-            raise TypeError(
-                f"Cannot determine generic type for {cls.__name__}. "
-                "Make sure you use BaseContainer[YourType] syntax."
-            )
-        
-        generic_base = cls.__orig_bases__[0]
-        item_type_hint = generic_base.__args__[0]
+        item_type_hint = cls._item_type_hint()
         item_types = cls._resolve_type(item_type_hint, field_path=f"{cls.__name__}.items")
 
         if item_types is Any:
-            raise TypeError("Cannot instantiate items with unresolved type 'Any'")
+            raise ResolutionError("Cannot instantiate items with unresolved type 'Any'")
 
         is_union = get_origin(item_type_hint) is Union
         if is_union:
@@ -613,7 +620,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             if type_name:
                 for candidate_type in item_types:
                     if isinstance(candidate_type, str):
-                        raise TypeError(f"Cannot resolve forward reference '{candidate_type}' in {cls.__name__}")
+                        raise ResolutionError(f"Cannot resolve forward reference '{candidate_type}' in {cls.__name__}")
                     if candidate_type.__name__ == type_name:
                         selected_type = candidate_type
                         break
@@ -626,16 +633,16 @@ class BaseContainer(Serializable, ABC, Generic[T]):
                             selected_type = registered
                             break
                 if not selected_type:
-                    raise ValueError(f"Invalid type '{type_name}' for item '{key}' in {cls.__name__}")
+                    raise SerializationError(f"Invalid type '{type_name}' for item '{key}' in {cls.__name__}")
             elif is_union:
-                raise ValueError(f"Item '{key}' missing 'type' field required for Union type in {cls.__name__}")
+                raise SerializationError(f"Item '{key}' missing 'type' field required for Union type in {cls.__name__}")
             else:
                 selected_type = item_types[0]  # Use the single type for non-Union
 
             try:
                 items[key] = selected_type.from_dict(item_data)
             except TypeError as e:
-                raise TypeError(f"Failed to deserialize item '{key}' in {cls.__name__}: {str(e)}") from e
+                raise SerializationError(f"Failed to deserialize item '{key}' in {cls.__name__}: {str(e)}") from e
         return cls(items=items, name=data.get("name"), isactive=data.get("isactive", True))
     
     def __iter__(self) -> Iterator[T]:

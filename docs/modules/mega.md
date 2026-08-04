@@ -131,27 +131,40 @@ manipulator.register_operation(processor, operation="data_process")
 #### Multiple Operations
 
 ```python
+from msb_arch import BaseEntity, Manipulator, Super
+
+class Reading(BaseEntity):
+    value: float
+
 class Calculator(Super):
-    def _calculate_add(self, obj, attributes):
-        return attributes["a"] + attributes["b"]
+    OPERATION = "calculate"
+
+    def _calculate_reading(self, obj, attributes):
+        return obj.value * attributes.get("factor", 1.0)
 
 class Formatter(Super):
-    def _format_upper(self, obj, attributes):
-        return str(obj).upper()
+    OPERATION = "format"
 
-manipulator.register_operation(Calculator(), operation="calc")
-manipulator.register_operation(Formatter(), operation="format")
+    def _format_reading(self, obj, attributes):
+        return f"{obj.name}: {obj.value:.2f}"
 
-# Use both operations
-add_result = manipulator.calc(a=5, b=3)  # 8
-upper_result = manipulator.format(obj="hello")  # "HELLO"
+class Pipeline(Manipulator):
+    pass
+
+manipulator = Pipeline(base_classes=[Reading])
+manipulator.register_operation(Calculator(manipulator))
+manipulator.register_operation(Formatter(manipulator))
+
+reading = Reading(name="sensor-1", value=21.5)
+manipulator.calculate(reading, factor=2.0)   # 43.0
+manipulator.format(reading)                  # 'sensor-1: 21.50'
 ```
 
 ### Request Processing
 
 #### Single Request Format
 
-```python
+```text
 request = {
     "operation": "operation_name",    # Required
     "obj": object_to_process,         # Optional (uses managing object if None)
@@ -167,7 +180,7 @@ result = manipulator.process_request(request)
 
 #### Batch Request Format
 
-```python
+```text
 requests = {
     "request_id_1": { /* single request */ },
     "request_id_2": { /* single request */ }
@@ -205,12 +218,13 @@ Facade methods support these parameters:
 Manipulator maintains a registry of available methods for different object types:
 
 ```python
-# Get methods for a type
-methods = manipulator.get_methods_for_type(list)
-print(methods.keys())  # ['append', 'extend', 'insert', ...]
+# the methods registered for a type the manipulator knows about
+methods = manipulator.get_methods_for_type(Reading)
+sorted(methods)[:3]                 # ['activate', 'clear', 'clone']
 
-# Update registry with new classes
-manipulator.update_registry(additional_classes=[set, tuple])
+# teach it about further types
+manipulator.update_registry(additional_classes=[list])
+sorted(manipulator.get_methods_for_type(list))[:3]   # ['append', 'clear', 'copy']
 ```
 
 ### Configuration Options
@@ -234,16 +248,24 @@ super_instance = MathOperations(cache_size=500)  # Default is 2048
 Manipulator provides comprehensive error handling:
 
 ```python
-# Synchronous errors (raise_on_error=True)
-try:
-    result = manipulator.invalid_operation()
-except Exception as e:
-    print(f"Error: {e}")
+class Inspector(Super):
+    OPERATION = "inspect"
 
-# Asynchronous errors (raise_on_error=False)
-result = manipulator.invalid_operation(raise_on_error=False)
-if not result["status"]:
-    print(f"Error: {result['error']}")
+    def _inspect(self, obj, attributes):
+        return self._apply_methods(obj, attributes)
+
+manipulator.register_operation(Inspector(manipulator))
+
+# raise_on_error is True by default: a failure is raised
+try:
+    manipulator.inspect(reading, no_such_method=None)
+except Exception as e:
+    print(f"raised: {e}")            # Method 'no_such_method' not found
+
+# with raise_on_error=False the whole response comes back instead
+response = manipulator.inspect(reading, no_such_method=None, raise_on_error=False)
+if not response["status"]:
+    print(response["error"])         # Method 'no_such_method' not found
 ```
 
 Common error scenarios:
@@ -277,54 +299,52 @@ Common error scenarios:
 ### With Base Classes
 
 ```python
-from msb_arch.base import BaseEntity, BaseContainer
+from msb_arch import BaseContainer
 
-class User(BaseEntity):
-    name: str
-    email: str
-
-class UserManager(Super):
-    def _manage_create(self, obj, attributes):
-        user = User(name=attributes["name"], email=attributes["email"])
-        if isinstance(obj, BaseContainer):
-            obj.add(user)
-        return user
-
-class Users(BaseContainer[User]):
+class Readings(BaseContainer[Reading]):
     pass
 
-manipulator = Manipulator()
-manipulator.register_operation(UserManager(), operation="user")
+class Recorder(Super):
+    OPERATION = "record"
 
-users = Users(name="users")
-manipulator.set_managing_object(users)
+    def _record_readings(self, obj, attributes):
+        obj.add(Reading(name=attributes["name"], value=attributes["value"]))
+        return len(obj)
 
-# Create users
-manipulator.user(name="Alice", email="alice@example.com")
-manipulator.user(name="Bob", email="bob@example.com")
+recorder = Pipeline(base_classes=[Reading, Readings])
+recorder.register_operation(Recorder(recorder))
+
+series = Readings(name="series")
+recorder.record(series, name="sensor-2", value=19.0)   # 1
 ```
 
 ### With Projects
 
 ```python
-from msb_arch.super import Project
+from msb_arch import Project
 
-class TaskProject(Project):
-    def create_item(self, item_code="TASK"):
-        return Task(name=f"{item_code}_{len(self._items)+1}")
+class ReadingProject(Project):
+    _item_type = Reading
 
-project = TaskProject(name="tasks")
-manipulator.register_operation(project, operation="task")
+    def create_item(self, item_code="R", isactive=True):
+        self.add_item(Reading(name=item_code, value=0.0, isactive=isactive))
 
-# Project operations
-manipulator.task(method="create_item", item_code="FEATURE")
+managed = Pipeline(base_classes=[Reading])
+managed.register_operation(Inspector(managed), operation="inspect")
+
+project = ReadingProject(name="observations")
+project.create_item("R1")
+
+# with a managing object set, obj may be omitted from a request
+managed.set_managing_object(project)
+managed.inspect(get_name=None)      # 'observations'
 ```
 
 ## Response Format
 
 All Manipulator operations return standardized responses:
 
-```python
+```text
 {
     "status": bool,        # Operation success status
     "object": Any,         # Object identifier/name

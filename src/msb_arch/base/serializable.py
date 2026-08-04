@@ -14,6 +14,7 @@ from typing import (Dict,
 import weakref
 from contextvars import ContextVar
 from threading import RLock
+from ..errors import ResolutionError, TypeValidationError, UnknownAttributeError
 from ..utils.logging_setup import logger
 
 CYCLIC_REFERENCE = "<cyclic reference>"
@@ -163,7 +164,7 @@ class Serializable(ABC, metaclass=EntityMeta):
 
         unknown_attrs = set(kwargs.keys()) - set(self._fields.keys())
         if unknown_attrs:
-            raise ValueError(f"Unknown attributes provided for {self.__class__.__name__}: {unknown_attrs}")
+            raise UnknownAttributeError(f"Unknown attributes provided for {self.__class__.__name__}: {unknown_attrs}")
         
         logger.debug("Initialized %s instance with name=%s, isactive=%s", self.__class__.__name__, name, isactive)
     def _adopt(self, owner: Optional['Serializable'] = None, _seen: Optional[Set[int]] = None) -> None:
@@ -259,7 +260,7 @@ class Serializable(ABC, metaclass=EntityMeta):
             - The structural check is delegated to `_check_type`, which walks nested generics.
         """
         if key == 'name' and value is None:
-            raise TypeError(f"Attribute '{key}' cannot be None")
+            raise TypeValidationError(f"Attribute '{key}' cannot be None")
         if value is None:
             return
 
@@ -299,7 +300,7 @@ class Serializable(ABC, metaclass=EntityMeta):
         if resolved_type is Any:
             return
         if resolved_type is None or resolved_type is type(None):
-            raise TypeError(f"{subject} must be None, got {type(value)}")
+            raise TypeValidationError(f"{subject} must be None, got {type(value)}")
 
         origin = get_origin(resolved_type)
         type_args = get_args(resolved_type)
@@ -307,7 +308,7 @@ class Serializable(ABC, metaclass=EntityMeta):
         if origin is None:
             if isinstance(resolved_type, (type, tuple)):
                 if not isinstance(value, resolved_type):
-                    raise TypeError(f"{subject} must be of type {resolved_type}, got {type(value)}")
+                    raise TypeValidationError(f"{subject} must be of type {resolved_type}, got {type(value)}")
             else:
                 logger.debug("Skipping unenforceable type hint %r for '%s'", resolved_type, key)
             return
@@ -321,51 +322,51 @@ class Serializable(ABC, metaclass=EntityMeta):
                     return
                 except TypeError:
                     continue
-            raise TypeError(f"{subject} does not match any type in {resolved_type}, got {type(value)}")
+            raise TypeValidationError(f"{subject} does not match any type in {resolved_type}, got {type(value)}")
 
         if origin is Literal:
             for literal_value in type_args:
                 if type(value) is type(literal_value) and value == literal_value:
                     return
-            raise TypeError(f"{subject} must be one of {list(type_args)}, got {value!r}")
+            raise TypeValidationError(f"{subject} must be one of {list(type_args)}, got {value!r}")
 
         if origin is type:
             if not isinstance(value, type):
-                raise TypeError(f"{subject} must be a class, got {type(value)}")
+                raise TypeValidationError(f"{subject} must be a class, got {type(value)}")
             if type_args:
                 bound = cls._resolve_type(type_args[0])
                 if isinstance(bound, type) and not issubclass(value, bound):
-                    raise TypeError(f"{subject} must be a subclass of {bound}, got {value}")
+                    raise TypeValidationError(f"{subject} must be a subclass of {bound}, got {value}")
             return
 
         if origin is AbcCallable:
             if not callable(value):
-                raise TypeError(f"{subject} must be callable, got {type(value)}")
+                raise TypeValidationError(f"{subject} must be callable, got {type(value)}")
             return
 
         if origin is dict or (isinstance(origin, type) and issubclass(origin, AbcMapping)):
             if not isinstance(value, origin):
-                raise TypeError(f"{subject} must be a {origin.__name__}, got {type(value)}")
+                raise TypeValidationError(f"{subject} must be a {origin.__name__}, got {type(value)}")
             if origin is dict and len(type_args) == 2:
                 cls._check_mapping(key, value, type_args[0], type_args[1], subject)
             return
 
         if origin in (list, set, frozenset):
             if not isinstance(value, origin):
-                raise TypeError(f"{subject} must be a {origin.__name__}, got {type(value)}")
+                raise TypeValidationError(f"{subject} must be a {origin.__name__}, got {type(value)}")
             if type_args:
                 cls._check_elements(key, value, type_args[0], f"Item in {origin.__name__} '{key}'")
             return
 
         if origin is tuple:
             if not isinstance(value, tuple):
-                raise TypeError(f"{subject} must be a tuple, got {type(value)}")
+                raise TypeValidationError(f"{subject} must be a tuple, got {type(value)}")
             cls._check_tuple(key, value, type_args, subject)
             return
 
         # Any other generic alias (user generics, abstract collections): check the origin only.
         if isinstance(origin, type) and not isinstance(value, origin):
-            raise TypeError(f"{subject} must be of type {resolved_type}, got {type(value)}")
+            raise TypeValidationError(f"{subject} must be of type {resolved_type}, got {type(value)}")
     @classmethod
     def _check_elements(cls, key: str, values: Any, item_type: Any, subject: str) -> None:
         """Check every element of a homogeneous collection against an item type.
@@ -434,7 +435,7 @@ class Serializable(ABC, metaclass=EntityMeta):
             cls._check_elements(key, value, type_args[0], f"Item in tuple '{key}'")
             return
         if len(value) != len(type_args):
-            raise TypeError(f"{subject} must have {len(type_args)} items, got {len(value)}")
+            raise TypeValidationError(f"{subject} must have {len(type_args)} items, got {len(value)}")
         for index, (item, item_type) in enumerate(zip(value, type_args)):
             if item is None:
                 continue
@@ -566,7 +567,7 @@ class Serializable(ABC, metaclass=EntityMeta):
             if len(narrowed) == 1:
                 return narrowed[0]
 
-        raise TypeError(
+        raise ResolutionError(
             f"Ambiguous type '{type_name}' while restoring {cls.__name__}: "
             f"{sorted(f'{c.__module__}.{c.__name__}' for c in candidates)}"
         )
@@ -608,13 +609,56 @@ class Serializable(ABC, metaclass=EntityMeta):
             if len(candidates) == 1:
                 resolved = candidates[0]
             elif len(candidates) > 1:
-                raise TypeError(
+                raise ResolutionError(
                     f"Ambiguous type name '{type_name}' for {field_path or cls.__name__}: "
                     f"{sorted(f'{c.__module__}.{c.__name__}' for c in candidates)}"
                 )
         if resolved is None:
-            raise TypeError(f"Cannot resolve type name '{type_name}' for {field_path or cls.__name__}")
+            raise ResolutionError(f"Cannot resolve type name '{type_name}' for {field_path or cls.__name__}")
         return resolved
+
+    @classmethod
+    def _resolve_type_variable(cls, variable: Any, field_path: str = "") -> Any:
+        """Resolve a type variable to whatever the class was parameterized with.
+
+        Args:
+            variable (TypeVar): The type variable to resolve.
+            field_path (str, optional): Where it was found, for error messages. Defaults to "".
+
+        Returns:
+            Any: The type the variable stands for in this class, or `Any` when nothing
+                determines it.
+
+        Notes:
+            - **By position.** A variable is matched against the parameters its own generic
+              base declares, so the second parameter of `Generic[T, U]` resolves to the second
+              argument. Taking the first argument regardless, as this did before, silently
+              gave every field the first type.
+            - Constraints become a union: `TypeVar('V', int, str)` accepts an `int` or a `str`,
+              where before it accepted only an `int`.
+            - A bound resolves to the bound.
+            - Anything left unparameterized resolves to `Any` rather than raising. That
+              matches what `_check_type` already does with a hint it cannot reduce to a class:
+              an unresolvable annotation does not block an otherwise valid assignment.
+        """
+        for base in getattr(cls, '__orig_bases__', ()) or ():
+            parameters = getattr(get_origin(base), '__parameters__', ())
+            arguments = get_args(base)
+            if variable in parameters and len(arguments) == len(parameters):
+                argument = arguments[parameters.index(variable)]
+                # A base that is still generic answers with the variable itself.
+                if argument is not variable:
+                    return cls._resolve_type(argument, field_path)
+
+        if variable.__bound__:
+            return cls._resolve_type(variable.__bound__, field_path)
+        if variable.__constraints__:
+            return cls._resolve_type(Union[variable.__constraints__], field_path)
+
+        logger.debug("TypeVar '%s' in %s is unparameterized; accepting any value",
+                     variable, field_path or cls.__name__)
+        return Any
+
     @classmethod
     def _resolve_type(cls, type_hint: Any, field_path: str = "") -> Any:
         """Resolve forward references and type variables to actual types.
@@ -658,15 +702,7 @@ class Serializable(ABC, metaclass=EntityMeta):
                 return resolved
 
             if isinstance(type_hint, TypeVar):
-                args = get_args(cls.__orig_bases__[0]) if getattr(cls, '__orig_bases__', None) else ()
-                if args:
-                    resolved = cls._resolve_type(args[0], field_path)
-                elif type_hint.__bound__:
-                    resolved = cls._resolve_type(type_hint.__bound__, field_path)
-                elif type_hint.__constraints__:
-                    resolved = cls._resolve_type(type_hint.__constraints__[0], field_path)
-                else:
-                    raise TypeError(f"Cannot resolve TypeVar '{type_hint}' in {cls.__name__}")
+                resolved = cls._resolve_type_variable(type_hint, field_path)
                 cache[type_hint] = resolved
                 return resolved
 
@@ -676,7 +712,7 @@ class Serializable(ABC, metaclass=EntityMeta):
             raise
         except Exception as e:
             logger.error("Failed to resolve type hint %s: %s", type_hint, str(e))
-            raise TypeError(f"Type resolution failed for {type_hint} in {field_path or cls.__name__}: {str(e)}")
+            raise ResolutionError(f"Type resolution failed for {type_hint} in {field_path or cls.__name__}: {str(e)}")
     def __hash__(self) -> int:
         """Return a hash consistent with `__eq__`.
 
@@ -720,4 +756,4 @@ class Serializable(ABC, metaclass=EntityMeta):
             self._invalidate_cache()
             logger.debug("Set attribute '%s' of %s", key, self.__class__.__name__)
         else:
-            raise ValueError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
+            raise UnknownAttributeError(f"Unknown attribute '{key}' for {self.__class__.__name__}")

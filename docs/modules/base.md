@@ -193,6 +193,10 @@ Parameterized hints are checked structurally and nested to any depth, so
 | `Sequence[X]`, `Mapping[K, V]` and other abstract collections | `isinstance` against the origin only |
 | `Annotated[X, ...]` | unwrapped to X |
 
+- **A JSON round trip does not yet survive `Set[X]`, `FrozenSet[X]` or `Tuple[X, Y]`.**
+  `to_dict` emits the Python object as it is, so `json.dumps` fails on a set, and a tuple that
+  survives `dumps` as a list is then rejected by `from_dict` for not being a tuple. Item B12
+  in [the roadmap](../ROADMAP.md). Every other supported hint round-trips.
 - `None` elements inside collections are skipped, mirroring the top-level rule for attributes.
 - Elements of abstract collections are deliberately left unchecked so that validation never
   consumes an arbitrary iterable.
@@ -275,7 +279,7 @@ print(data["items"]["Widget"])
 # {'name': 'Widget', 'isactive': True, 'price': 10.99, 'category': 'Tools', 'type': 'Product'}
 
 # Deserialize
-new_inventory = BaseContainer[Product].from_dict(data)
+new_inventory = MyContainer.from_dict(data)   # a concrete subclass, not the generic alias
 ```
 
 ### Container Methods
@@ -323,6 +327,52 @@ new_inventory = BaseContainer[Product].from_dict(data)
 | `__eq__(other)` | Compares two objects for equality |
 | `__hash__()` | Returns the hash value of the object |
 
+## Caching and memory
+
+`use_cache=True` keeps the result of `to_dict` on the object. It is off by default, and what
+it costs is predictable enough to decide without measuring.
+
+**One mapping per caching object, and it duplicates the data.** The cache is a full
+serialization, not a view, so an entity that caches holds its own attributes twice: once as
+attributes, once as a dictionary. Nothing is shared between the two.
+
+**It is bounded by the object graph, not by traffic.** Serializing the same object a million
+times produces one mapping, not a million, so the cache cannot grow with request volume. It
+grows only when the model does.
+
+**It is never evicted.** A cached mapping lives as long as its object and is replaced, not
+released, when invalidated. There is no size limit and no expiry, because there is nothing to
+limit: the ceiling is the size of the model.
+
+Measured on 2026-08-04, with entities of two fields beyond `name` and `isactive`:
+
+| Container of 8 000 items | Resident |
+| --- | --- |
+| Nothing caches | 4.18 MB |
+| The container caches | 5.75 MB |
+| The container and every item cache | 7.16 MB |
+
+A cached mapping costs roughly 275 bytes per item and scales linearly: 0.27 MB at 1 000
+items, 5.25 MB at 20 000.
+
+**Caching at both levels stores the data twice.** A container's mapping already contains every
+item serialized inline, so item caches add a second copy of the same content -- the 71%
+above, against 38% for the container alone. Cache the level you actually serialize. Caching
+items as well pays off only when they are also serialized individually and often.
+
+Two behaviours worth knowing before turning it on:
+
+- **The mapping is returned as it is, not copied.** Mutating what `to_dict` returns corrupts
+  the cache for every later reader. Copy it before changing it.
+- **Invalidation climbs the ownership graph.** Changing a nested entity or a container item
+  refreshes every cache above it, so a write is not free: with many owners the walk is the
+  dominant cost, and it currently runs even when no owner caches at all. That is item P6 in
+  [the roadmap](../ROADMAP.md).
+
+Use it for objects serialized repeatedly and written rarely -- a model rendered to a GUI on
+every redraw. Avoid it for write-heavy objects, where every write pays for the walk and
+throws the mapping away, and for one-shot serialization, where nothing reads the cache twice.
+
 ## Best Practices
 
 1. **Define Clear Type Annotations**: Use specific types in your entity classes for better validation.
@@ -335,17 +385,26 @@ new_inventory = BaseContainer[Product].from_dict(data)
 
 4. **Leverage Container Queries**: Use `get_by_value()` for complex filtering instead of manual loops.
 
-5. **Enable Caching**: Use `use_cache=True` for entities that are serialized frequently. The
-   cached mapping is returned as is, so copy it before mutating. Invalidation travels up the
-   ownership chain, so changing a nested entity or a container item refreshes every cache
-   above it.
+5. **Enable Caching Deliberately**: `use_cache=True` pays for objects serialized often and
+   written rarely. See [Caching and memory](#caching-and-memory) for what it costs and why
+   caching a container and its items both is usually waste.
 
 ## Error Handling
 
-The Base module raises specific exceptions:
+The Base module raises the framework's own types, each deriving from the built-in it
+replaces, so nothing written against an earlier version stops catching what it caught:
 
-- `TypeError`: When attribute types don't match annotations
-- `ValueError`: When validation rules are violated
-- `KeyError`: When accessing non-existent attributes
+| Raised | Also a | When |
+| --- | --- | --- |
+| `TypeValidationError` | `TypeError` | an attribute or a container item does not match its annotation |
+| `UnknownAttributeError` | `ValueError` | an attribute the class never declared |
+| `ItemNameError`, `DuplicateNameError` | `ValueError` | an item has no name, the wrong name, or one already taken |
+| `ResolutionError` | `TypeError` | a forward reference, a `TypeVar` or an unparameterized container cannot be resolved |
+| `NotFoundError` | `KeyError` | an attribute or item was looked up and is not there |
+| `SerializationError` | `ValueError`, `TypeError` | a round trip through a dictionary failed |
+
+All of them derive from `MSBError`, so `except MSBError` catches anything from the framework
+and `except ValidationError` catches anything the caller got wrong. The full tree is in the
+[API reference](../api.md#exception-hierarchy).
 
 All operations are logged with appropriate levels (debug, info, warning, error).

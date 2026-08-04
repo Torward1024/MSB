@@ -13,6 +13,78 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [0.5.0] - 2026-08-04
+
+Errors and measurement. The framework gains its own exceptions, a type variable resolves to
+what it was actually parameterized with, and performance and documentation stop being
+defended by memory: benchmarks fail a build on a regression, and every example in the
+documentation runs.
+
+First release of the road to 1.0.0, whose scope is now closed and written down in
+[the roadmap](docs/ROADMAP.md).
+
+### Added
+
+- **`msb_arch.errors`**, with every type exported from `msb_arch` itself: `MSBError` at the
+  root, `ValidationError` and `OperationError` grouping beneath it, and thirteen specific
+  types under those. The 93 places that raised a built-in now raise one of them. The full
+  tree, and which built-in each answers to, is in
+  [the API reference](docs/api.md#exception-hierarchy).
+- **A cause on `HandlerError`**: `_apply_methods(strict=True)` attaches the exception the
+  handler actually raised, so a failure inside domain code keeps its traceback instead of
+  being reduced to a string. A facade raising with `raise_on_error=True` cannot, because by
+  then the failure has crossed into a response and only the message survives.
+- `BaseContainer._item_type_hint()`, one place that answers what a container was declared to
+  hold, replacing five copies of the same lookup.
+- **A benchmark suite that can fail a build.** Seven benchmarks asserting ratios, call counts
+  and scaling rather than wall-clock times, so a slow CI runner does not fail them and a real
+  regression does. CI now also runs on pull requests; before, it ran only after a merge.
+- **Documented memory behaviour of the serialization cache**: one mapping per caching object,
+  duplicating the data, never evicted, bounded by the model rather than by traffic. Roughly
+  275 bytes per item. Caching a container *and* its items stores the same content twice.
+
+### Changed
+
+- **Nothing a caller catches.** Every new type also derives from the built-in it replaces, so
+  `except TypeError`, `except ValueError`, `except KeyError` and `except AttributeError` catch
+  exactly what they did before. This was the constraint the design was built around rather
+  than a happy accident: of 494 existing tests, none needed changing.
+- Two types answer to two built-ins, because the sites they replace did not agree on one:
+  `RequestError` is a `ValueError` and a `TypeError`, and so is `SerializationError`.
+- **A `TypeVar` that nothing determines now resolves to `Any` instead of raising**, so a
+  generic entity can be used without being parameterized. This matches what `_check_type`
+  already does with any hint it cannot reduce to a class.
+- The `Super` guide and the examples were rewritten where they no longer ran, and every claim
+  about what an example produces is now an `assert` rather than a comment.
+
+### Fixed
+
+- **A type variable resolved to the wrong type.** Every variable took the *first* type
+  argument regardless of its position, so the second field of a `Generic[T, U]` was validated
+  against the first parameter's type and accepted wrong values. Resolution is now by
+  position, and reaches arguments through an inheritance chain.
+- **A constrained type variable accepted only its first constraint**, so `TypeVar('V', int,
+  str)` rejected every `str`. Constraints now form a union.
+
+- **A container declared without its type parameter** -- `class Box(BaseContainer)` rather
+  than `BaseContainer[Item]` -- failed with `AttributeError: type object 'Serializable' has
+  no attribute '__args__'` from inside the framework. The guard meant to catch this looked up
+  `__orig_bases__` through inheritance, where it found `BaseContainer`'s own bases and so
+  never fired. It now raises `ResolutionError` naming the syntax to use. A subclass of an
+  already parameterized container still resolves, since that case relies on the same
+  inherited lookup.
+- A container whose bases put a mixin before `BaseContainer[Item]` could not resolve its item
+  type, because the lookup assumed the parameterized base was first.
+
+### Upgrading from 0.4.0
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| Nothing. | Every exception still derives from the built-in it replaces. | Nothing. Adopt the specific types where a narrower `except` would help. |
+| `ResolutionError: Cannot determine generic type` from a container that used to work | It was declared without a type parameter and failed later, obscurely, or silently resolved to the type variable. | Declare it as `BaseContainer[YourType]`. |
+| A generic entity now rejects a value it used to accept | The field was typed by the *first* type argument regardless of position. It is now validated against its own parameter, which is stricter and correct. | Pass a value of the declared type. If the old behaviour was being relied on, the annotation said something other than what was meant. |
+| A generic entity now accepts a value it used to reject | Either a constrained `TypeVar` was allowing only its first constraint, or an unparameterized one was raising. | Nothing. Constrain the field explicitly if the wider type is unwanted. |
+
 ## [0.4.0] - 2026-08-03
 
 Moves the loop every handler was writing by hand into the framework, and makes the result

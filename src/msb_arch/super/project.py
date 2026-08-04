@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from threading import RLock
 from typing import Dict, Any, Optional, Type, List, TypeVar
 from ..utils.validation import check_non_empty_string
+from ..errors import DuplicateNameError, SerializationError, TypeValidationError
 from ..utils.logging_setup import logger
 from ..base.basecontainer import BaseContainer
 from ..base.baseentity import BaseEntity
@@ -79,9 +80,9 @@ class Project(ABC):
             ValueError: If an item with the same name already exists in the project.
         """
         if not isinstance(item, self._item_type):
-            raise TypeError(f"Item must be of type {self._item_type.__name__} for project '{self.name}', got {type(item).__name__}")
+            raise TypeValidationError(f"Item must be of type {self._item_type.__name__} for project '{self.name}', got {type(item).__name__}")
         if self._items.has_item(item.name):
-            raise ValueError(f"Item with name '{item.name}' already exists in project '{self.name}'")
+            raise DuplicateNameError(f"Item with name '{item.name}' already exists in project '{self.name}'")
         self._items.add(item)
         logger.debug("Added item '%s' to project '%s'", item.name, self.name)
 
@@ -304,11 +305,11 @@ class Project(ABC):
                     items[k] = cls._item_type.from_dict(v)
                 except (TypeError, ValueError) as e:
                     logger.error("Failed to deserialize item '%s' for project: %s", k, str(e))
-                    raise ValueError(f"Invalid data for item '{k}': {str(e)}") from e
+                    raise SerializationError(f"Invalid data for item '{k}': {str(e)}") from e
             return cls(name=data["name"], items=items)
         except (KeyError, TypeError, ValueError) as e:
             logger.error("Failed to deserialize Project from dict with name '%s': %s", data.get('name', 'unknown'), str(e))
-            raise ValueError(f"Invalid project data: {str(e)}") from e
+            raise SerializationError(f"Invalid project data: {str(e)}") from e
 
     def __repr__(self) -> str:
         """Return a string representation of the Project."""

@@ -108,6 +108,7 @@ Validates that a value matches an expected type.
 
 **Example:**
 ```python
+# raises: TypeError
 from msb_arch.utils.validation import check_type
 
 check_type("hello", str, "message")  # OK
@@ -131,6 +132,7 @@ Validates that a numeric value is within a specified range.
 
 **Example:**
 ```python
+# raises: ValueError
 from msb_arch.utils.validation import check_range
 
 check_range(5.0, 0.0, 10.0, "score")  # OK
@@ -161,6 +163,7 @@ Validates that a value is non-negative.
 
 **Example:**
 ```python
+# raises: ValueError
 from msb_arch.utils.validation import check_positive, check_non_negative
 
 check_positive(5, "count")  # OK
@@ -184,6 +187,7 @@ Validates that a value is a non-empty string.
 
 **Example:**
 ```python
+# raises: ValueError
 from msb_arch.utils.validation import check_non_empty_string
 
 check_non_empty_string("hello", "name")  # OK
@@ -206,6 +210,7 @@ Validates that all elements in a list/tuple match an expected type.
 
 **Example:**
 ```python
+# raises: TypeError
 from msb_arch.utils.validation import check_list_type
 
 check_list_type([1, 2, 3], int, "numbers")  # OK
@@ -227,6 +232,7 @@ Validates that a numeric value is non-zero.
 
 **Example:**
 ```python
+# raises: ValueError
 from msb_arch.utils.validation import check_non_zero
 
 check_non_zero(5, "divisor")  # OK
@@ -235,11 +241,14 @@ check_non_zero(0, "divisor")  # Raises ValueError
 
 ## Integration with Framework
 
-### Automatic Validation in BaseEntity
+### Their relation to BaseEntity
 
-The validation functions are automatically used by `BaseEntity` for attribute validation:
+`BaseEntity` validates **types**, from the annotations, and nothing else. The functions in
+this module check **values**, and nothing calls them for you: an entity accepts a negative
+price and an empty name.
 
 ```python
+# raises: TypeError
 from msb_arch.base import BaseEntity
 
 class Product(BaseEntity):
@@ -247,10 +256,26 @@ class Product(BaseEntity):
     price: float
     quantity: int
 
-# This uses check_type, check_positive, etc. automatically
-product = Product(name="Widget", price=10.99, quantity=5)  # OK
-invalid = Product(name="", price=-1, quantity=5)  # Raises ValueError
+Product(name="Widget", price=10.99, quantity=5)     # accepted
+Product(name="Widget", price=-1.0, quantity=5)      # also accepted: -1.0 is a float
+Product(name="Widget", price="free", quantity=5)    # rejected: wrong type
 ```
+
+To constrain a value, call the check yourself, usually in the subclass:
+
+```python
+from msb_arch.utils.validation import check_positive
+
+class CheckedProduct(BaseEntity):
+    price: float
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        check_positive(self.price, "price")
+```
+
+Attaching constraints to annotations, so `Annotated[float, Positive()]` does this without a
+custom `__init__`, is item B2 in [the roadmap](../ROADMAP.md).
 
 ### Logging Integration
 
@@ -287,10 +312,16 @@ def check_custom_rule(value, name: str) -> None:
 
 ## Error Types
 
-The validation functions raise specific exception types:
+The validation functions raise the framework's own types:
 
-- `TypeError`: Type mismatches
-- `ValueError`: Value constraint violations
+- `TypeValidationError` for a type mismatch. It derives from `TypeError`, so `except TypeError`
+  still catches it.
+- `ConstraintError` for a value that is of the right type and still not allowed -- not
+  positive, out of range, empty. It derives from `ValueError`.
+
+Both derive from `ValidationError` and therefore from `MSBError`, so one `except` can cover
+every way the caller got the data wrong. The full tree is in the
+[API reference](../api.md#exception-hierarchy).
 
 All exceptions include descriptive messages with parameter names and expected values.
 

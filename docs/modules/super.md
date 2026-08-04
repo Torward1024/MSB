@@ -66,21 +66,58 @@ signatures will not change without a major version.
 how many methods the request named, which is what lets a request history record and replay
 exactly what happened.
 
+The examples from here on run against this setup:
+
 ```python
-manipulator.process_request({
+from msb_arch import BaseEntity, Manipulator, Super
+
+class Telescope(BaseEntity):
+    diameter: float
+
+    def get_code(self) -> str:
+        return self.name
+
+    def get_diameter(self) -> float:
+        return self.diameter
+
+    def set_diameter(self, value: float) -> bool:
+        self.diameter = value
+        return True
+
+class Inspector(Super):
+    OPERATION = "inspect"
+
+    def _inspect(self, obj, attributes):
+        return self._apply_methods(obj, attributes)
+
+class Observatory(Manipulator):
+    pass
+
+manipulator = Observatory(base_classes=[Telescope])
+manipulator.register_operation(Inspector(manipulator))
+telescope = Telescope(name="T1", diameter=25.0)
+```
+
+```python
+results = manipulator.process_request({
     "operation": "inspect", "obj": telescope,
     "attributes": {"get_code": None, "get_diameter": None},
 })["result"]
-# {'get_code':     {'status': True, 'result': 'T1'},
-#  'get_diameter': {'status': True, 'result': 25.0}}
+
+assert results == {
+    "get_code":     {"status": True, "result": "T1"},
+    "get_diameter": {"status": True, "result": 25.0},
+}
 ```
 
 The facade is sugar, so it unwraps the common case: a request naming exactly one method
 gives back that value rather than a mapping of one.
 
 ```python
-manipulator.inspect(telescope, get_code=None)                    # 'T1'
-manipulator.inspect(telescope, get_code=None, get_diameter=None) # the mapping
+assert manipulator.inspect(telescope, get_code=None) == "T1"
+
+both = manipulator.inspect(telescope, get_code=None, get_diameter=None)
+assert both["get_diameter"]["result"] == 25.0        # a mapping, not a value
 ```
 
 `strict=True`, the default, stops at the first failed method and lets `execute` turn it into
@@ -108,9 +145,15 @@ A handler that needs to return something of its own still can; `_apply_methods` 
 used for its effect and the handler decides what comes back.
 
 ```python
-    def _configure_source(self, obj, attributes):
+class ReturningConfigurator(Super):
+    OPERATION = "configure"
+
+    def _configure_telescope(self, obj, attributes):
         self._apply_methods(obj, attributes)
-        return obj.get()
+        return obj.get_diameter()          # the handler decides what comes back
+
+manipulator.register_operation(ReturningConfigurator(manipulator))
+assert manipulator.configure(telescope, set_diameter=30.0) == 30.0
 ```
 
 Handlers may of course call each other directly. Only the entry point goes through
@@ -119,12 +162,15 @@ convention as long as one of the handlers calls it.
 
 ### Basic Usage
 
+The operation name comes from `OPERATION`. A `Super` can be driven directly, without a
+`Manipulator`, as long as that is set: `__init__` copies it to `_operation`, so assigning
+`_operation` on the class instead is overwritten and leaves the instance with no operation.
+
 ```python
 from msb_arch.super import Super
-from msb_arch.base import BaseEntity
 
 class Calculator(Super):
-    _operation = "calculate" # if you don't use manipulator
+    OPERATION = "calculate"
 
     def _calculate_add(self, obj, attributes):
         """Add two numbers"""
@@ -138,11 +184,10 @@ class Calculator(Super):
         b = attributes.get("b", 1)
         return a * b
 
-# Usage
 calc = Calculator()
 result = calc.execute(None, {"method": "add", "a": 5, "b": 3})
-print(result)
-# {"status": True, "object": None, "method": "_calculate_add", "result": 8}
+assert result["status"] is True
+assert result["result"] == 8
 ```
 
 ### Advanced Features
@@ -288,14 +333,11 @@ info = project.get_project()
 print(info["name"])
 print(len(info["items"]))
 
-# Set project configuration
-new_config = {
-    "name": "updated_tasks",
-    "items": {
-        "task1": {"name": "task1", "priority": 1, "completed": False, "isactive": True, "type": "Task"}
-    }
-}
-project.set_project(**new_config)
+# Set project configuration. Note the asymmetry: `get_project` reports items as serialized
+# mappings, while `set_project` takes the entities themselves, so the two do not compose.
+project.set_project(name="updated_tasks",
+                    items={"task1": Task(name="task1", priority=1)})
+assert project.name == "updated_tasks"
 ```
 
 ## Integration with Manipulator
@@ -305,20 +347,19 @@ The Super classes work seamlessly with the Manipulator class for complex operati
 ```python
 from msb_arch.mega import Manipulator
 
-# Create manipulator
-manipulator = Manipulator()
+class Workbench(Manipulator):
+    pass
 
-# Register operations
-manipulator.register_operation(Calculator())
-manipulator.set_managing_object(TaskProject(name="tasks"))
+bench = Workbench(base_classes=[Task])
+bench.register_operation(Calculator(bench))
+bench.set_managing_object(TaskProject(name="tasks"))
 
-# Process requests
-result = manipulator.process_request({
+result = bench.process_request({
     "operation": "calculate",
     "attributes": {"method": "add", "a": 10, "b": 20}
 })
 
-print(result["result"])  # 30
+assert result["result"] == 30
 ```
 
 ## Best Practices
@@ -337,7 +378,7 @@ print(result["result"])  # 30
 
 All Super operations return responses in this format:
 
-```python
+```text
 {
     "status": bool,        # True if successful, False otherwise
     "object": Any,         # Name or identifier of the processed object
