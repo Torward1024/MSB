@@ -1,6 +1,6 @@
 # MSB Roadmap
 
-The path from 0.4.0 to 1.0.0, as a work list. Four releases, 16 open items, each with the
+The path from 0.4.0 to 1.0.0, as a work list. Four releases, 17 open items, each with the
 release it belongs to, what it depends on and what can go wrong.
 
 **How to use this.** Take the next unstarted item in the release table currently in progress.
@@ -26,7 +26,7 @@ polishing without a stopping condition.
 | Release | Theme | Closes | Contract risk | Exit criterion |
 | --- | --- | --- | --- | --- |
 | **0.5.0** | Errors and measurement | B3, B1, P7, P9, P11 | **Low** — nothing changes what an annotation or a request means | CI fails on a performance regression; every documented example runs |
-| **0.6.0** | The data contract | B2, B4, B9, P5, P6 | **Medium** — annotations and serialized data gain meaning | A file written by 0.6.0 declares its version; a constraint on an annotation is enforced |
+| **0.6.0** | The data contract | B2, B4, B9, B12, P5, P6 | **Medium** — annotations and serialized data gain meaning | A file written by 0.6.0 declares its version, survives a JSON round trip, and enforces a constraint on an annotation |
 | **0.7.0** | The request contract | B11, P8, P12, B5, B8 | **Medium-high** — how a request is processed changes | Every request passes an interceptor chain; a `Manipulator` works with no `Super` written by hand |
 | **0.8.0** | The async surface | B7 | **Low** — purely additive | `await manipulator.acalculate(...)` keeps an event loop responsive |
 | **1.0.0** | The freeze | B10, P13 | **None** — no code changes | Deprecation policy published, public surface marked, an application guide exists |
@@ -56,6 +56,7 @@ Status: **done** (merged or on a branch), **next** (the item to pick up), **open
 | B2 | Value constraints on annotations: `Annotated[float, Positive()]`, wired to `utils/validation.py` | B3 | Adds meaning to an annotation | A negative price is rejected by the model, not by a hand-written `__init__` | open |
 | B4 | Schema version in serialized data, and a migration hook | B3 | Changes what `to_dict` writes | A file written by an earlier version still loads, or fails with a migration error naming the version | open |
 | B9 | Ingest foreign data: a declared discriminator, or a default type per field | B4 | Changes `from_dict` | JSON not produced by MSB restores into a declared model | open |
+| B12 | Make `to_dict`/`from_dict` actually round-trip through JSON: emit `set`, `frozenset` and `tuple` as lists, restore them from the annotation, and order sets deterministically | B4 | Changes what `to_dict` emits for three annotations | `json.loads(json.dumps(obj.to_dict()))` restores an equal object for every supported annotation | open |
 | P5 | Compile a validator per field once per class | B2, P7 | Rewrites the validation hot path | Entity construction measurably faster, benchmarks green | open |
 | P6 | Skip the invalidation walk when no owner caches | P7 | Small, isolated | The idle walk costs nothing when nothing caches | open |
 
@@ -104,7 +105,7 @@ The stop list. Each of these is a reasonable idea, and each is out.
 
 | Item | Why not |
 | --- | --- |
-| Persistence beyond `to_dict`/`from_dict` | A store is a product of its own |
+| Persistence beyond `to_dict`/`from_dict` | A store is a product of its own, and how data is kept is the application's decision. What MSB owes it is a serialization API good enough to build any store on: a faithful round trip (B12), a version to migrate from (B4), and a discriminator for data it did not write (B9). Those are in 1.0; the store is not |
 | Pipelines and the DAG scheduler | Nothing to design against yet; see B6 |
 | Application generation from the model (P4) | Follows persistence and the async surface |
 | A plugin system | Nothing has asked for one |

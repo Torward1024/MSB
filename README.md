@@ -27,8 +27,9 @@ lets a session be logged and replayed.
   per-operation facades are sugar so you rarely write a request dictionary by hand.
 - **Operations that write themselves**: a handler is usually one call to `_apply_methods`,
   which applies everything a request names and reports each outcome.
-- **Universal serialization**: nested objects, cyclic references, and round trips through
-  JSON.
+- **Serialization**: nested objects to any depth, restored by type, with cycles detected
+  rather than followed. A JSON round trip is faithful except for `Set`, `FrozenSet` and
+  `Tuple` fields, which is item B12 in [the roadmap](docs/ROADMAP.md).
 - **Logging that behaves**: a dedicated `msb_arch` logger that stays silent until the
   application configures it.
 - **Exceptions you can catch precisely**: everything derives from `MSBError`, and also from

@@ -193,6 +193,10 @@ Parameterized hints are checked structurally and nested to any depth, so
 | `Sequence[X]`, `Mapping[K, V]` and other abstract collections | `isinstance` against the origin only |
 | `Annotated[X, ...]` | unwrapped to X |
 
+- **A JSON round trip does not yet survive `Set[X]`, `FrozenSet[X]` or `Tuple[X, Y]`.**
+  `to_dict` emits the Python object as it is, so `json.dumps` fails on a set, and a tuple that
+  survives `dumps` as a list is then rejected by `from_dict` for not being a tuple. Item B12
+  in [the roadmap](../ROADMAP.md). Every other supported hint round-trips.
 - `None` elements inside collections are skipped, mirroring the top-level rule for attributes.
 - Elements of abstract collections are deliberately left unchecked so that validation never
   consumes an arbitrary iterable.
