@@ -44,8 +44,8 @@ Status: **done** (merged or on a branch), **next** (the item to pick up), **open
 | # | Item | Depends on | Risk | Exit criterion | Status |
 | --- | --- | --- | --- | --- | --- |
 | B3 | Exception taxonomy: `MSBError` root, 16 types, each also deriving from the built-in it replaces | — | Behaviour visible to anyone catching exceptions | No bare built-in raised in the package; no existing test changed | **done** |
-| B1 | `TypeVar` resolution: resolve by parameter position, treat constraints as a union, fall back to `Any` when unparameterized | — | Corrects a type that is wrong today, so behaviour changes | `Generic[T, U]` resolves each parameter to its own type | **next** |
-| P7 | Benchmark suite in CI | — | None | A performance regression fails a build | open |
+| B1 | `TypeVar` resolution: resolve by parameter position, treat constraints as a union, fall back to `Any` when unparameterized | — | Corrects a type that is wrong today, so behaviour changes | `Generic[T, U]` resolves each parameter to its own type | **done** |
+| P7 | Benchmark suite in CI | — | None | A performance regression fails a build | **next** |
 | P9 | Document the cache's memory behaviour | — | None | The reader can predict the cost without measuring | open |
 | P11 | Repair the 11 documentation examples that no longer run | — | None | `STALE` in `tests/test_documentation.py` is empty | open |
 

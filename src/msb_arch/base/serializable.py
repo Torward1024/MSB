@@ -616,6 +616,49 @@ class Serializable(ABC, metaclass=EntityMeta):
         if resolved is None:
             raise ResolutionError(f"Cannot resolve type name '{type_name}' for {field_path or cls.__name__}")
         return resolved
+
+    @classmethod
+    def _resolve_type_variable(cls, variable: Any, field_path: str = "") -> Any:
+        """Resolve a type variable to whatever the class was parameterized with.
+
+        Args:
+            variable (TypeVar): The type variable to resolve.
+            field_path (str, optional): Where it was found, for error messages. Defaults to "".
+
+        Returns:
+            Any: The type the variable stands for in this class, or `Any` when nothing
+                determines it.
+
+        Notes:
+            - **By position.** A variable is matched against the parameters its own generic
+              base declares, so the second parameter of `Generic[T, U]` resolves to the second
+              argument. Taking the first argument regardless, as this did before, silently
+              gave every field the first type.
+            - Constraints become a union: `TypeVar('V', int, str)` accepts an `int` or a `str`,
+              where before it accepted only an `int`.
+            - A bound resolves to the bound.
+            - Anything left unparameterized resolves to `Any` rather than raising. That
+              matches what `_check_type` already does with a hint it cannot reduce to a class:
+              an unresolvable annotation does not block an otherwise valid assignment.
+        """
+        for base in getattr(cls, '__orig_bases__', ()) or ():
+            parameters = getattr(get_origin(base), '__parameters__', ())
+            arguments = get_args(base)
+            if variable in parameters and len(arguments) == len(parameters):
+                argument = arguments[parameters.index(variable)]
+                # A base that is still generic answers with the variable itself.
+                if argument is not variable:
+                    return cls._resolve_type(argument, field_path)
+
+        if variable.__bound__:
+            return cls._resolve_type(variable.__bound__, field_path)
+        if variable.__constraints__:
+            return cls._resolve_type(Union[variable.__constraints__], field_path)
+
+        logger.debug("TypeVar '%s' in %s is unparameterized; accepting any value",
+                     variable, field_path or cls.__name__)
+        return Any
+
     @classmethod
     def _resolve_type(cls, type_hint: Any, field_path: str = "") -> Any:
         """Resolve forward references and type variables to actual types.
@@ -659,15 +702,7 @@ class Serializable(ABC, metaclass=EntityMeta):
                 return resolved
 
             if isinstance(type_hint, TypeVar):
-                args = get_args(cls.__orig_bases__[0]) if getattr(cls, '__orig_bases__', None) else ()
-                if args:
-                    resolved = cls._resolve_type(args[0], field_path)
-                elif type_hint.__bound__:
-                    resolved = cls._resolve_type(type_hint.__bound__, field_path)
-                elif type_hint.__constraints__:
-                    resolved = cls._resolve_type(type_hint.__constraints__[0], field_path)
-                else:
-                    raise ResolutionError(f"Cannot resolve TypeVar '{type_hint}' in {cls.__name__}")
+                resolved = cls._resolve_type_variable(type_hint, field_path)
                 cache[type_hint] = resolved
                 return resolved
 
