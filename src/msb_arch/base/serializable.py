@@ -14,10 +14,17 @@ from typing import (Dict,
 import weakref
 from contextvars import ContextVar
 from threading import RLock
-from ..errors import ResolutionError, TypeValidationError, UnknownAttributeError
+from ..errors import (ResolutionError,
+                      SerializationError,
+                      TypeValidationError,
+                      UnknownAttributeError)
 from ..utils.logging_setup import logger
 
 CYCLIC_REFERENCE = "<cyclic reference>"
+
+# The key serialized data carries its model version under. Data written before this existed
+# has no such key, which `from_dict` reads as version 1.
+SCHEMA_FIELD = "schema_version"
 
 # Sentinel for cache lookups: None is a legitimate cached value, so it cannot mark a miss.
 _MISSING = object()
@@ -129,6 +136,14 @@ class Serializable(ABC, metaclass=EntityMeta):
     _type_cache: Dict[Any, Any] = {}
     _cached_to_dict: Dict[str, Any]
     _use_cache: bool
+
+    # The version of *this class's* serialized shape, written into every mapping it produces.
+    # Raise it in a subclass when a field is renamed, removed or given a new meaning, and
+    # override `migrate` to bring older data forward. Data written before versioning existed
+    # carries no version and is read as 1.
+    # Deliberately unannotated: an annotation here would make it one of `_fields`, so every
+    # entity would carry it as an attribute and serialize it as None.
+    SCHEMA_VERSION = 1
 
     def __init__(self, *, name: str, isactive: bool = True, use_cache: bool = False, **kwargs):
         """Initialize with a name, activation status, and optional typed attributes.
@@ -474,6 +489,152 @@ class Serializable(ABC, metaclass=EntityMeta):
         """
         return key in self._fields and hasattr(self, key)
 
+    @classmethod
+    def migrate(cls, data: dict, from_version: int) -> dict:
+        """Bring serialized data written by an older version of this class up to date.
+
+        Args:
+            data (dict): The mapping as it was written, with its original field names.
+            from_version (int): The `SCHEMA_VERSION` it was written under.
+
+        Returns:
+            dict: The same data in the shape the current version expects.
+
+        Raises:
+            SerializationError: By default, naming both versions. A class that raises its
+                `SCHEMA_VERSION` without overriding this is declaring that older data cannot
+                be read, and says so rather than failing later on a missing field.
+
+        Notes:
+            - Called by `from_dict` only when the version differs, so the common case costs
+              nothing.
+            - Migrate forward one step at a time when several versions have passed; each step
+              is easier to reason about than one jump, and the intermediate shapes are the
+              ones already tested.
+
+        Example:
+            ```python
+            class Telescope(BaseEntity):
+                SCHEMA_VERSION = 2
+                diameter: float          # was 'size' in version 1
+
+                @classmethod
+                def migrate(cls, data, from_version):
+                    if from_version == 1:
+                        data["diameter"] = data.pop("size")
+                    return data
+            ```
+        """
+        raise SerializationError(
+            f"{cls.__name__} cannot read data written under schema version {from_version}; "
+            f"it is now version {cls.SCHEMA_VERSION}. Override `migrate` to bring it forward."
+        )
+
+    @classmethod
+    def _deserialize_value(cls, value: Any, hint: Any, field_path: str = "") -> Any:
+        """Rebuild a value from plain data, guided by what the annotation declares.
+
+        Args:
+            value (Any): The data as it was read.
+            hint (Any): The annotation the value belongs to.
+            field_path (str, optional): Where it sits, for error messages. Defaults to "".
+
+        Returns:
+            Any: The value as the annotation declares it.
+
+        Notes:
+            - The annotation is the schema. JSON has no set, no tuple and no entity, so what
+              comes back is a list or a mapping, and only the declared type says which of the
+              three it was. This is why a `Tuple[float, float]` used to survive `json.dumps`
+              and then be rejected by `from_dict` for being a list.
+            - A mapping carrying a `type` field is an entity, and is restored through the
+              class that field names, so a subclass stored in a field typed as its base comes
+              back as the subclass.
+            - Anything the hint does not describe is returned unchanged, which keeps an exotic
+              annotation from blocking a restore.
+        """
+        if value is None:
+            return None
+
+        origin = get_origin(hint)
+        args = get_args(hint)
+
+        if origin is Union:
+            for member in args:
+                if member is type(None):
+                    continue
+                try:
+                    return cls._deserialize_value(value, member, field_path)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+            return value
+
+        if isinstance(value, dict) and "type" in value:
+            entity_type = cls._resolve_entity_type(value["type"], hint if isinstance(hint, type) else None)
+            if entity_type is not None:
+                return entity_type.from_dict(value)
+
+        if origin in (list, List):
+            member = args[0] if args else Any
+            return [cls._deserialize_value(item, member, field_path) for item in value]
+        if origin in (set, frozenset):
+            member = args[0] if args else Any
+            rebuilt = (cls._deserialize_value(item, member, field_path) for item in value)
+            return origin(rebuilt)
+        if origin is tuple:
+            if len(args) == 2 and args[1] is Ellipsis:
+                return tuple(cls._deserialize_value(item, args[0], field_path) for item in value)
+            if args:
+                return tuple(cls._deserialize_value(item, member, field_path)
+                             for item, member in zip(value, args))
+            return tuple(value)
+        if origin is dict and isinstance(value, dict):
+            member = args[1] if len(args) == 2 else Any
+            return {key: cls._deserialize_value(item, member, field_path)
+                    for key, item in value.items()}
+
+        if isinstance(hint, type) and issubclass(hint, Serializable) and isinstance(value, dict):
+            return hint.from_dict(value)
+
+        return value
+
+    @classmethod
+    def _serialize_value(cls, value: Any, seen: Set[int]) -> Any:
+        """Reduce a value to data that survives JSON, descending through collections.
+
+        Args:
+            value (Any): The value held by an attribute.
+            seen (Set[int]): Identities already serialized in this traversal.
+
+        Returns:
+            Any: The value as plain data.
+
+        Notes:
+            - Descent used to stop at the attribute: an entity held *directly* was serialized
+              and one held inside a list or a dict was not, so the mapping carried live
+              objects, `json.dumps` refused it and `from_dict` could not restore it.
+            - `set` and `frozenset` become lists, and `tuple` becomes a list, because JSON has
+              none of the three. The declared type is what restores them, in
+              `_deserialize_value`.
+            - A set is ordered before it is written. Its iteration order is arbitrary, so
+              without this the same object serializes differently on each run, and any later
+              comparison, hash or diff of the output is meaningless. Natural order is used
+              where the elements allow it and `repr` order otherwise, which is total.
+        """
+        if isinstance(value, Serializable):
+            return CYCLIC_REFERENCE if id(value) in seen else value.to_dict()
+        if isinstance(value, dict):
+            return {key: cls._serialize_value(item, seen) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [cls._serialize_value(item, seen) for item in value]
+        if isinstance(value, (set, frozenset)):
+            items = [cls._serialize_value(item, seen) for item in value]
+            try:
+                return sorted(items)
+            except TypeError:
+                return sorted(items, key=repr)
+        return value
+
     def to_dict(self) -> dict:
         """Convert the entity to a dictionary for serialization.
 
@@ -507,17 +668,15 @@ class Serializable(ABC, metaclass=EntityMeta):
         seen = _TRAVERSAL.get()
         try:
             seen.add(id(self))
-            data = {"name": self.name, "isactive": self.isactive, "type": self.__class__.__name__}
+            data = {"name": self.name, "isactive": self.isactive,
+                    "type": self.__class__.__name__,
+                    SCHEMA_FIELD: self.SCHEMA_VERSION}
             for key in self._fields:
                 if key.startswith('_'):
                     continue
                 if not hasattr(self, key):
                     continue
-                value = getattr(self, key)
-                if isinstance(value, Serializable):
-                    data[key] = CYCLIC_REFERENCE if id(value) in seen else value.to_dict()
-                else:
-                    data[key] = value
+                data[key] = self._serialize_value(getattr(self, key), seen)
         finally:
             if is_root:
                 _TRAVERSAL.reset(token)

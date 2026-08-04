@@ -27,9 +27,10 @@ lets a session be logged and replayed.
   per-operation facades are sugar so you rarely write a request dictionary by hand.
 - **Operations that write themselves**: a handler is usually one call to `_apply_methods`,
   which applies everything a request names and reports each outcome.
-- **Serialization**: nested objects to any depth, restored by type, with cycles detected
-  rather than followed. A JSON round trip is faithful except for `Set`, `FrozenSet` and
-  `Tuple` fields, which is item B12 in [the roadmap](docs/ROADMAP.md).
+- **Serialization that round-trips**: `json.loads(json.dumps(obj.to_dict()))` restores an
+  equal object, through lists, dicts, sets and tuples, for entities nested to any depth.
+  Cycles are detected rather than followed, and serialized data carries the version of the
+  class that wrote it, so a model can change shape and still read its old files.
 - **Logging that behaves**: a dedicated `msb_arch` logger that stays silent until the
   application configures it.
 - **Exceptions you can catch precisely**: everything derives from `MSBError`, and also from

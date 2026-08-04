@@ -2,7 +2,7 @@
 from abc import ABC
 from typing import Any, Dict, List, Union
 
-from .serializable import CYCLIC_REFERENCE, EntityMeta, Serializable
+from .serializable import CYCLIC_REFERENCE, EntityMeta, SCHEMA_FIELD, Serializable
 from ..errors import (NotFoundError,
                       ResolutionError,
                       TypeValidationError,
@@ -129,6 +129,13 @@ class BaseEntity(Serializable):
         """
         data = data.copy()
         data.pop("type", None)
+
+        written_under = data.pop(SCHEMA_FIELD, 1)
+        if written_under != cls.SCHEMA_VERSION:
+            data = cls.migrate(data, written_under)
+            data.pop("type", None)
+            data.pop(SCHEMA_FIELD, None)
+
         kwargs = {}
         for key, value in data.items():
             if key in ("name", "isactive"):
@@ -136,21 +143,13 @@ class BaseEntity(Serializable):
             if key not in cls._fields:
                 raise UnknownAttributeError(f"Unknown attribute '{key}' for {cls.__name__}")
             expected_type = cls._resolve_type(cls._fields[key])
-            if isinstance(value, dict) and "type" in value:
-                type_cls = cls._resolve_entity_type(value["type"], expected_type)
-                if type_cls is not None:
-                    kwargs[key] = type_cls.from_dict(value)
-                    continue
             if isinstance(expected_type, str):
                 from inspect import getmodule
                 module = getmodule(cls)
                 expected_type = getattr(module, expected_type, None) if module else globals().get(expected_type)
                 if expected_type is None:
                     raise ResolutionError(f"Cannot resolve forward reference '{cls._fields[key]}' for attribute '{key}'")
-            if isinstance(expected_type, type) and issubclass(expected_type, BaseEntity) and isinstance(value, dict):
-                kwargs[key] = expected_type.from_dict(value)
-            else:
-                kwargs[key] = value
+            kwargs[key] = cls._deserialize_value(value, expected_type, f"{cls.__name__}.{key}")
         return cls(name=data.get("name"), isactive=data.get("isactive", True), **kwargs)
     def clear(self) -> None:
         """Clear all public attributes to release references.
