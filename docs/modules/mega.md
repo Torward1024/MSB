@@ -327,6 +327,44 @@ They differ in one thing. `Inspector` applies every method a request names and r
 outcome; `Configurator` stops at the first failure. A caller reading several things wants the
 whole picture, while a half-applied configuration is worse than a rejected one.
 
+### Reaching one member of a collection
+
+A request against a collection means one of two things, and only the request can say which:
+
+```python
+class Telescopes(BaseContainer[Telescope]):
+    pass
+
+array = Telescopes(name="array")
+array.add(Telescope(name="DSS14", diameter=70.0))
+manipulator.update_registry(additional_classes=[Telescopes])
+
+assert list(manipulator.inspect(array, get_all=None)) == ["DSS14"]      # ask the collection
+assert manipulator.inspect(array, name="DSS14", get_diameter=None) == 70.0   # ask one member
+```
+
+The key is removed before descending, so the member sees only the methods meant for it.
+
+**The descent is not uniform**, which is why it is a hook rather than a convention: a
+`BaseContainer` answers `get(name)`, a `Project` answers `get_observation(name)`, and a model
+of your own answers however it likes. Two things say how:
+
+```python
+from msb_arch import Inspector
+
+class RegistryInspector(Inspector):
+    NESTED_KEY = "entry"                    # what a request calls the member
+
+    def _nested_getter(self, obj):          # how to fetch it
+        getter = getattr(obj, "get_entry", None)
+        return getter or super()._nested_getter(obj)
+
+assert RegistryInspector.NESTED_KEY == "entry"
+```
+
+Anything holding no members is unaffected: the hook returns `None` and the request is applied
+to the object itself.
+
 **Registering your own replaces a built-in silently.** That is how every application written
 before they existed is already spelled, and it has to keep meaning the same thing. Two
 registrations of one name that are both yours still raise. Pass `builtins=False` to start with

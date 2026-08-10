@@ -78,6 +78,13 @@ Order: counters, then the journal, then hashing, with snapshots only as the chec
 starts from. One constraint on all of it -- **replay assumes determinism**. A handler that reads
 the clock, a file or a random seed cannot be reconstructed from its request alone.
 
+### Shipped after 1.0
+
+| # | Item | Release |
+| --- | --- | --- |
+| P17 | A nested-descent hook on the built-in `Inspector` and `Configurator` | 1.1.0. Predicted under P3 before the built-ins existed, confirmed by pAstroCORE, whose ten container handlers exist for exactly this |
+| -- | Mapping keys restored from the annotation | 1.0.1. Also found by pAstroCORE: a `Dict[float, float]` could not round-trip through JSON at all |
+
 ### Rejected, and why
 
 Recorded so each is decided once rather than argued again.
