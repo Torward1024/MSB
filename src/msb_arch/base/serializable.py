@@ -715,14 +715,51 @@ class Serializable(ABC, metaclass=EntityMeta):
                              for item, member in zip(value, args))
             return tuple(value)
         if origin is dict and isinstance(value, dict):
+            key_hint = args[0] if len(args) == 2 else Any
             member = args[1] if len(args) == 2 else Any
-            return {key: cls._deserialize_value(item, member, field_path, discriminator)
+            return {cls._restore_key(key, key_hint): cls._deserialize_value(item, member,
+                                                                            field_path,
+                                                                            discriminator)
                     for key, item in value.items()}
 
         if isinstance(hint, type) and issubclass(hint, Serializable) and isinstance(value, dict):
             return hint.from_dict(value)
 
         return value
+
+    @classmethod
+    def _restore_key(cls, key: Any, hint: Any) -> Any:
+        """Return a mapping key as its annotation declares it.
+
+        Args:
+            key (Any): The key as it was read.
+            hint (Any): The key type the annotation declares.
+
+        Returns:
+            Any: The key, converted when the declared type is a scalar JSON cannot express.
+
+        Notes:
+            - **JSON has only string keys.** A `Dict[float, float]` therefore comes back with
+              `"1420.0"` where it was written with `1420.0`, and validation rejects it -- so a
+              mapping keyed by anything but `str` could not round-trip at all. Values were
+              already restored from the annotation; keys were not, which was an oversight
+              rather than a decision.
+            - Only `int`, `float` and `bool` are converted, and only from a string. Those are
+              what JSON flattens; anything else is returned untouched, so an exotic key type
+              is no worse off than before.
+            - A conversion that fails leaves the key alone, so the type error names the field
+              rather than coming from here.
+        """
+        if not isinstance(key, str) or hint in (Any, str):
+            return key
+        if hint is bool:
+            return {"true": True, "false": False}.get(key.lower(), key)
+        if hint in (int, float):
+            try:
+                return hint(key)
+            except ValueError:
+                return key
+        return key
 
     @classmethod
     def _serialize_value(cls, value: Any, seen: Set[int]) -> Any:
