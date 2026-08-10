@@ -24,6 +24,7 @@ because guessing those answers is how two of the worst defects in this project's
 | P14 | **A derived model-graph API**: "what depends on `Telescope`" | Nothing. Cheap: a read over `_fields`, `_item_type_hint()` and `_parents`, all of which already hold the answer |
 | P4 | **Generating an application from the data model** | P10 and P14. Aim at the GUI wiring: measured downstream, 74.5% is already Qt Designer output and the handler stubs a generator would emit are 81 lines |
 | P15 | **Lineage**: revision counters, then provenance derived from the request journal, then content hashing for memoisation | A decision about identity for mutable objects, which is the same decision incremental recomputation needs |
+| P16 | **Performance**, as a story of its own and taken together with P1 | P1. Entity construction is 17x a plain object after P5, against roughly an order of magnitude better for a Rust-backed validator. Worth attacking, but not before pipelines: a scheduler changes what fast means |
 
 ### Pipelines, and the shape reserved for them
 
@@ -39,6 +40,23 @@ Settled on 2026-08-04 and worth not re-deciding:
 
 1.0 forecloses none of it: attribute values reach handlers unexamined, so a reference object
 travels through `process_request` untouched today.
+
+### Performance, and why it waits for pipelines
+
+Where it stands: entity construction is 17x a plain object with the same four attributes, down
+from 44x, and introspection per instance is gone. That is a reasonable place to stop for 1.0
+and a poor place to stop forever -- a Rust-backed validator is roughly an order of magnitude
+ahead, and pretending otherwise helps nobody.
+
+It is deliberately coupled to P1 rather than pursued on its own, because a scheduler changes
+what the word means. Shaving microseconds off constructing an object is worth little beside not
+recomputing a branch at all, and the two answers compete for the same design: memoisation needs
+content hashing, hashing needs identity for mutable objects, and identity is what P15 is about.
+Optimising the single-object path first would be optimising the part a dependency graph makes
+least important.
+
+So the order is P1, then P15, then this -- and only then the question of whether the validation
+path itself needs rewriting, measured against a real workload rather than a microbenchmark.
 
 ### Lineage, and the one hard problem
 
