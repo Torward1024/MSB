@@ -298,6 +298,35 @@ class Serializable(ABC, metaclass=EntityMeta):
                     del owners[key]          # the owner is gone; stop tracking it
                 else:
                     pending.append(owner)
+    #: What each numeric annotation also accepts, following PEP 484's numeric tower: a value
+    #: annotated `float` may be an `int`, and one annotated `complex` may be either. This is
+    #: what every type checker does, and what a caller writing `(0, 90)` for a pair of degrees
+    #: expects. Nothing here widens `int` -- an annotation asking for a whole number means it.
+    _NUMERIC_TOWER = {float: (float, int), complex: (complex, float, int)}
+
+    @classmethod
+    def _accepted_for(cls, resolved_type: Any) -> Any:
+        """Return the types an annotation accepts, widening the numeric ones.
+
+        Args:
+            resolved_type (Any): A class, or a tuple of classes, to check against.
+
+        Returns:
+            Any: The same thing, with `float` and `complex` widened to what they also accept.
+
+        Notes:
+            - Before this, `frequency: float` rejected `1`, and `Tuple[float, float]` rejected
+              `(0, 90)`. Both are ordinary Python, and the second is how anyone writes a range
+              of degrees. The error named the tuple element, which made it look like a
+              collection problem rather than the numeric rule it was.
+        """
+        if isinstance(resolved_type, tuple):
+            widened = []
+            for member in resolved_type:
+                widened.extend(cls._NUMERIC_TOWER.get(member, (member,)))
+            return tuple(dict.fromkeys(widened))
+        return cls._NUMERIC_TOWER.get(resolved_type, resolved_type)
+
     def _validate_type(self, key: str, value: Any, expected_type: Any) -> None:
         """Validate that a value matches the expected type.
 
@@ -372,7 +401,7 @@ class Serializable(ABC, metaclass=EntityMeta):
             if resolved is Any:
                 checker = lambda value: True                              # noqa: E731
             elif get_origin(resolved) is None and isinstance(resolved, type):
-                checker = lambda value, _type=resolved: isinstance(value, _type)  # noqa: E731
+                checker = lambda value, _type=cls._accepted_for(resolved): isinstance(value, _type)  # noqa: E731
 
         table[hint] = checker
         return checker
@@ -429,7 +458,7 @@ class Serializable(ABC, metaclass=EntityMeta):
 
         if origin is None:
             if isinstance(resolved_type, (type, tuple)):
-                if not isinstance(value, resolved_type):
+                if not isinstance(value, cls._accepted_for(resolved_type)):
                     raise TypeValidationError(f"{subject} must be of type {resolved_type}, got {type(value)}")
             else:
                 logger.debug("Skipping unenforceable type hint %r for '%s'", resolved_type, key)

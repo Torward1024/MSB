@@ -12,6 +12,7 @@ from typing import (Callable,
                     Type,
                     Union)
 from msb_arch.base.baseentity import BaseEntity, CYCLIC_REFERENCE
+from msb_arch.errors import TypeValidationError
 
 
 class TestEntity(BaseEntity):
@@ -793,3 +794,71 @@ class TestBaseEntityMultipleOwners:
         entity = TestEntity(name="orphan", value=1)
         entity.value = 2
         assert entity.__dict__.get("_parents") is None
+
+
+# --- the numeric tower ---------------------------------------------------------------------
+
+class NumericEntity(BaseEntity):
+    """An entity whose numbers are declared the way anyone declares numbers."""
+    scalar: float
+    pair: Tuple[float, float]
+    many: List[float]
+    mapping: Dict[str, float]
+    maybe: Optional[float]
+    either: Union[float, str]
+    whole: int
+
+
+def test_an_int_is_accepted_where_a_float_is_declared():
+    """PEP 484's numeric tower, which every type checker follows.
+
+    This came from a real report: adding a space telescope failed with "Item 0 in tuple
+    'pitch_range' must be of type <class 'float'>, got <class 'int'>" because the range was
+    written `(0, 90)`. That is how anyone writes a range of degrees.
+    """
+    entity = NumericEntity(name="n", scalar=1, pair=(0, 90), many=[1, 2],
+                           mapping={"a": 1}, maybe=5, either=7)
+
+    assert entity.scalar == 1
+    assert entity.pair == (0, 90)
+
+
+def test_a_widened_int_is_not_quietly_turned_into_a_float():
+    """Accepting a value is not the same as changing it."""
+    entity = NumericEntity(name="n", scalar=1)
+    assert isinstance(entity.scalar, int), "the value the caller passed is the value it keeps"
+
+
+def test_a_float_is_still_rejected_where_a_whole_number_is_declared():
+    """The tower widens in one direction only. An annotation asking for an int means it."""
+    with pytest.raises(TypeValidationError):
+        NumericEntity(name="n", whole=3.5)
+
+
+def test_a_string_is_still_rejected_where_a_float_is_declared():
+    """The widening must not have opened the door generally."""
+    with pytest.raises(TypeValidationError):
+        NumericEntity(name="n", scalar="1")
+    with pytest.raises(TypeValidationError):
+        NumericEntity(name="n", pair=(0, "90"))
+
+
+def test_the_widening_survives_every_route_to_an_attribute():
+    """There are three: the constructor, `set`, and item assignment. The first uses a compiled
+    fast path and the others do not, which is how the first fix reached only half of them."""
+    entity = NumericEntity(name="n", scalar=1.0)
+
+    entity.set({"scalar": 2})
+    assert entity.scalar == 2
+
+    entity["scalar"] = 3
+    assert entity.scalar == 3
+
+
+def test_an_int_where_a_float_is_declared_round_trips():
+    """It has to survive being written and read, or the widening only moves the failure."""
+    entity = NumericEntity(name="n", scalar=1, pair=(0, 90))
+    restored = NumericEntity.from_dict(entity.to_dict())
+
+    assert restored.scalar == 1
+    assert restored.pair == (0, 90)

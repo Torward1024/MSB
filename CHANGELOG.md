@@ -13,6 +13,26 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.1.2] - 2026-08-10
+
+### Fixed
+
+- **An `int` is now accepted where a `float` is declared**, as PEP 484's numeric tower says it
+  must be and as every type checker treats it. `frequency: float` rejected `1`, and
+  `Tuple[float, float]` rejected `(0, 90)` -- which is how anyone writes a range of degrees.
+  The error named the tuple element, so it read as a collection problem rather than the
+  numeric rule it was. `complex` likewise accepts `int` and `float`.
+
+  Nothing widens in the other direction: an annotation asking for an `int` still means it, and
+  a value is never quietly converted -- an `int` passed where a `float` is declared stays an
+  `int`, and round-trips as one.
+
+  The fix had to be made twice, in the compiled fast path used by the constructor and in the
+  general checker used by `set` and item assignment, because the first reached only half the
+  routes to an attribute. There is a test that goes through all three.
+
+  Reported from pAstroCORE, where adding a space telescope with `pitch_range=(0, 90)` failed.
+
 ## [1.1.1] - 2026-08-10
 
 ### Fixed
