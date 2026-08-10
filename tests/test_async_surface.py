@@ -227,21 +227,41 @@ def test_it_can_be_used_as_a_context_manager():
     assert orchestrator._executor is None
 
 
-def test_concurrent_requests_do_not_serialize_behind_one_another(bench):
-    """Several awaited at once share the executor rather than queueing on the loop."""
-    jobs = [Job(name=f"j{index}", size=400_000) for index in range(4)]
+def test_several_requests_can_be_gathered(bench):
+    """`asyncio.gather` over the asynchronous surface completes and gives correct answers.
+
+    It deliberately does **not** assert that gathering is faster. These handlers are pure
+    Python, so the GIL bounds what threads can overlap, and an earlier version of this test
+    asserted a speedup that the interpreter does not promise -- it passed by luck and failed
+    under load. What matters here is that concurrent requests do not deadlock, do not
+    interleave their results, and each gets its own answer.
+    """
+    jobs = [Job(name=f"j{index}", size=1000 + index) for index in range(4)]
+    expected = [job.crunch() for job in jobs]
 
     async def scenario():
-        started = time.perf_counter()
+        return await asyncio.gather(*(bench.ainspect(job, crunch=None) for job in jobs))
+
+    assert asyncio.run(scenario()) == expected
+
+
+def test_the_loop_still_runs_while_several_requests_are_gathered(bench):
+    """The property that does hold regardless of the GIL: the work is off the loop."""
+    jobs = [Job(name=f"j{index}", size=500_000) for index in range(3)]
+
+    async def scenario():
+        stop = asyncio.Event()
+
+        async def ticking():
+            ticks = 0
+            while not stop.is_set():
+                ticks += 1
+                await asyncio.sleep(0.001)
+            return ticks
+
+        counter = asyncio.create_task(ticking())
         await asyncio.gather(*(bench.ainspect(job, crunch=None) for job in jobs))
-        return time.perf_counter() - started
+        stop.set()
+        return await counter
 
-    together = asyncio.run(scenario())
-    started = time.perf_counter()
-    for job in jobs:
-        bench.inspect(job, crunch=None)
-    sequential = time.perf_counter() - started
-
-    assert together < sequential * 1.5, (
-        f"four concurrent requests took {together:.2f}s against {sequential:.2f}s sequentially"
-    )
+    assert asyncio.run(scenario()) > 0

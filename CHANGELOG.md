@@ -13,6 +13,44 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.1.0] - 2026-08-10
+
+### Added
+
+- **The built-in `Inspector` and `Configurator` descend into a named member of a collection.**
+  A request against a collection means one of two things, and only the request can say which:
+  `inspect(frequencies, get_all=None)` asks the collection, while
+  `inspect(frequencies, name="IF1", get_frequency=None)` asks one member of it. The key is
+  removed before descending, so the member sees only the methods meant for it.
+
+  Two hooks make it work anywhere, because **the descent is not uniform**: `NESTED_KEY` is the
+  attribute a request uses to name a member, and `_nested_getter(obj)` returns how to fetch
+  one. A `BaseContainer` answers `get(name)`; a `Project` answers `get_observation(name)`;
+  something else answers differently again, and overriding one method is enough.
+
+  ```python
+  class RegistryInspector(Inspector):
+      NESTED_KEY = "entry"
+
+      def _nested_getter(self, obj):
+          return obj.get_entry if isinstance(obj, Registry) else super()._nested_getter(obj)
+  ```
+
+  Predicted under P3 before the built-ins existed and confirmed by pAstroCORE, whose ten
+  container handlers exist for exactly this and could not adopt the built-ins without losing it.
+
+### Changed
+
+- A request naming `name` against a collection now descends instead of failing with
+  `Method 'name' not found`. Nothing could have depended on that failure.
+
+### Upgrading from 1.0.1
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| A hand-written container handler that only descends | The built-ins now do it. | Delete it, or set `NESTED_KEY` and `_nested_getter` if your model names members differently. |
+| Nothing else. | The hook is inert for anything that holds no members. | Nothing. |
+
 ## [1.0.1] - 2026-08-10
 
 ### Fixed

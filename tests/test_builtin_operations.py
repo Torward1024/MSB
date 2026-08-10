@@ -162,3 +162,93 @@ def test_a_builtin_is_thin_enough_to_subclass():
     assert dish.diameter == 50.0
     bench.configure(dish, set_diameter=500.0, raise_on_error=False)
     assert dish.diameter == 50.0
+
+
+# --- descending into a named member -------------------------------------------------------
+
+class Band(BaseEntity):
+    frequency: float
+
+    def get_frequency(self) -> float:
+        return self.frequency
+
+    def set_frequency(self, value: float) -> bool:
+        self.frequency = value
+        return True
+
+
+class Bands(BaseContainer[Band]):
+    pass
+
+
+@pytest.fixture
+def bands(bare):
+    bare.update_registry(additional_classes=[Band, Bands])
+    collection = Bands(name="bands")
+    collection.add(Band(name="X", frequency=8400.0))
+    collection.add(Band(name="L", frequency=1420.0))
+    return collection
+
+
+def test_a_request_can_ask_the_collection_or_one_member(bare, bands):
+    """Only the request can say which is meant, so the presence of the key decides."""
+    assert set(bare.inspect(bands, get_all=None)) == {"X", "L"}
+    assert bare.inspect(bands, name="X", get_frequency=None) == 8400.0
+
+
+def test_configuring_reaches_one_member(bare, bands):
+    bare.configure(bands, name="L", set_frequency=1600.0)
+    assert bands.get("L").frequency == 1600.0
+    assert bands.get("X").frequency == 8400.0
+
+
+def test_naming_a_member_that_is_not_there_says_so(bare, bands):
+    with pytest.raises(Exception, match="not found"):
+        bare.inspect(bands, name="nope", get_frequency=None)
+
+
+def test_the_getter_is_a_hook_because_the_descent_is_not_uniform():
+    """A container answers `get(name)`; something else answers differently.
+
+    This is the whole reason the descent is a hook rather than a convention, and it was
+    predicted before it was needed: a `Project` exposes `get_observation(name)`, so a built-in
+    that assumed `get` would silently fail to reach anything inside one.
+    """
+    class Registry(BaseEntity):
+        """Holds its members under a name of its own choosing."""
+        entries: dict
+
+        def get_entry(self, name):
+            return self.entries.get(name)
+
+        def count(self) -> int:
+            return len(self.entries)
+
+    class RegistryInspector(Inspector):
+        NESTED_KEY = "entry"
+
+        def _nested_getter(self, obj):
+            return obj.get_entry if isinstance(obj, Registry) else super()._nested_getter(obj)
+
+    bench = Observatory(base_classes=[Registry, Band], builtins=False)
+    bench.register_operation(RegistryInspector(bench))
+    registry = Registry(name="r", entries={"X": Band(name="X", frequency=8400.0)})
+
+    assert bench.inspect(registry, count=None) == 1
+    assert bench.inspect(registry, entry="X", get_frequency=None) == 8400.0
+
+
+def test_an_operation_with_no_collection_is_unaffected(bare):
+    """A plain entity has no members, so the hook returns None and the request is applied to
+    the entity exactly as before -- including treating `name` as a method it does not have.
+
+    `Inspector` is `strict=False`, so that one failure is reported beside the successes rather
+    than failing the request, which is the behaviour the descent must not have changed.
+    """
+    dish = Telescope(name="d", diameter=70.0)
+    assert bare.inspect(dish, get_diameter=None) == 70.0
+
+    results = bare.inspect(dish, name="anything", get_diameter=None, raise_on_error=False)
+    assert results["status"] is True
+    assert results["result"]["get_diameter"]["result"] == 70.0
+    assert results["result"]["name"]["status"] is False
