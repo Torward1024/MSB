@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MSB%20Software%20License-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-brightgreen.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-1.0.1-brightgreen.svg)](https://github.com/Torward1024/MSB)
 
 Mega-Super-Base (MSB) is an architecture for Python applications built around a single entry
 point. You describe your data as typed entities, you describe what may be done to them as
@@ -200,4 +200,4 @@ For commercial use, a separate royalty-bearing license is required. Please conta
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 1.0.0
+- **Version**: 1.0.1

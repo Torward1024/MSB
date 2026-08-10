@@ -293,3 +293,45 @@ def test_a_discriminator_reaches_inside_a_collection():
     many = TaggedMany.from_dict({"name": "t", "devices": [{"name": "d", "unit": "K",
                                                            "kind": "LookAlike"}]})
     assert isinstance(many.devices[0], LookAlike)
+
+
+# --- mapping keys -------------------------------------------------------------------------
+
+class Dish(BaseEntity):
+    """`Dict[float, float]` is how a real instrument table is spelled: frequency to value."""
+    sefd: Dict[float, float]
+    counts: Dict[int, str]
+    flags: Dict[bool, str]
+    labels: Dict[str, float]
+
+
+def test_a_mapping_keyed_by_a_number_survives_json():
+    """JSON has only string keys, so without restoring them from the annotation a
+    `Dict[float, float]` could not round-trip at all -- the keys came back as strings and
+    validation rejected them. Found by a downstream project that keeps instrument tables
+    exactly this way."""
+    dish = Dish(name="d", sefd={1420.0: 350.0, 8400.0: 500.0}, counts={1: "one"},
+                flags={True: "yes"}, labels={"gain": 1.0})
+    restored = through_json(dish, Dish)
+
+    assert restored.sefd == {1420.0: 350.0, 8400.0: 500.0}
+    assert all(isinstance(key, float) for key in restored.sefd)
+    assert restored == dish
+
+
+@pytest.mark.parametrize("field, key_type", [
+    ("sefd", float), ("counts", int), ("flags", bool), ("labels", str),
+])
+def test_each_declared_key_type_comes_back(field, key_type):
+    dish = Dish(name="d", sefd={1.0: 1.0}, counts={1: "one"}, flags={False: "no"},
+                labels={"a": 1.0})
+    restored = through_json(dish, Dish)
+    assert all(isinstance(key, key_type) for key in getattr(restored, field))
+
+
+def test_a_key_that_cannot_be_converted_is_left_alone():
+    """So the error names the field, rather than coming from the conversion."""
+    payload = {"name": "d", "isactive": True, "type": "Dish",
+               "sefd": {"not a number": 1.0}, "counts": {}, "flags": {}, "labels": {}}
+    with pytest.raises(errors.TypeValidationError, match="sefd"):
+        Dish.from_dict(payload)

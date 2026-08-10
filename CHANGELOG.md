@@ -13,6 +13,28 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.0.1] - 2026-08-10
+
+### Fixed
+
+- **A mapping keyed by anything but `str` could not round-trip through JSON.** JSON has only
+  string keys, so a `Dict[float, float]` -- how an instrument table is naturally spelled --
+  came back with `"1420.0"` where it went out with `1420.0`, and validation rejected it. Values
+  were already restored from the annotation; keys were not, which was an oversight in 0.6.0
+  rather than a decision. `int`, `float` and `bool` keys are now restored from what the
+  annotation declares, and a key that cannot be converted is left alone so the error still
+  names the field.
+
+  Found by a downstream project that keeps every instrument table this way and had written a
+  `from_dict` override in each affected class to convert the keys by hand.
+
+### Upgrading from 1.0.0
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| A hand-written `from_dict` that converts mapping keys | The framework did not restore them. | It does now; the override can go. |
+| Nothing else. | Only mappings whose declared key type is not `str` behaved differently, and they behaved by failing. | Nothing. |
+
 ## [1.0.0] - 2026-08-04
 
 The contract is frozen. Nothing on the public surface will break outside a major version, and
