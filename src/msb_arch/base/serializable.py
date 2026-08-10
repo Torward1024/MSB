@@ -597,6 +597,28 @@ class Serializable(ABC, metaclass=EntityMeta):
         return key in self._fields and hasattr(self, key)
 
     @classmethod
+    def _apply_migration(cls, data: dict) -> dict:
+        """Bring serialized data up to this class's schema version, if it is behind.
+
+        Args:
+            data (dict): A copy of the mapping being restored. Modified in place by `migrate`.
+
+        Returns:
+            dict: The data in the shape this version expects, with the version key removed.
+
+        Notes:
+            - Shared by everything that restores, because the class most worth versioning is
+              usually the one saved to a file -- a project or a container -- and for a while
+              only entities checked. Serialized data with no version reads as version 1.
+        """
+        written_under = data.pop(SCHEMA_FIELD, 1)
+        if written_under != cls.SCHEMA_VERSION:
+            data = cls.migrate(data, written_under)
+            data.pop("type", None)
+            data.pop(SCHEMA_FIELD, None)
+        return data
+
+    @classmethod
     def migrate(cls, data: dict, from_version: int) -> dict:
         """Bring serialized data written by an older version of this class up to date.
 

@@ -130,11 +130,7 @@ class BaseEntity(Serializable):
         data = data.copy()
         data.pop("type", None)
 
-        written_under = data.pop(SCHEMA_FIELD, 1)
-        if written_under != cls.SCHEMA_VERSION:
-            data = cls.migrate(data, written_under)
-            data.pop("type", None)
-            data.pop(SCHEMA_FIELD, None)
+        data = cls._apply_migration(data)
 
         kwargs = {}
         for key, value in data.items():
