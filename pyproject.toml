@@ -4,7 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "msb_arch"
-version = "1.1.1"
+# The version lives in one place: `msb_arch.__version__`. It used to live here as well, and
+# 1.1.2 was tagged and released with only the other one bumped -- so the build produced 1.1.1
+# again and PyPI refused it as a file it already had. Two sources of one number is one too many.
+dynamic = ["version"]
 description = "Mega-Super-Base (MSB) architecture for flexible and extensible Python applications"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -29,3 +32,5 @@ Issues = "https://github.com/Torward1024/MSB/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/msb_arch"]
+[tool.hatch.version]
+path = "src/msb_arch/__init__.py"

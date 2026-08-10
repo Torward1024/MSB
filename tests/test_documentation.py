@@ -145,3 +145,51 @@ def test_every_document_has_examples_or_is_excluded():
     guides = [p for p in (DOCS / "modules").glob("*.md")]
     without = [p.name for p in guides if "```python" not in p.read_text(encoding="utf-8")]
     assert not without, f"module guides with no examples: {without}"
+
+
+# --- the version --------------------------------------------------------------------------
+
+def test_the_package_builds_the_version_it_declares():
+    """The number in `__version__` is the number a built wheel carries.
+
+    This exists because it once was not. `pyproject.toml` held its own copy, 1.1.2 was tagged
+    and released with only `__version__` bumped, and the build produced 1.1.1 -- which PyPI
+    refused as a file it already had. The release failed loudly, which was luck: had 1.1.1 not
+    already been published, a wheel labelled with the wrong version would have gone out.
+
+    `pyproject.toml` now declares the version dynamic and reads it from the package, so there
+    is one number. This test fails if a second one ever appears.
+    """
+    import pathlib
+    import tomllib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "version" not in metadata["project"], (
+        "pyproject.toml declares a version of its own; it must read the package's instead, "
+        "or the two will disagree and the wheel will be built from this one")
+    assert "version" in metadata["project"].get("dynamic", [])
+    assert metadata["tool"]["hatch"]["version"]["path"] == "src/msb_arch/__init__.py"
+
+
+def test_the_version_is_a_release_number():
+    """A version that cannot be ordered cannot be depended on."""
+    import re
+
+    import msb_arch
+
+    assert re.fullmatch(r"\d+\.\d+\.\d+", msb_arch.__version__), (
+        f"'{msb_arch.__version__}' is not major.minor.patch")
+
+
+def test_the_changelog_documents_the_current_version():
+    """A release whose changelog says nothing about it is a release nobody can read."""
+    import pathlib
+
+    import msb_arch
+
+    changelog = (pathlib.Path(__file__).resolve().parent.parent / "CHANGELOG.md").read_text(
+        encoding="utf-8")
+    assert f"## [{msb_arch.__version__}]" in changelog, (
+        f"CHANGELOG.md has no section for {msb_arch.__version__}")
