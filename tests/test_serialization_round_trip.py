@@ -335,3 +335,37 @@ def test_a_key_that_cannot_be_converted_is_left_alone():
                "sefd": {"not a number": 1.0}, "counts": {}, "flags": {}, "labels": {}}
     with pytest.raises(errors.TypeValidationError, match="sefd"):
         Dish.from_dict(payload)
+
+
+# --- versioning reaches the classes that get saved ----------------------------------------
+
+def test_a_container_checks_the_schema_version():
+    """The version check lived only on `BaseEntity` for a while, so the classes an
+    application actually writes to a file -- a container, a project -- could not be versioned
+    at all. Found by pAstroCORE trying to version its project."""
+    class Box(BaseContainer[Part]):
+        SCHEMA_VERSION = 2
+
+    payload = {"name": "box", "isactive": True, "type": "Box", "schema_version": 1, "items": {}}
+    with pytest.raises(errors.SerializationError, match="version 1"):
+        Box.from_dict(payload)
+
+
+def test_a_container_migration_is_taken():
+    class Box(BaseContainer[Part]):
+        SCHEMA_VERSION = 2
+        seen = []
+
+        @classmethod
+        def migrate(cls, data, from_version):
+            Box.seen.append(from_version)
+            return data
+
+    payload = {"name": "box", "isactive": True, "type": "Box", "schema_version": 1, "items": {}}
+    Box.from_dict(payload)
+    assert Box.seen == [1]
+
+
+def test_a_container_at_version_one_writes_no_version():
+    box = Rigs(name="box")
+    assert SCHEMA_FIELD not in box.to_dict()

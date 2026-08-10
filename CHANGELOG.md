@@ -13,6 +13,30 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.1.1] - 2026-08-10
+
+### Fixed
+
+- **A container or a project could not be versioned.** `SCHEMA_VERSION` and `migrate` were
+  honoured by `BaseEntity.from_dict` and by nothing else, so the classes an application
+  actually saves to a file -- a `BaseContainer`, a `Project` -- read their version key and
+  ignored it. Raising `SCHEMA_VERSION` on a project did nothing at all, and an older file was
+  restored as though its shape had never changed.
+
+  All three now apply the same check, and a `Project` writes its version once it has one.
+  Nothing is written while the version is 1, so a file saved by an application that never
+  touches this is byte for byte what it always was.
+
+  Found by pAstroCORE, whose project class is exactly the thing worth versioning before its
+  storage format changes.
+
+### Upgrading from 1.1.0
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| A `SCHEMA_VERSION` on a container or project that seemed to do nothing | It did nothing. | It works now. Write `migrate` before raising the version, or the older file will be refused with a message naming both versions. |
+| Nothing else. | A class still at version 1 writes and reads exactly as before. | Nothing. |
+
 ## [1.1.0] - 2026-08-10
 
 ### Added

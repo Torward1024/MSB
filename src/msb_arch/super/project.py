@@ -20,6 +20,14 @@ class Project(ABC):
             BaseEntity. A project can hold containers too, since both share Serializable.
     """
     name: str
+
+    # The version of a saved project's shape. A project is the thing an application writes to
+    # a file, so it is the class most worth versioning -- and for a while it was the one that
+    # could not be, because the version check lived only on `BaseEntity`.
+    #
+    # Written only once it is no longer 1, so nothing changes until it has to.
+    SCHEMA_VERSION = 1
+
     _item_type: Type[Serializable] = BaseEntity
     _container_types: Dict[Type[Serializable], Type[BaseContainer]] = {}
     # Guards the cache above: two threads creating the first project of a type would
@@ -277,7 +285,42 @@ class Project(ABC):
         Returns:
             Dict[str, Any]: A dictionary containing the project's name and serialized items.
         """
-        return {"name": self.name, "items": self._items.to_dict()["items"]}
+        data = {"name": self.name, "items": self._items.to_dict()["items"]}
+        if self.SCHEMA_VERSION != 1:
+            # Written only by a project that has actually versioned itself, so a file saved
+            # by an application that never touches this is byte for byte what it always was.
+            data["schema_version"] = self.SCHEMA_VERSION
+        return data
+
+    @classmethod
+    def migrate(cls, data: Dict[str, Any], from_version: int) -> Dict[str, Any]:
+        """Bring a project saved under an older `SCHEMA_VERSION` up to the current shape.
+
+        Args:
+            data (Dict[str, Any]): The saved project, with its original field names.
+            from_version (int): The version it was written under.
+
+        Returns:
+            Dict[str, Any]: The project in the shape this version expects.
+
+        Raises:
+            SerializationError: By default, naming both versions. Raising `SCHEMA_VERSION`
+                without overriding this declares that older files cannot be read, and says so
+                at the boundary rather than failing later on a missing field.
+        """
+        raise SerializationError(
+            f"{cls.__name__} cannot read a project written under schema version "
+            f"{from_version}; it is now version {cls.SCHEMA_VERSION}. Override `migrate` to "
+            f"bring it forward.")
+
+    @classmethod
+    def _migrated(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply `migrate` if the saved version is behind, and drop the version key."""
+        written_under = data.pop("schema_version", 1)
+        if written_under != cls.SCHEMA_VERSION:
+            data = cls.migrate(data, written_under)
+            data.pop("schema_version", None)
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Project':
@@ -297,6 +340,7 @@ class Project(ABC):
               every subclass to write a stub it could not meaningfully fill. Subclasses that
               already override it are unaffected; the rest now inherit a working method.
         """
+        data = cls._migrated(dict(data))
         try:
             check_non_empty_string(data["name"], "Project name")
             items = {}

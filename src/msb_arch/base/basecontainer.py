@@ -13,7 +13,7 @@ from typing import (Dict,
                     get_type_hints, 
                     get_args, 
                     get_origin)
-from ..base.serializable import CYCLIC_REFERENCE, Serializable, _TRAVERSAL
+from ..base.serializable import CYCLIC_REFERENCE, SCHEMA_FIELD, Serializable, _TRAVERSAL
 from ..errors import (AttributeNotFoundError,
                       ConstraintError,
                       DuplicateNameError,
@@ -600,6 +600,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             TypeError: If the item type cannot be resolved or if data is invalid.
             ValueError: If item data cannot be mapped to a valid type in a Union.
         """
+        data = cls._apply_migration(dict(data))
         item_type_hint = cls._item_type_hint()
         item_types = cls._resolve_type(item_type_hint, field_path=f"{cls.__name__}.items")
 
