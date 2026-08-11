@@ -189,3 +189,20 @@ def test_a_cycle_does_not_hang_the_walk():
 
     cyclic = {"a": {"requires": ["b"]}, "b": {"requires": ["a"]}}
     assert requirements_of(cyclic, "a") == ["a", "b"] or requirements_of(cyclic, "a") == ["b"]
+
+
+class Extended(Chain):
+    """A Super that inherits handlers and adds one, as an application's subclass does."""
+
+    def _compute_extra(self, obj, attributes):
+        return self._compute_leaf(obj, attributes)
+
+
+def test_inherited_handlers_are_found():
+    """A subclass that adds a handler still has the ones it inherited, and a catalogue that
+    reports only the subclass's own body would tell an application half of what it offers."""
+    found = derive(Extended(None))
+
+    assert "extra" in found, "the handler it defines"
+    assert {"root", "middle", "leaf"} <= set(found), "and the ones it inherited"
+    assert found["extra"]["requires"] == ["leaf"]

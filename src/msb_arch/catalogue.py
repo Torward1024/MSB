@@ -54,9 +54,8 @@ def label_for(name: str, acronyms: Optional[Dict[str, str]] = None) -> str:
     return " ".join(known.get(word, word.capitalize()) for word in name.split("_"))
 
 
-def _source_of(owner: Any) -> Optional[str]:
-    """Return the source of a class, dedented, or None if it cannot be read."""
-    target = owner if isinstance(owner, type) else type(owner)
+def _source_of(target: Any) -> Optional[str]:
+    """Return the source of one class, dedented, or None if it cannot be read."""
     try:
         return textwrap.dedent(inspect.getsource(target))
     except (OSError, TypeError) as e:
@@ -65,16 +64,32 @@ def _source_of(owner: Any) -> Optional[str]:
 
 
 def _methods(owner: Any) -> Dict[str, ast.FunctionDef]:
-    """Return every method a class defines, by name, as syntax."""
-    source = _source_of(owner)
-    if source is None:
-        return {}
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as e:
-        logger.debug("Cannot parse the source of %s: %s", owner, str(e))
-        return {}
-    return {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    """Return every method a class has, by name, as syntax.
+
+    Notes:
+        - Walks the inheritance chain, nearest first, so a subclass that adds a handler still
+          reports the ones it inherited. Reading only the class's own body would tell an
+          application half of what it offers, which is worse than telling it nothing.
+        - A method defined nearer wins, matching what Python would call.
+    """
+    target = owner if isinstance(owner, type) else type(owner)
+    methods: Dict[str, ast.FunctionDef] = {}
+
+    for ancestor in reversed(target.__mro__):
+        if ancestor is object:
+            continue
+        source = _source_of(ancestor)
+        if source is None:
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as e:
+            logger.debug("Cannot parse the source of %s: %s", ancestor.__name__, str(e))
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                methods[node.name] = node          # nearer classes come later and win
+    return methods
 
 
 def _called_names(node: ast.FunctionDef) -> List[str]:
