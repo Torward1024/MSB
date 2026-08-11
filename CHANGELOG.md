@@ -13,6 +13,30 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.2.0] - 2026-08-11
+
+### Added
+
+- **`msb_arch.catalogue`: what a `Super` offers, worked out from the code that does it.**
+  An application knows what it can do twice -- once in the handlers, and again in whatever menu
+  or list offers them -- and the second copy is written by hand and goes out of date.
+
+  `derive(super_instance, prefix)` returns every handler of an operation, the other handlers
+  each one calls, and the model parts each touches. `order(catalogue, wanted)` returns them so
+  that each comes after what it needs. `label_for(key, acronyms)` turns a handler's name into
+  something to put in a menu.
+
+  The edges are **exact**: handlers call each other by name, and a call is a call. Measured on
+  a 2 700-line calculator downstream, all fourteen result-to-result edges came back correct
+  with nothing declared -- which is the edge set a scheduler needs to know what may run at once
+  and what a change invalidates.
+
+  What a handler *reads* from a model is deliberately an **upper bound**, not the truth: a
+  shared helper fetches what its caller may not use, and six of fourteen came out wider than
+  the truth when this was measured. It is offered for checking a declaration, never for
+  replacing one -- deriving it would restore exactly the coarseness that declaring it exists to
+  remove.
+
 ## [1.1.2] - 2026-08-10
 
 ### Fixed

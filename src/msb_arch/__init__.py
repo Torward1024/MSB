@@ -3,6 +3,7 @@
 Mega-Super-Base (MSB) architecture package.
 """
 
+from .catalogue import derive, label_for, order
 from .base import Serializable, BaseEntity, BaseContainer
 from .base.serializable import cache_statistics
 from .errors import (AttributeNotFoundError,
@@ -44,4 +45,4 @@ __all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "M
            "MethodProvider", "Interceptor", "Inspector", "Configurator",
            "RequestMetrics", "RequestJournal", "cache_statistics"]
 
-__version__ = "1.1.2"
+__version__ = "1.2.0"
