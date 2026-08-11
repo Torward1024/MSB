@@ -201,6 +201,30 @@ class Manipulator(ABC):
             described[name] = entries
         return described
 
+    def requirements_of(self, operation: str, name: str) -> List[str]:
+        """Return everything one handler needs, directly or through what it needs.
+
+        Args:
+            operation (str): The operation the handler belongs to.
+            name (str): The handler to ask about.
+
+        Returns:
+            List[str]: Sorted, excluding the handler itself.
+
+        Raises:
+            DispatchError: If no such operation is registered.
+
+        Notes:
+            - The stored edges are direct, because the full set follows from them by walking
+              and the reverse does not. This is that walk, offered rather than stored.
+        """
+        from ..catalogue import derive, requirements_of
+
+        owner = self._operations.get(operation)
+        if owner is None:
+            raise DispatchError(f"No operation named '{operation}' is registered")
+        return requirements_of(derive(owner, operation), name)
+
     def order_handlers(self, operation: str, names: List[str]) -> List[str]:
         """Return handlers of one operation in an order that satisfies their prerequisites.
 

@@ -34,7 +34,7 @@ from .utils.logging_setup import logger
 #: The derivation only. Callers ask the manipulator -- `manipulator.catalogue()` --
 #: rather than running these over one from outside, which is what the request model
 #: exists to avoid.
-__all__ = ["derive", "label_for", "order"]
+__all__ = ["derive", "label_for", "order", "requirements_of"]
 
 
 def label_for(name: str, acronyms: Optional[Dict[str, str]] = None) -> str:
@@ -154,6 +154,34 @@ def derive(owner: Any, operation: Optional[str] = None,
             "touches": sorted(touches),
         }
     return catalogue
+
+
+def requirements_of(catalogue: Dict[str, Dict[str, List[str]]], name: str) -> List[str]:
+    """Return everything a handler needs, directly or through what it needs.
+
+    Args:
+        catalogue (Dict): What `derive` produced for one operation.
+        name (str): The handler to ask about.
+
+    Returns:
+        List[str]: Sorted, and excluding the handler itself. Empty for one that needs nothing.
+
+    Notes:
+        - The edges are stored **direct** because that is the more informative of the two: the
+          full set follows from them by walking, and walking backwards -- recovering which
+          edges were written from a closure -- is not possible. So this is a walk offered on
+          demand rather than a second thing to keep in step with the first.
+        - A cycle is followed once and left, since a handler cannot sensibly require itself.
+    """
+    found: Set[str] = set()
+    pending = list(catalogue.get(name, {}).get("requires", []))
+    while pending:
+        need = pending.pop()
+        if need in found or need == name:
+            continue
+        found.add(need)
+        pending.extend(catalogue.get(need, {}).get("requires", []))
+    return sorted(found)
 
 
 def order(catalogue: Dict[str, Dict[str, List[str]]], wanted: List[str]) -> List[str]:

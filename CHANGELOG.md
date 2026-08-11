@@ -44,6 +44,11 @@ statement has since been overtaken, a note says where it was resolved.
   coarseness that declaring a dependency exists to remove.
 - **Nothing here knows what an application is about.** Calls are reported as the names in the
   code; `interpret` is where a caller says what a name means to it.
+- **Edges are stored direct and the full set is walked on demand.** Direct is the more
+  informative of the two: the closure follows from the edges that were written, and
+  recovering which were written from a closure does not. `requirements_of()` -- on the
+  module and on the manipulator -- is that walk, so both answers are available and only
+  one is kept in step.
 
 ## [1.1.2] - 2026-08-10
 

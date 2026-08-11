@@ -168,3 +168,24 @@ def test_the_edges_are_direct_rather_than_transitive():
 
     # What middle reaches through root is still reported, but as reach rather than as an edge.
     assert "get_items" in found["middle"]["calls"]
+
+
+def test_everything_a_handler_needs_is_available_on_demand():
+    """Direct edges are stored because they are the more informative of the two: the full set
+    follows from them by walking, and recovering which edges were written from a closure does
+    not. So both answers are available and only one is kept."""
+    from msb_arch.catalogue import requirements_of
+
+    found = derive(Chain(None))
+
+    assert found["middle"]["requires"] == ["root"], "stored: what it names"
+    assert requirements_of(found, "middle") == ["root"]
+    assert requirements_of(found, "leaf") == ["middle", "root"], "walked: everything below it"
+    assert requirements_of(found, "root") == []
+
+
+def test_a_cycle_does_not_hang_the_walk():
+    from msb_arch.catalogue import requirements_of
+
+    cyclic = {"a": {"requires": ["b"]}, "b": {"requires": ["a"]}}
+    assert requirements_of(cyclic, "a") == ["a", "b"] or requirements_of(cyclic, "a") == ["b"]
