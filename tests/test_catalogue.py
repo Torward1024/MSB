@@ -154,3 +154,17 @@ def test_a_super_whose_source_cannot_be_read_answers_empty():
     """Introspection that cannot see the code says so by returning nothing, rather than by
     raising in the middle of building somebody's menu."""
     assert derive(object(), "compute") == {}
+
+
+def test_the_edges_are_direct_rather_than_transitive():
+    """A scheduler wants the edges that were written. The closure follows from them; going the
+    other way loses which is which, and credits a handler with needing something it never
+    mentions."""
+    found = derive(Chain(None))
+
+    assert found["middle"]["requires"] == ["root"]
+    assert found["leaf"]["requires"] == ["middle", "root"], (
+        "leaf names both, so both are direct edges")
+
+    # What middle reaches through root is still reported, but as reach rather than as an edge.
+    assert "get_items" in found["middle"]["calls"]

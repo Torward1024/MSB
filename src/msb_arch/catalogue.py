@@ -121,8 +121,9 @@ def derive(owner: Any, operation: Optional[str] = None,
             `calls` is every name reached, raw; `touches` is what `interpret` made of them.
 
     Notes:
-        - `requires` is exact and is the edge set a scheduler needs: what may run at once, and
-          what a change invalidates.
+        - `requires` is exact and **direct**: the handlers this one names, not everything they
+          in turn reach. That is the edge set a scheduler needs, and the transitive closure
+          follows from it while the reverse does not.
         - `calls` and `touches` are an **upper bound**. A helper shared between handlers is
           followed for each of them, so a handler is credited with everything its helpers can
           reach rather than with what it uses. Good for checking a declaration; wrong as one.
@@ -138,9 +139,12 @@ def derive(owner: Any, operation: Optional[str] = None,
 
     catalogue: Dict[str, Dict[str, List[str]]] = {}
     for handler in handlers:
-        reached = _reached(handler, methods, set())
-        requires = {name[len(prefix):] for name in reached
+        # Direct, not transitive. A scheduler wants the edges that were written; the closure
+        # follows from them, and reporting the closure instead loses which is which -- and
+        # says a handler needs something it never mentions.
+        requires = {name[len(prefix):] for name in _called_names(methods[handler])
                     if name.startswith(prefix) and name != handler}
+        reached = _reached(handler, methods, set())
         touches = set()
         if interpret is not None:
             touches = {meaning for meaning in (interpret(name) for name in reached) if meaning}
