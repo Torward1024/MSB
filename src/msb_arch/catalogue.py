@@ -1,149 +1,189 @@
-"""What a `Super` offers, and how its handlers depend on each other, worked out from the code.
+# catalogue.py
+"""What a `Manipulator` offers, assembled from what was registered with it.
 
 An application built on MSB knows what it can do twice: once in the handlers that do the work,
 and again in whatever menu, list or table offers them. The second copy is written by hand, goes
-out of date, and makes adding a feature cost edits in places that have no business knowing
-about it.
+out of date, and makes adding a feature cost edits in places with no business knowing about it.
 
-Almost none of it needs writing down. A `Super`'s handlers name themselves, so the list and its
-labels come free. The edges between them are in the code -- handlers call each other directly
--- and walking the syntax tree recovers them exactly: measured on a 2 700-line calculator
-downstream, all fourteen result-to-result edges, with nothing declared.
+Almost none of it needs writing down. Operations are registered, handlers name themselves
+against the operation they serve, and handlers call each other by name -- so the registry, the
+labels and the edges between handlers are all statements the code already makes. This reads
+them back.
 
-What does **not** derive is which parts of a *model* a handler reads. The same walk
-over-approximates, because a shared helper fetches everything whether its caller uses it or
-not: six of fourteen came out wider than the truth. Handing back the wide answer would restore
-exactly the coarseness that declaring it exists to remove. So `reads` is offered as a **check
-on a declaration**, never as a replacement for one.
+**Nothing here knows what an application is about.** A handler's calls are reported as the names
+in the code, not as concepts: `calls` says `get_widgets` because that is what is written, and
+only the application knows what a widget is to it. Interpreting them is the caller's job, and
+`interpret` is where a caller says how.
+
+One limit, stated here rather than discovered later. Edges **between handlers** are exact: a
+call is a call. What a handler touches *outside* the operation is an **upper bound**, because a
+helper shared by several handlers is followed for all of them whether each uses what it fetches
+or not. Measured downstream: fourteen handlers, every handler-to-handler edge correct, and six
+of the fourteen reporting more outside calls than the handler actually depends on. Use it to
+**check a declaration**, not to replace one -- an over-wide answer used as truth restores
+exactly the coarseness that declaring a dependency exists to remove.
 """
 import ast
 import inspect
 import re
-from typing import Any, Dict, List, Optional, Set
+import textwrap
+from typing import Any, Callable, Dict, List, Optional, Set
 
-from msb_arch.utils.logging_setup import logger
+from .utils.logging_setup import logger
 
-#: Accessors that reach a part of the model, and the part each reaches.
-MODEL_ACCESSORS = {"get_telescopes": "telescopes", "get_sources": "sources",
-                   "get_scans": "scans", "get_frequencies": "frequencies"}
+#: The derivation only. Callers ask the manipulator -- `manipulator.catalogue()` --
+#: rather than running these over one from outside, which is what the request model
+#: exists to avoid.
+__all__ = ["derive", "label_for", "order"]
 
-#: Prefixes of helpers worth following. A handler rarely touches the model itself; it hands
-#: the work to one of these.
-HELPER_PREFIXES = ("_process_", "_get_", "_compute_", "_calculate_")
 
-def label_for(key: str, acronyms: Optional[Dict[str, str]] = None) -> str:
-    """Turn a handler's name into something to put in a menu.
+def label_for(name: str, acronyms: Optional[Dict[str, str]] = None) -> str:
+    """Turn a handler's name into something a person can be shown.
 
     Args:
-        key (str): A handler's name without its prefix, such as `uv_coverage`.
+        name (str): A handler's name without its operation prefix, such as `uv_coverage`.
         acronyms (Optional[Dict[str, str]]): Words that keep their own capitals, lower-cased
-            keys to the spelling wanted -- `{"uv": "UV"}`. An application's vocabulary is the
-            one thing here that cannot be derived, so it is passed in rather than guessed.
+            keys to the spelling wanted -- `{"uv": "UV"}`. An application's vocabulary is one
+            of the two things here that cannot be derived, so it is passed in.
 
     Returns:
         str: `UV Coverage`. Derived rather than listed, so adding a handler does not mean
             remembering to name it somewhere else.
     """
     known = acronyms or {}
-    return " ".join(known.get(word, word.capitalize()) for word in key.split("_"))
+    return " ".join(known.get(word, word.capitalize()) for word in name.split("_"))
 
 
-def _functions(owner: Any) -> Dict[str, ast.FunctionDef]:
-    """Return every method of a class, by name, as syntax."""
+def _source_of(owner: Any) -> Optional[str]:
+    """Return the source of a class, dedented, or None if it cannot be read."""
+    target = owner if isinstance(owner, type) else type(owner)
     try:
-        source = inspect.getsource(type(owner) if not isinstance(owner, type) else owner)
+        return textwrap.dedent(inspect.getsource(target))
     except (OSError, TypeError) as e:
-        logger.debug("Cannot read the source of %s: %s", owner, str(e))
+        logger.debug("Cannot read the source of %s: %s", getattr(target, "__name__", target), str(e))
+        return None
+
+
+def _methods(owner: Any) -> Dict[str, ast.FunctionDef]:
+    """Return every method a class defines, by name, as syntax."""
+    source = _source_of(owner)
+    if source is None:
         return {}
-    tree = ast.parse(re.sub(r"^\s{4}", "", source, flags=re.M) if source.startswith("    ") else source)
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        logger.debug("Cannot parse the source of %s: %s", owner, str(e))
+        return {}
     return {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
 
 
-def _reads(name: str, functions: Dict[str, ast.FunctionDef], seen: Optional[Set[str]] = None) -> Set[str]:
-    """Return the model parts a method touches, following the helpers it delegates to."""
-    seen = seen if seen is not None else set()
-    if name in seen or name not in functions:
+def _called_names(node: ast.FunctionDef) -> List[str]:
+    """Return the attribute names called inside one method, in source order."""
+    return [child.func.attr for child in ast.walk(node)
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute)]
+
+
+def _reached(name: str, methods: Dict[str, ast.FunctionDef], seen: Set[str]) -> Set[str]:
+    """Return every name called by a method, following the methods of the same class.
+
+    Notes:
+        - Following anything the class itself defines, rather than names beginning with some
+          agreed prefix, is what keeps this free of an application's conventions -- and it is
+          also more complete, since a helper is a helper whatever it is called.
+    """
+    if name in seen or name not in methods:
         return set()
     seen.add(name)
 
     found: Set[str] = set()
-    for node in ast.walk(functions[name]):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
-            continue
-        called = node.func.attr
-        if called in MODEL_ACCESSORS:
-            found.add(MODEL_ACCESSORS[called])
-        elif called.startswith(HELPER_PREFIXES):
-            found |= _reads(called, functions, seen)
+    for called in _called_names(methods[name]):
+        found.add(called)
+        if called in methods:
+            found |= _reached(called, methods, seen)
     return found
 
 
-def derive(owner: Any, prefix: str) -> Dict[str, Dict[str, List[str]]]:
-    """Work out what an operation offers, and how its handlers depend on each other.
+def derive(owner: Any, operation: Optional[str] = None,
+           interpret: Optional[Callable[[str], Optional[str]]] = None) -> Dict[str, Dict[str, List[str]]]:
+    """Work out what one `Super` offers and how its handlers depend on each other.
 
     Args:
-        owner (Super): The instance to read, such as a `ScheduleCalculator`.
-        prefix (str): The handler prefix, such as `_calculate_`.
+        owner (Super): The instance to read.
+        operation (Optional[str]): The operation whose handlers to look for. Taken from the
+            instance when not given, so a registered `Super` needs no argument.
+        interpret (Optional[Callable]): Given a called name, return what it means to the
+            application, or None to ignore it. Without it, `touches` is left empty rather than
+            filled with names only the application can read.
 
     Returns:
-        Dict[str, Dict[str, List[str]]]: `{key: {"requires": [...], "reads": [...]}}`, where
-            `requires` names other handlers of the same operation and `reads` names parts of
-            the model. Both sorted, so the answer does not depend on iteration order.
+        Dict[str, Dict[str, List[str]]]: `{name: {"requires": [...], "calls": [...],
+            "touches": [...]}}`. `requires` names other handlers of the same operation;
+            `calls` is every name reached, raw; `touches` is what `interpret` made of them.
 
     Notes:
-        - `requires` is exact: handlers call each other by name, and a call is a call. This is
-          the edge set a scheduler needs -- what may run at once, and what a change invalidates.
-        - `reads` is an **upper bound**, not the truth. It is offered for checking a
-          declaration, never for replacing one.
+        - `requires` is exact and is the edge set a scheduler needs: what may run at once, and
+          what a change invalidates.
+        - `calls` and `touches` are an **upper bound**. A helper shared between handlers is
+          followed for each of them, so a handler is credited with everything its helpers can
+          reach rather than with what it uses. Good for checking a declaration; wrong as one.
     """
-    functions = _functions(owner)
-    handlers = [name for name in functions if name.startswith(prefix)]
+    operation = operation or getattr(owner, "_operation", None) or getattr(owner, "OPERATION", None)
+    if not operation:
+        logger.debug("%s has no operation name; nothing to derive", owner)
+        return {}
 
-    catalogue = {}
+    prefix = f"_{operation}_"
+    methods = _methods(owner)
+    handlers = [name for name in methods if name.startswith(prefix)]
+
+    catalogue: Dict[str, Dict[str, List[str]]] = {}
     for handler in handlers:
-        requires = set()
-        for node in ast.walk(functions[handler]):
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr.startswith(prefix) and node.func.attr != handler):
-                requires.add(node.func.attr[len(prefix):])
+        reached = _reached(handler, methods, set())
+        requires = {name[len(prefix):] for name in reached
+                    if name.startswith(prefix) and name != handler}
+        touches = set()
+        if interpret is not None:
+            touches = {meaning for meaning in (interpret(name) for name in reached) if meaning}
         catalogue[handler[len(prefix):]] = {
             "requires": sorted(requires),
-            "reads": sorted(_reads(handler, functions)),
+            "calls": sorted(reached),
+            "touches": sorted(touches),
         }
     return catalogue
 
 
 def order(catalogue: Dict[str, Dict[str, List[str]]], wanted: List[str]) -> List[str]:
-    """Return the wanted calculations in an order that satisfies their prerequisites.
+    """Return the wanted handlers in an order that satisfies their prerequisites.
 
     Args:
-        catalogue (Dict): What `derive` produced.
-        wanted (List[str]): The keys asked for, in any order.
+        catalogue (Dict): What `derive` produced for one operation.
+        wanted (List[str]): The handler names asked for, in any order.
 
     Returns:
-        List[str]: The same keys, each after everything it needs. A key whose prerequisite was
-            not asked for is left where it falls -- the calculator computes what it needs on
-            its own, so a missing prerequisite is not an error here.
+        List[str]: The same names, each after everything it needs that was also asked for. A
+            prerequisite nobody asked for is not invented: a caller asking for two things gets
+            two things.
 
     Notes:
-        - A cycle would be a defect in the calculations rather than in this function, so it is
-          logged and the remaining keys are appended rather than raising: refusing to order
-          them is not a reason to refuse to run them.
+        - A cycle is a defect in somebody's handlers rather than in this function, so it is
+          logged and the remainder appended. Refusing to order them is not a reason to refuse
+          to run them.
     """
     remaining = list(dict.fromkeys(wanted))
-    placed, result = set(), []
+    placed: Set[str] = set()
+    result: List[str] = []
 
     while remaining:
-        ready = [key for key in remaining
+        ready = [name for name in remaining
                  if all(need in placed or need not in remaining
-                        for need in catalogue.get(key, {}).get("requires", []))]
+                        for need in catalogue.get(name, {}).get("requires", []))]
         if not ready:
             logger.warning("Cannot order %s by their prerequisites; leaving them as given",
                            remaining)
             result.extend(remaining)
             break
-        for key in ready:
-            result.append(key)
-            placed.add(key)
-            remaining.remove(key)
+        for name in ready:
+            result.append(name)
+            placed.add(name)
+            remaining.remove(name)
     return result

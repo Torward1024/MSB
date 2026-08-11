@@ -17,25 +17,33 @@ statement has since been overtaken, a note says where it was resolved.
 
 ### Added
 
-- **`msb_arch.catalogue`: what a `Super` offers, worked out from the code that does it.**
-  An application knows what it can do twice -- once in the handlers, and again in whatever menu
-  or list offers them -- and the second copy is written by hand and goes out of date.
+- **A manipulator can be asked what it offers.** An application built on MSB knows what it can
+  do twice: once in the handlers that do the work, and again in whatever menu or table offers
+  them. The second copy is hand-written and drifts.
 
-  `derive(super_instance, prefix)` returns every handler of an operation, the other handlers
-  each one calls, and the model parts each touches. `order(catalogue, wanted)` returns them so
-  that each comes after what it needs. `label_for(key, acronyms)` turns a handler's name into
-  something to put in a menu.
+  `Manipulator.describe_operations()` reads the first copy back -- every operation registered,
+  its handlers, the handlers each one calls, and a label for each. `order_handlers()` sorts
+  them so each comes after what it needs. The built-in **`Catalogue`** operation makes both
+  reachable as requests: `manipulator.catalogue()` and
+  `manipulator.catalogue(method="order", ...)`.
 
-  The edges are **exact**: handlers call each other by name, and a call is a call. Measured on
-  a 2 700-line calculator downstream, all fourteen result-to-result edges came back correct
-  with nothing declared -- which is the edge set a scheduler needs to know what may run at once
-  and what a change invalidates.
+  The split is deliberate. The registry is the manipulator's own state, so it assembles the
+  answer; the built-in only exposes it, exactly as `Inspector` exposes an object's own
+  attributes. Nothing reaches into `_operations` from outside.
 
-  What a handler *reads* from a model is deliberately an **upper bound**, not the truth: a
-  shared helper fetches what its caller may not use, and six of fourteen came out wider than
-  the truth when this was measured. It is offered for checking a declaration, never for
-  replacing one -- deriving it would restore exactly the coarseness that declaring it exists to
-  remove.
+  Nothing is written down: handlers name themselves against the operation they serve and call
+  each other by name, so registering a `Super` is all it takes for the answer to include it.
+
+### Notes on what it can and cannot tell you
+
+- **Edges between handlers are exact.** A call is a call. Measured on a 2 700-line calculator
+  downstream: all fourteen handler-to-handler edges recovered with nothing declared.
+- **What a handler touches beyond the operation is an upper bound.** A helper shared between
+  handlers is followed for each of them, so six of the fourteen came out wider than the truth.
+  Use it to *check* a declaration, never as one -- the wide answer taken as truth restores the
+  coarseness that declaring a dependency exists to remove.
+- **Nothing here knows what an application is about.** Calls are reported as the names in the
+  code; `interpret` is where a caller says what a name means to it.
 
 ## [1.1.2] - 2026-08-10
 

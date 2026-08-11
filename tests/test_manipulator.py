@@ -46,8 +46,9 @@ class TestManipulatorInit:
         manip = TestManipulator()
         assert manip._managing_object is None
         # `inspect` and `configure` are supplied, so an application that only reads and
-        # writes its model needs no Super of its own.
-        assert set(manip._operations) == {"inspect", "configure"}
+        # writes its model needs no Super of its own. `catalogue` answers what is registered
+        # here, which is the one question that is about the manipulator rather than an object.
+        assert set(manip._operations) == {"inspect", "configure", "catalogue"}
         mock_logger.debug.assert_called()
 
     def test_init_without_builtins(self):

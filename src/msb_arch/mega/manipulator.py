@@ -79,8 +79,8 @@ class Manipulator(ABC):
         self._executor_lock = Lock()
         self._max_workers = max_workers
         if builtins:
-            from ..super.builtins import Configurator, Inspector
-            for builtin in (Inspector(self), Configurator(self)):
+            from ..super.builtins import Catalogue, Configurator, Inspector
+            for builtin in (Inspector(self), Configurator(self), Catalogue(self)):
                 self.register_operation(builtin)
                 self._builtin_operations.add(builtin.OPERATION)
         if operations:
@@ -164,6 +164,62 @@ class Manipulator(ABC):
             self._base_classes.extend([cls for cls in additional_classes if cls not in self._base_classes])
         self._registry = self._get_method_registry()
         logger.info("Registry updated with %s types", len(self._registry))
+
+    def describe_operations(self, operation: Optional[str] = None,
+                            interpret: Optional[Callable] = None,
+                            acronyms: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Describe what is registered here: the operations, their handlers, and the edges.
+
+        Args:
+            operation (Optional[str]): Narrow the answer to one operation.
+            interpret (Optional[Callable]): Given a name a handler calls, return what it means
+                to the application, or None to ignore it. Nothing here knows what an
+                application is about, so it is the caller who says what a name means.
+            acronyms (Optional[Dict[str, str]]): Words that keep their own capitals in a label.
+
+        Returns:
+            Dict[str, Any]: `{operation: {handler: {"requires", "calls", "touches", "label"}}}`.
+
+        Notes:
+            - Built here because the registry is this object's own state: it is the only thing
+              that knows what has been registered, and it knows it the moment it happens. A
+              caller reaching in from outside to read `_operations` is what the request model
+              exists to prevent, and the built-in `Catalogue` is how a caller asks instead.
+            - Nothing is written down. Handlers name themselves against the operation they
+              serve and call each other by name, so registering a `Super` is all it takes for
+              the answer to include it.
+        """
+        from ..catalogue import derive, label_for
+
+        described: Dict[str, Any] = {}
+        for name, owner in self._operations.items():
+            if operation and name != operation:
+                continue
+            entries = derive(owner, name, interpret)
+            for handler, entry in entries.items():
+                entry["label"] = label_for(handler, acronyms)
+            described[name] = entries
+        return described
+
+    def order_handlers(self, operation: str, names: List[str]) -> List[str]:
+        """Return handlers of one operation in an order that satisfies their prerequisites.
+
+        Args:
+            operation (str): The operation whose handlers are being ordered.
+            names (List[str]): The handlers asked for, in any order.
+
+        Returns:
+            List[str]: The same names, each after everything it needs that was also asked for.
+
+        Raises:
+            ValueError: If no such operation is registered.
+        """
+        from ..catalogue import derive, order
+
+        owner = self._operations.get(operation)
+        if owner is None:
+            raise DispatchError(f"No operation named '{operation}' is registered")
+        return order(derive(owner, operation), names)
 
     def register_operation(self, super_instance: Callable, operation: Optional[str] = None) -> None:
         """Register an operation with its super-instance handler.

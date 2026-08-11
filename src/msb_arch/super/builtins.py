@@ -19,10 +19,11 @@ They are deliberately thin. Each is one call to `_apply_methods`, which is what 
 worth subclassing: override the handler for a type that needs domain logic and the rest keeps
 working.
 """
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ..base.basecontainer import BaseContainer
-from ..errors import DispatchError
+from ..errors import DispatchError, RequestError
+from ..utils.logging_setup import logger
 from .super import Super
 
 __all__ = ["Configurator", "Inspector"]
@@ -162,3 +163,68 @@ class Configurator(Super):
         if descended is not None:
             return descended
         return self._apply_methods(obj, attributes, strict=True)
+
+class Catalogue(Super):
+    """Answers what this manipulator offers, worked out from what was registered with it.
+
+    Args:
+        manipulator (Manipulator): The orchestrator whose registry is being reported.
+
+    Notes:
+        - A built-in operation rather than a function a caller may run over a manipulator,
+          because reaching into an orchestrator from outside to read its registry is exactly
+          what the request model exists to avoid. A dialog, a command line and a server each
+          ask the same question the same way: `manipulator.catalogue()`.
+        - Replaceable like any other built-in: register an operation named `catalogue` and it
+          takes over.
+
+    Examples:
+        >>> manipulator.catalogue()
+        {'inspect': {...}, 'configure': {...}}
+    """
+
+    OPERATION = "catalogue"
+
+    def _catalogue(self, obj: Any, attributes: Dict[str, Any]) -> Dict[str, Any]:
+        """Report every operation registered, its handlers, and how they depend on each other.
+
+        Args:
+            obj (Any): Ignored. The catalogue describes the manipulator, not an object, and a
+                request has to be made about something -- which is the one place this question
+                sits awkwardly in the request model rather than naturally.
+            attributes (Dict[str, Any]): `operation` to narrow the answer to one; `interpret`,
+                a callable turning a called name into what it means to the application;
+                `acronyms`, words that keep their own capitals in a label.
+
+        Returns:
+            Dict[str, Any]: `{operation: {handler: {"requires": [...], "calls": [...],
+                "touches": [...], "label": str}}}`.
+
+        Notes:
+            - The registry is the manipulator's own state, so it assembles the answer; this
+              only makes it reachable as a request, the way `Inspector` makes an object's own
+              attributes reachable as one.
+        """
+        assembled = self._manipulator.describe_operations(
+            operation=attributes.get("operation"),
+            interpret=attributes.get("interpret"),
+            acronyms=attributes.get("acronyms"))
+
+        logger.debug("Catalogued %s operation(s)", len(assembled))
+        return assembled
+
+    def _catalogue_order(self, obj: Any, attributes: Dict[str, Any]) -> List[str]:
+        """Return handlers in an order that satisfies their prerequisites.
+
+        Args:
+            obj (Any): Ignored.
+            attributes (Dict[str, Any]): `operation`, whose handlers are being ordered, and
+                `names`, the handlers asked for in any order.
+
+        Returns:
+            List[str]: The same names, each after everything it needs that was also asked for.
+        """
+        operation = attributes.get("operation")
+        if not operation:
+            raise RequestError("An 'operation' is needed to order its handlers")
+        return self._manipulator.order_handlers(operation, attributes.get("names") or [])
