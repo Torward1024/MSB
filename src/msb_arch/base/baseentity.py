@@ -211,10 +211,13 @@ class BaseEntity(Serializable):
         """
         if not isinstance(other, self.__class__):
             return False
-        return (self.name == other.name and
-                self.isactive == other.isactive and
-                all(self.get(k) == other.get(k) for k in self._fields
-                    if k not in ("name", "isactive") and not k.startswith('_')))
+        if self.name != other.name or self.isactive != other.isactive:
+            return False
+        # The same fields `to_dict` writes, worked out per class rather than per comparison,
+        # and read directly: `get` validates a key that came from the class's own table.
+        return all(getattr(self, key, None) == getattr(other, key, None)
+                   for key in self.__class__._written_fields()
+                   if key not in ("name", "isactive"))
     # Defining __eq__ sets __hash__ to None unless it is restated; the shared
     # implementation stays valid, so take it from the base explicitly.
     __hash__ = Serializable.__hash__

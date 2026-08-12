@@ -141,19 +141,29 @@ class _Plan:
         self._manipulator = manipulator
         self._steps: Dict[str, _Step] = {}
 
+        registered = frozenset(manipulator.get_supported_operations())
+        previous = None
         for name, entry in _entries(plan):
             if name in self._steps:
                 raise RequestError(f"Two steps of one plan are called '{name}'")
-            previous = next(reversed(self._steps), None) if self._steps else None
             step = _Step(name, entry, previous)
-            if step.operation not in manipulator.get_supported_operations():
+            if step.operation not in registered:
                 raise DispatchError(
                     f"Step '{name}' asks for operation '{step.operation}', which is not "
                     "registered")
             self._steps[name] = step
+            previous = name
 
         if not self._steps:
             raise RequestError("A plan with no steps has nothing to run")
+
+        # Worked out once. What a step waits for is a fact about the plan, and it was being
+        # recomputed by the reference check, by the ordering and again by every step as it ran.
+        known = self._known = set(self._steps)
+        self._requires = {
+            name: sorted((_referenced(step.obj, known) | _referenced(step.attributes, known)
+                          | set(step.after)) - {name})
+            for name, step in self._steps.items()}
         self._check_references()
 
     # --- the graph ------------------------------------------------------------------------
@@ -173,11 +183,7 @@ class _Plan:
 
     def requires(self, name: str) -> List[str]:
         """Return the steps one step waits for, directly."""
-        step = self._steps[name]
-        known = set(self._steps)
-        found = (_referenced(step.obj, known) | _referenced(step.attributes, known)
-                 | set(step.after))
-        return sorted(found - {name})
+        return self._requires[name]
 
     def order(self) -> List[List[str]]:
         """Return the steps grouped into the stages they can run in.
@@ -190,7 +196,7 @@ class _Plan:
         Raises:
             RequestError: If the steps depend on each other in a circle.
         """
-        waiting = {name: set(self.requires(name)) for name in self._steps}
+        waiting = {name: set(needs) for name, needs in self._requires.items()}
         stages: List[List[str]] = []
         done: Set[str] = set()
 
@@ -266,7 +272,7 @@ class _Plan:
               interceptor chain only ever sees concrete requests and a journal records something
               that can be replayed.
         """
-        blocking = [waited for waited in self.requires(name) if waited in skipped]
+        blocking = [waited for waited in self._requires[name] if waited in skipped] if skipped             else []
         if blocking:
             logger.debug("Skipped step '%s': %s produced nothing", name, blocking)
             responses[name] = {
@@ -276,7 +282,7 @@ class _Plan:
             return None
 
         step = self._steps[name]
-        known = set(self._steps)
+        known = self._known
         try:
             obj = _substitute(step.obj, produced, known)
             if _is_reference(step.obj) and obj is None:

@@ -69,6 +69,29 @@ class BaseContainer(Serializable, ABC, Generic[T]):
     _item_type: type
 
     @classmethod
+    def _resolved_item_type(cls) -> Any:
+        """Return the type this container holds, resolved once for the class.
+
+        Returns:
+            Any: The item type.
+
+        Raises:
+            ResolutionError: If the container was declared without a type parameter.
+
+        Notes:
+            - `_item_type` is an annotated field, so building a container assigns None over
+              whatever the constructor put there; every caller that wanted the type therefore
+              resolved it again. It is a fact about the class, so it is kept on the class.
+        """
+        cached = cls.__dict__.get('_resolved_item_type_cache')
+        if cached is not None:
+            return cached
+
+        resolved = cls._resolve_type(cls._item_type_hint())
+        type.__setattr__(cls, '_resolved_item_type_cache', resolved)
+        return resolved
+
+    @classmethod
     def _item_type_hint(cls) -> Any:
         """Return the type argument the container was declared with.
 
@@ -116,7 +139,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         # Copy: the container owns its mapping, so clear() must not empty the caller's dict.
         initial_items = dict(items) if items else {}
         
-        item_type = self._resolve_type(self._item_type_hint())
+        item_type = self.__class__._resolved_item_type()
 
         for key, item in initial_items.items():
             if not isinstance(key, str):
@@ -216,7 +239,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             - Copying costs roughly three times as much as storing the reference; on 4000
               items that is about 57 ms against 17 ms.
         """
-        item_type = self._resolve_type(self._item_type_hint())
+        item_type = self.__class__._resolved_item_type()
 
         if isinstance(item, item_type):
             item_to_add = deepcopy(item) if copy_items else item
@@ -274,7 +297,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             ValueError: If the item's name does not match the provided name or if it fails validation.
             TypeError: If the item's type does not match the expected type T.
         """
-        item_type = self._resolve_type(self._item_type_hint())
+        item_type = self.__class__._resolved_item_type()
         if not isinstance(item, item_type):
             raise TypeValidationError(f"Item must be of type {item_type.__name__}, got {type(item).__name__}")
         if item.name != name:

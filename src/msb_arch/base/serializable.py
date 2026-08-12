@@ -114,6 +114,10 @@ class EntityMeta(ABCMeta):
             # mutate the set while it is being iterated.
             return sorted(entry, key=lambda c: (c.__module__ or "", c.__qualname__))
 
+#: Types that are already data. Exact types, not a base: a subclass may serialise
+#: differently and must take the ordinary route.
+_PLAIN = frozenset((str, int, float, bool, type(None)))
+
 #: Attributes the framework sets itself, skipped unless a caller names one.
 _INTERNAL = frozenset(('name', '_use_cache', '_cached_to_dict', '_type_cache', 'isactive'))
 
@@ -1048,6 +1052,13 @@ class Serializable(ABC, metaclass=EntityMeta):
               comparison, hash or diff of the output is meaningless. Natural order is used
               where the elements allow it and `repr` order otherwise, which is total.
         """
+        # Most values are numbers and strings, and they are data already. Checking that first
+        # by exact type skips four isinstance calls per value, one of them against an abstract
+        # base -- which is the expensive kind. Anything else, including a subclass of str or a
+        # bool, falls through to the checks below and is treated exactly as it was.
+        if type(value) in _PLAIN:
+            return value
+
         if isinstance(value, Serializable):
             return CYCLIC_REFERENCE if id(value) in seen else value.to_dict()
         if isinstance(value, dict):

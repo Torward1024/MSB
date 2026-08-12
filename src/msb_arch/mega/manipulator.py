@@ -76,6 +76,7 @@ class Manipulator(ABC):
         self._builtin_operations = set()
         self._interceptors = []
         self._chain = None
+        self._model_cache = {}
         self._executor = None
         self._executor_lock = Lock()
         self._max_workers = max_workers
@@ -101,6 +102,7 @@ class Manipulator(ABC):
             obj (Any): The object to set as the managing object.
         """
         self._managing_object = obj
+        self._model_cache.clear()
         if obj is not None and type(obj) not in self._base_classes:
             self._base_classes.append(type(obj))
             self.update_registry()
@@ -166,6 +168,7 @@ class Manipulator(ABC):
         if additional_classes:
             self._base_classes.extend([cls for cls in additional_classes if cls not in self._base_classes])
         self._registry = self._get_method_registry()
+        self._model_cache.clear()
         logger.debug("Registry updated with %s types", len(self._registry))
 
     def describe_operations(self, operation: Optional[str] = None,
@@ -276,7 +279,16 @@ class Manipulator(ABC):
             roots = list(self._base_classes)
             if self._managing_object is not None:
                 roots.append(type(self._managing_object))
-        return derive_model(roots)
+
+        # Reading annotations gives the same graph every time for the same roots, and this is
+        # asked once per menu, dialog or diagram. Held on the instance, so it lives no longer
+        # than the orchestrator, and dropped whenever what it knows about changes.
+        key = tuple(roots)
+        cached = self._model_cache.get(key)
+        if cached is None:
+            cached = derive_model(roots)
+            self._model_cache[key] = cached
+        return cached
 
     def pipeline(self, plan: Optional[Union[Dict[str, Any], Sequence[Dict[str, Any]]]] = None,
                  raise_on_error: bool = True, concurrent: bool = False, name: Optional[str] = None
