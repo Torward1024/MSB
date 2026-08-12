@@ -6,11 +6,10 @@ The base layer defines three classes.
 the annotated fields and their type checking, the `name` and `isactive` state, `to_dict`,
 the cache and the ownership graph invalidation travels through.
 
-`BaseEntity` and `BaseContainer` both derive from it, and **neither derives from the
-other**. An entity addresses its attributes; a container addresses its items. They spell
-that with the same words -- `get`, `set`, `clear`, `[]`, `in` -- which is exactly why they
-have to be siblings: while the container inherited from the entity, each of those names
-carried two incompatible meanings inside one hierarchy.
+`BaseEntity` and `BaseContainer` both derive from it, and neither derives from the other. An
+entity addresses its attributes; a container addresses its items, and both spell that with the
+same words: `get`, `set`, `clear`, `[]`, `in`. While the container inherited from the entity,
+each of those names carried two meanings in one hierarchy.
 
 | You want | Use |
 | --- | --- |
