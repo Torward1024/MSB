@@ -114,8 +114,7 @@ class EntityMeta(ABCMeta):
             # mutate the set while it is being iterated.
             return sorted(entry, key=lambda c: (c.__module__ or "", c.__qualname__))
 
-#: Types that are already data. Exact types, not a base: a subclass may serialise
-#: differently and must take the ordinary route.
+#: Types that are already data. Exact types, not bases: a subclass may serialise differently.
 _PLAIN = frozenset((str, int, float, bool, type(None)))
 
 #: Attributes the framework sets itself, skipped unless a caller names one.
@@ -204,13 +203,10 @@ class Serializable(ABC, metaclass=EntityMeta):
             if field in _INTERNAL and field not in kwargs:
                 continue
             value = kwargs.get(field, None)
-            # The same two steps `_validate_type` takes, with the lookup of the checker done
-            # once per class rather than once per value. None is accepted for every field but
-            # `name`, which is validated above and never reaches this loop.
+            # What `_validate_type` does, with the checker looked up once per class. None is
+            # accepted for every field but `name`, which is checked above.
             if value is not None and (checker is None or not checker(value)):
-                # The compiled form answers yes or no; the walk says which element was wrong
-                # and why. So the fast path is the yes, and anything else goes the long way to
-                # be refused with something a reader can act on.
+                # The compiled form answers yes or no; the walk says which element was wrong.
                 self._check_type(field, value, expected_type, f"Attribute '{field}'")
             super().__setattr__(field, value)
             if isinstance(value, Serializable):
@@ -240,12 +236,10 @@ class Serializable(ABC, metaclass=EntityMeta):
 
         Notes:
             - Owners are held weakly, so an entity never keeps one alive.
-            - The whole subtree is walked, not just this node: `deepcopy` treats a weak
-              reference as atomic, so the copies made by `add` would otherwise keep pointing
-              at the originals and invalidation would never reach the new owner.
-            - An entity can have several owners. Storing only the latest was enough while
-              `add` deep copied, but `copy_items=False` puts one object into two containers,
-              and then every one of them has to be invalidated, not just the last.
+            - The whole subtree is walked: `deepcopy` treats a weak reference as atomic, so
+              copies made by `add` would otherwise still point at the originals.
+            - An entity can have several owners -- `copy_items=False` puts one object into two
+              containers -- and all of them must be invalidated.
             - Owners are keyed by identity rather than kept in a set: a set would hash and
               compare them, and comparing entities walks their fields, which never returns
               on a cyclic structure.
@@ -264,8 +258,8 @@ class Serializable(ABC, metaclass=EntityMeta):
             owners[id(owner)] = weakref.ref(owner)
         for key in self.__class__._written_fields():
             value = getattr(self, key, None)
-            # Most fields hold a number or a string. Saying so by exact type first skips an
-            # abstract-base isinstance per field per object, which is what adoption mostly did.
+            # Most fields hold a number or a string; checking that first skips an
+            # abstract-base isinstance per field per object.
             if value is None or type(value) in _PLAIN:
                 continue
             if isinstance(value, Serializable):
@@ -279,15 +273,11 @@ class Serializable(ABC, metaclass=EntityMeta):
                 write.
 
         Notes:
-            - **"Did this change" without keeping a copy of what it was.** Two reads of the same
-              number mean nothing was written in between; two different numbers mean something
-              was. That is the cheap half of knowing whether a result is still good, and it costs
-              one increment on a path that was already there to invalidate the cache.
-            - **About this object, not about what it holds.** A container's revision does not
-              move when one of its items is written to, because making it move would mean walking
-              up the ownership graph on every write whether anything cached or not. Ask the item.
-            - Not serialised. A revision counts writes in one process's memory; a number restored
-              from a file would claim to compare with something it never saw.
+            - Two reads of the same number mean nothing was written in between. It costs one
+              increment, on the path that already invalidates the cache.
+            - About this object, not what it holds: a container's revision does not move when an
+              item is written to. Ask the item, or use `fingerprint`.
+            - Not serialised, since it counts writes in one process's memory.
         """
         return self.__dict__.get('_revision', 0)
 
@@ -296,12 +286,10 @@ class Serializable(ABC, metaclass=EntityMeta):
         record that this one was written to.
 
         Notes:
-            - A container serializes its items, so a mutated item makes every ancestor
-              stale. Invalidation therefore walks up the ownership graph rather than down
-              into the children, which is both correct and cheap.
-            - Every owner is visited, not just one: an item added with `copy_items=False`
-              belongs to each container that holds it, and all of them go stale together.
-            - The walk is guarded against a cycle in the ownership graph.
+            - A container serialises its items, so a mutated item makes every ancestor stale:
+              the walk goes up the ownership graph, not down into children.
+            - Every owner is visited, since an item may belong to several containers.
+            - Guarded against a cycle in the ownership graph.
         """
         try:
             self.__dict__['_revision'] += 1
@@ -401,8 +389,7 @@ class Serializable(ABC, metaclass=EntityMeta):
         if checker is not None and checker(value):
             return
 
-        # Either nothing compiled for this hint, or the compiled form said no and the walk is
-        # what turns that into a message naming the element that failed.
+        # Nothing compiled, or the compiled form said no and the walk names what failed.
         self._check_type(key, value, expected_type, f"Attribute '{key}'")
 
     @classmethod
@@ -413,11 +400,8 @@ class Serializable(ABC, metaclass=EntityMeta):
             Dict[str, Any]: Field name mapped to the resolved annotation.
 
         Notes:
-            - The same table `_init_plan` walks, in the shape a lookup by name wants. Building
-              an object goes through the fields in order; restoring one goes through the data
-              and looks each field up, and both were resolving the annotation again.
-            - Kept rather than rebuilt from the plan, since building the mapping on every call
-              would put back most of what was saved.
+            - The same table `_init_plan` walks, in the shape a lookup by name wants: building
+              an object goes through the fields in order, restoring one looks each up.
         """
         cached = cls.__dict__.get('_resolved_fields_cache')
         if cached is not None and cached[1] == len(cls._fields):
@@ -436,14 +420,12 @@ class Serializable(ABC, metaclass=EntityMeta):
                 resolved, and the set of names a constructor may be given.
 
         Notes:
-            - Resolving an annotation gives the same answer for every instance of a class, so
-                it is done once per class rather than once per object. Held in the class's own
-                dictionary, so a subclass never reads a parent's.
-            - Rebuilt when the field count changes, because a container writes the resolved
-              type of its items into `_fields` as it is constructed.
-            - An annotation nothing can resolve yet is left unresolved rather than raising
-              here: `_validate_type` resolves what it needs and reports the failure where it
-              can say which value caused it.
+            - Resolving an annotation gives the same answer for every instance, so it is done
+              once per class, in the class's own dictionary.
+            - Rebuilt when the field count changes, since a container writes its item type into
+              `_fields` as it is constructed.
+            - An unresolvable annotation is left as it is; `_validate_type` reports the failure
+              against a real value, where it can say which one.
         """
         plan = cls.__dict__.get('_init_plan_cache')
         if plan is not None and plan[2] == len(cls._fields):
@@ -469,9 +451,8 @@ class Serializable(ABC, metaclass=EntityMeta):
             tuple: Field names, in the order they were annotated.
 
         Notes:
-            - Which fields are public is a fact about the class, so the leading-underscore test
-              belongs here rather than in a loop that runs per object per serialisation.
-            - Rebuilt when the field count changes, as `_init_plan` is and for the same reason.
+            - Which fields are public is a fact about the class, so the test belongs here rather
+              than in a loop running per object per serialisation.
         """
         cached = cls.__dict__.get('_written_fields_cache')
         if cached is not None and cached[1] == len(cls._fields):
@@ -493,22 +474,15 @@ class Serializable(ABC, metaclass=EntityMeta):
                 value, or None when the hint needs `_check_type`.
 
         Notes:
-            - Compiled once per class and kept in the class's own dictionary, so a subclass
-              never reads a parent's table and resolution happens once rather than per
-              instance. Profiling put 42 `isinstance` calls and ten `get_origin`/`get_args`
-              calls into constructing a single entity, almost all of it re-deriving the same
-              answer about the same annotation.
-            - A plain class, `Any`, and the four shapes almost every model is made of:
-              `Optional[T]`, `List[T]`, `Set[T]`/`FrozenSet[T]` and `Dict[K, V]`, each only
-              when what they hold compiles too. Everything else keeps the structural walk,
-              which is where the meaning lives.
-            - The compiled forms are the same rules, and a test holds them to it: it runs both
-              against a matrix of matching and mismatching values and fails if they ever
-              disagree. Without that check this would be a second implementation, which is the
-              thing the structural walk exists to avoid.
-            - Keyed by the hint rather than by the field name, because a container validates
-              its items under a key that carries the item's name, which would otherwise put
-              one entry in the table per item.
+            - Compiled once per class, in the class's own dictionary. Constructing an entity
+              used to cost 42 `isinstance` calls re-deriving the same answers.
+            - Compiles a plain class, `Any`, and the four shapes most models are made of:
+              `Optional[T]`, `List[T]`, `Set[T]`/`FrozenSet[T]` and `Dict[K, V]`, each only when
+              what they hold compiles too. Everything else keeps the structural walk.
+            - `test_compiled_validators.py` runs both against a matrix of values and fails on
+              any disagreement, so this stays the same rules rather than a second set.
+            - Keyed by the hint, not the field name: a container validates items under a key
+              carrying the item's name.
         """
         table = cls.__dict__.get('_compiled_validators')
         if table is None:
@@ -545,13 +519,12 @@ class Serializable(ABC, metaclass=EntityMeta):
             Optional[Callable[[Any], bool]]: A predicate, or None to leave it to `_check_type`.
 
         Notes:
-            - `Optional[T]` is the common `Union`, and the only one compiled: a general union
-              would have to reproduce the order in which members are tried and what a failure
-              of each means.
-            - A collection compiles only when what it holds compiles, so nesting works to any
-              depth and anything unusual anywhere in a hint falls back for the whole hint.
-            - An empty collection annotation -- a bare `List` -- has no member to check and
-              becomes a check of the collection itself, which is what the walk does too.
+            - `Optional[T]` is the only union compiled: a general one would have to reproduce
+              the order members are tried in and what each failure means.
+            - A collection compiles only when what it holds compiles, so nesting works and
+              anything unusual falls back for the whole hint.
+            - A bare `List` has no member to check and becomes a check of the collection, which
+              is what the walk does.
         """
         origin = get_origin(resolved)
         args = get_args(resolved)
@@ -600,13 +573,9 @@ class Serializable(ABC, metaclass=EntityMeta):
                 it carried, `get_origin` of it and `get_args` of it.
 
         Notes:
-            - Taking an annotation apart gives the same answer every time and was being done
-              for every value checked: reading it accounted for about a third of restoring a
-              container from data. Cached per class, in the class's own dictionary, beside the
-              compiled validators and for the same reason.
-            - The checking itself is not cached and not duplicated. This is the reading, which
-              is what was repeated; a second implementation of the *rules* is what the
-              structural walk exists to avoid.
+            - Taking an annotation apart gives the same answer every time, and doing it per
+              value was about a third of restoring a container. Cached per class.
+            - This is the reading, not the checking: the rules are not duplicated.
         """
         table = cls.__dict__.get('_hint_shapes')
         if table is None:
@@ -892,14 +861,14 @@ class Serializable(ABC, metaclass=EntityMeta):
 
         Example:
             ```python
-            class Telescope(BaseEntity):
+            class Part(BaseEntity):
                 SCHEMA_VERSION = 2
-                diameter: float          # was 'size' in version 1
+                price: float             # was 'cost' in version 1
 
                 @classmethod
                 def migrate(cls, data, from_version):
                     if from_version == 1:
-                        data["diameter"] = data.pop("size")
+                        data["price"] = data.pop("cost")
                     return data
             ```
         """
@@ -1054,10 +1023,8 @@ class Serializable(ABC, metaclass=EntityMeta):
               comparison, hash or diff of the output is meaningless. Natural order is used
               where the elements allow it and `repr` order otherwise, which is total.
         """
-        # Most values are numbers and strings, and they are data already. Checking that first
-        # by exact type skips four isinstance calls per value, one of them against an abstract
-        # base -- which is the expensive kind. Anything else, including a subclass of str or a
-        # bool, falls through to the checks below and is treated exactly as it was.
+        # Most values are numbers or strings. Checking that first skips four isinstance calls
+        # per value, one against an abstract base. Anything else falls through unchanged.
         if type(value) in _PLAIN:
             return value
 
@@ -1084,16 +1051,13 @@ class Serializable(ABC, metaclass=EntityMeta):
                 the same object.
 
         Notes:
-            - The other half of `revision`, and the half that answers across processes and
-              across time. `revision` says "was this written to" and costs nothing; this says
-              "is this the same content as before" and costs one serialisation.
-            - Computed over `to_dict` with the keys sorted, so it depends on what the object
-              *is* rather than on the order anything was assigned. `name` is part of the
-              content, since two differently named objects are not the same input.
-            - Truncated to 64 bits. This identifies content, it does not authenticate it: a
-                collision means a wrong cache hit, not a forged one, and 64 bits is 1 in 2**32
-                after four billion distinct objects.
-            - Reflects the cached mapping when caching is on, so it is invalidated with it.
+            - The other half of `revision`. `revision` says whether an object was written to and
+              costs nothing; this says whether the content is the same and costs one
+              serialisation, but covers the whole subtree and holds across processes.
+            - Computed over `to_dict` with sorted keys, so it depends on what the object is
+              rather than on assignment order. `name` is part of the content.
+            - 64 bits: this identifies content, it does not authenticate it.
+            - Follows the cached mapping when caching is on, so it is invalidated with it.
 
         Examples:
             >>> a, b = Item(name="i", value=1), Item(name="i", value=1)

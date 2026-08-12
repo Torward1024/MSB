@@ -366,7 +366,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
 
         Args:
             conditions (Dict[str, Any]): A dictionary where keys are attribute names and values are
-                the desired values (e.g., {"frequency": 1000.0, "isactive": False}). If empty,
+                the desired values (e.g., {"price": 4.5, "isactive": False}). If empty,
                 returns all items.
 
         Returns:

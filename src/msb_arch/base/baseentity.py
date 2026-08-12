@@ -77,13 +77,13 @@ class BaseEntity(Serializable):
             KeyError: If any specified key is not found in the entity's annotated fields.
 
         Examples:
-            >>> if_obj = IF(name="IF1", frequency=1000.0, bandwidth=16.0)
-            >>> if_obj.get("frequency")
+            >>> part = Part(name="bolt", price=4.5, weight=0.02)
+            >>> part.get("price")
             1000.0
-            >>> if_obj.get(["frequency", "bandwidth"])
-            {'frequency': 1000.0, 'bandwidth': 16.0}
+            >>> part.get(["price", "weight"])
+            {'price': 4.5, 'weight': 0.02}
             >>> if_obj.get()
-            {'name': 'IF1', 'isactive': True, 'frequency': 1000.0, 'bandwidth': 16.0, 'polarizations': []}
+            {'name': 'bolt', 'isactive': True, 'price': 4.5, 'weight': 0.02, 'tags': []}
         """
         if key is None:
             result = {k: getattr(self, k) for k in self._fields if not k.startswith('_') and hasattr(self, k)}

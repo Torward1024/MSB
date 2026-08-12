@@ -13,31 +13,31 @@ import inspect
 import types
 
 class Manipulator(ABC):
-    """Abstract class for managing and processing operations on objects.
+    """The entry point: everything an application does goes through one of these.
 
-    Provides a framework for registering operations and their associated methods, managing a central object,
-    and processing requests. Maintains a registry of supported object types and their methods, with caching
-    for performance. Subclasses can extend this to implement specific manipulation logic.
+    Holds the registered operations, the registry of what may be applied to which type, and the
+    managing object. Turns a request -- data -- into a response, through the interceptor chain
+    and the `Super` that serves the operation.
 
-    Attributes:
-        _managing_object (Optional[Any]): The central object being managed.
-        _base_classes (List[Type]): List of base classes whose methods are registered.
-        _operations (Dict[str, Callable]): Dictionary mapping operation names to super-instance handlers.
-        _registry (Dict[Type, Dict[str, Callable]]): Registry of object types and their available methods.
-        _strict_type_check (bool): If True, enforces strict type checking for objects.
+    Subclass it and register your operations; `inspect`, `configure`, `catalogue`, `save` and
+    `load` are registered for you.
 
-    Notes:
-        - The method registry is held per instance in `_registry` and rebuilt by `update_registry`.
-        - Logging is integrated via `..utils.logging_setup.logger`.
-        - Operations are executed via super-instances that must have an `execute` method.
-        - Results are returned as dictionaries with keys: status (bool), object (Any), method (str | None),
-          result (Any), error (str | None, included only if status=False).
+    Args on the class:
+        _managing_object: The object used when a request names none.
+        _base_classes: The classes whose methods may be named in a request.
+        _operations: Operation name to the `Super` serving it.
+        _registry: Type to the methods registered for it.
+        _strict_type_check: Refuse a request about a type the registry does not know.
+
+    A response is always `{"status": bool, "object": Any, "method": str | None, "result": Any}`,
+    with `error` and `error_type` added when `status` is False.
 
     Examples:
-        >>> manip = Manipulator(base_classes=[list])
-        >>> manip.register_operation("append", Super())  # Assuming super-class with execute method
-        >>> manip.process_request({"operation": "append", "obj": [], "attributes": {"value": 1}})
-        {"status": True, "object": [1], "method": "append", "result": True}
+        >>> class Bench(Manipulator):
+        ...     pass
+        >>> bench = Bench(managing_object=part, base_classes=[Part])
+        >>> bench.inspect(part, get="price")
+        4.5
     """
     def __init__(self, managing_object: Optional[Any] = None,
                  base_classes: Optional[List[Type]] = None,
@@ -59,11 +59,9 @@ class Manipulator(ABC):
                 asynchronous use and never before.
 
         Notes:
-            - The built-ins make an application that only reads and writes its model need no
-              `Super` of its own. Registering an operation of the same name replaces one
-              silently, so an application that supplies its own `Inspector` behaves exactly as
-              it did before they existed. Two registrations of one name that are both yours
-              still raise.
+            - The built-ins mean an application that only reads and writes its model needs no
+              `Super` of its own. Registering an operation of the same name replaces a built-in
+              silently; two registrations of one name that are both yours still raise.
             - Pass `builtins=False` to start with nothing registered.
         """
         self._managing_object = managing_object
@@ -187,13 +185,10 @@ class Manipulator(ABC):
             Dict[str, Any]: `{operation: {handler: {"requires", "calls", "touches", "label"}}}`.
 
         Notes:
-            - Built here because the registry is this object's own state: it is the only thing
-              that knows what has been registered, and it knows it the moment it happens. A
-              caller reaching in from outside to read `_operations` is what the request model
-              exists to prevent, and the built-in `Catalogue` is how a caller asks instead.
-            - Nothing is written down. Handlers name themselves against the operation they
-              serve and call each other by name, so registering a `Super` is all it takes for
-              the answer to include it.
+            - Built here because the registry is this object's own state. `Catalogue` makes it
+              reachable as a request.
+            - Nothing is declared: handlers name themselves after the operation they serve and
+              call each other by name, so registering a `Super` is enough.
         """
         from ..catalogue import derive, label_for
 
@@ -221,8 +216,7 @@ class Manipulator(ABC):
             DispatchError: If no such operation is registered.
 
         Notes:
-            - The stored edges are direct, because the full set follows from them by walking
-              and the reverse does not. This is that walk, offered rather than stored.
+            - The stored edges are direct; this is the walk over them, offered on demand.
         """
         from ..catalogue import derive, requirements_of
 
@@ -264,14 +258,11 @@ class Manipulator(ABC):
                 "held_by": {type name: [field]}, "container": bool}}`.
 
         Notes:
-            - Derived from the annotations, so it cannot go stale: a field added to a class
-              changes the answer, and there is no second place saying otherwise.
-            - `held_by` is the direction nothing in the code answers. A class says what it
-              holds; nobody says what holds them, and that is the question asked when deciding
-              what a change reaches.
-            - A graph over **types**. That a `Wheel` changing may affect a `Car` is a fact about
-              the classes; *which* car is a fact about an object, and `_parents` on a live one
-              answers that exactly.
+            - Derived from the annotations, so it cannot go stale.
+            - `held_by` is the direction nothing in the code answers, and the one asked when
+              deciding what a change reaches.
+            - A graph over types. Which particular object holds which is a different question.
+            - Kept until the manipulator's types change, since deriving it costs about 90 us.
         """
         from ..model import derive_model
 
@@ -317,15 +308,11 @@ class Manipulator(ABC):
             DispatchError: If a step asks for an operation that is not registered.
 
         Notes:
-            - The same convention as `process_request` and `batch`: one call, and what it takes
-              is data. A plan can therefore be stored, sent over a wire, written by hand or
-              produced by something else, which is what keeps a command line or a server a
-              wrapper rather than a second implementation.
-            - What this adds over `batch` is three things: the order the edges imply, the
-              substitution of what one step produced into the next, and skipping the branch below
-              a failure rather than running it against nothing. Each step is one
-              `process_request`, so it meets the interceptors, the journal and the metrics like
-              any other request.
+            - The same convention as `process_request` and `batch`: one call, taking data. A
+              plan can be stored, sent, written by hand or generated.
+            - Over `batch` it adds the order the edges imply, substitution of what a step
+              produced, and skipping the branch below a failure. Each step is one
+              `process_request`.
 
         Examples:
             >>> manipulator.pipeline({
@@ -366,9 +353,9 @@ class Manipulator(ABC):
                 items and entities raising `NotImplementedError`.
 
         Notes:
-            - Text rather than classes. A stub is meant to be read, edited and committed.
-            - The names, the signatures and the descent into containers follow from the model
-              graph. What the handlers do does not, and that is the part left to write.
+            - Text rather than classes, so a stub can be read, edited and committed.
+            - The names, signatures and container descent follow from the model graph; what the
+              handlers do does not.
 
         Examples:
             >>> source = manipulator.scaffold("measure")
@@ -391,9 +378,9 @@ class Manipulator(ABC):
             PipelineRun: The response of every step, keyed as the plan keyed them.
 
         Notes:
-            - The `a`-prefixed twin every facade has, for the same reason: a caller already
-              inside a loop -- a server, a window -- cannot start another one.
-            - Always concurrent within a stage. A plan run one step at a time is `pipeline`.
+            - The `a`-prefixed twin every facade has: a caller already inside a loop cannot
+              start another one.
+            - Always concurrent within a stage. For one step at a time, use `pipeline`.
         """
         from ..pipeline import _Plan
 
@@ -406,9 +393,8 @@ class Manipulator(ABC):
             Optional[RequestJournal]: The first one added, or None.
 
         Notes:
-            - A journal is an interceptor, so the orchestrator already holds it. Finding it here
-              means a caller asks the manipulator about the session rather than having to keep
-              its own reference to the recorder.
+            - A journal is an interceptor, so the orchestrator already holds it: a caller need
+              not keep its own reference to the recorder.
         """
         from ..interceptors import RequestJournal
 
@@ -425,9 +411,7 @@ class Manipulator(ABC):
                 if no metrics interceptor is registered.
 
         Notes:
-            - Metrics are an interceptor, so the orchestrator already holds one. Asking it means
-              a caller does not have to keep a reference to the recorder alongside the thing
-              being recorded.
+            - Metrics are an interceptor, so the orchestrator already holds one.
 
         Examples:
             >>> manipulator.add_interceptor(RequestMetrics())
@@ -490,13 +474,11 @@ class Manipulator(ABC):
             NotFoundError: If no journal was given and none is registered.
 
         Notes:
-            - A session is a plan whose steps happen to have no edges between them except order,
-              so this is `pipeline` with the plan the journal produced. There is one thing that
-              runs requests and this is not a second one.
-            - Replaying against the orchestrator that holds the journal records the replay as it
-              runs. Remove the journal first, or replay against another orchestrator.
-            - Replay assumes the handlers are deterministic. One that reads the clock, a file or
-              a random seed cannot be reconstructed from its request alone.
+            - A session is a plan whose steps have no edges except order, so this is `pipeline`
+              with the plan the journal produced.
+            - Replaying against the orchestrator holding the journal records the replay. Remove
+              the journal first, or replay against another orchestrator.
+            - Replay assumes deterministic handlers.
         """
         journal = journal if journal is not None else self.journal()
         if journal is None:
@@ -617,11 +599,8 @@ class Manipulator(ABC):
                 Exception: If raise_on_error=True and operation fails.
 
             Notes:
-                - The protocol does not change with the shape of the request: a handler
-                  built on `_apply_methods` always reports every method it ran, which is
-                  what makes a request history replayable.
-                - This facade is sugar over `process_request`, so it unwraps the common
-                  case: one method named, its value returned rather than a mapping of one.
+                - Sugar over `process_request`. It unwraps the common case: one method named,
+                  its value returned rather than a mapping of one.
             """
             request_attributes = attributes.copy()
             if method:
@@ -1124,8 +1103,8 @@ class Manipulator(ABC):
 
         Examples:
             >>> manipulator.batch([
-            ...     {"operation": "configure", "obj": telescope, "attributes": {"set_diameter": 30.0}},
-            ...     {"operation": "inspect", "obj": telescope, "attributes": {"get_code": None}},
+            ...     {"operation": "configure", "obj": part, "attributes": {"set": {"params": {"price": 5.0}}}},
+            ...     {"operation": "inspect", "obj": part, "attributes": {"get": "price"}},
             ... ])
             {'0': {'status': True, ...}, '1': {'status': True, ...}}
         """
@@ -1164,12 +1143,10 @@ class Manipulator(ABC):
                 MSB's own errors, and `HandlerError` otherwise.
 
         Notes:
-            - Only MSB's own taxonomy is rebuilt. A name arriving from somewhere else could
-              denote anything, and constructing an arbitrary class from a string that crossed a
-              boundary is how a message becomes code. Everything else stays a `HandlerError`,
-              which is what every failure used to be.
-            - The message survives; the traceback does not. A response carries no exception
-              object, so `__cause__` is empty by design -- see the note on `_build_response`.
+            - Only MSB's own errors are rebuilt from a name, so a string that crossed a boundary
+              can never name an arbitrary class to construct. Everything else is `HandlerError`.
+            - The message survives, the traceback does not: a response carries no exception
+              object, so `__cause__` is empty.
         """
         message = response.get("error", "Unknown error")
         named = getattr(errors, response.get("error_type") or "", None)

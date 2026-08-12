@@ -15,9 +15,9 @@ import weakref
 _MISSING = object()
 
 
-#: What each method takes, worked out once. Reading a signature costs about a fifth of a
-#: request and the answer never changes, so it is kept against the underlying function --
-#: weakly, since a method defined inside a function should not outlive it.
+#: What each method takes, worked out once: reading a signature was about a fifth of a request.
+#: Weakly held against the underlying function, so a method defined in a function is collected
+#: with it.
 _PARAMETERS: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
@@ -32,8 +32,8 @@ def _parameters_of(method: Callable) -> Tuple[List[str], List[str]]:
             that are not `*args` or `**kwargs`.
 
     Notes:
-        - Cached against the underlying function, so a bound method -- a fresh object on every
-          attribute access -- still hits. Measured at 19% of a request before this.
+        - Cached against the underlying function, so a bound method still hits. Reading the
+          signature every call was 19% of a request.
     """
     key = getattr(method, "__func__", method)
     try:
@@ -141,11 +141,9 @@ class Super(ABC):
             Dict[str, Any]: Standardized response dictionary with object name in 'object' key.
 
         Notes:
-            - `error_type` is a **name**, not an exception. A response is data -- it is logged,
-              journalled and sent over a wire -- so it cannot hold an exception object. A name
-              costs nothing and lets a facade re-raise the kind of error that actually
-              happened, which is the difference between a caller being able to tell a missing
-              file from a corrupt one and having to read the message.
+            - `error_type` is a name, not an exception, because a response is data. It lets a
+              facade re-raise the kind of error that happened rather than flattening every
+              failure into one type.
         """
         obj_name = getattr(obj, 'name', None)
         if obj_name is None:
@@ -250,11 +248,9 @@ class Super(ABC):
             Dict[str, Any]: Response dictionary with status, object, method, result, and error if status is False.
 
         Notes:
-            - When the method itself raised, the exception is kept under the private key
-              '_exception' so that a strict `_apply_methods` can chain it as the cause of the
-              `HandlerError` it raises. It is not part of the result protocol, is never copied
-              into `MethodResults`, and holds an exception object rather than anything
-              serializable.
+            - When the method raised, the exception is kept under the private key `_exception`
+              so a strict `_apply_methods` can chain it as the cause. It is not part of the
+              result protocol and is never copied into `MethodResults`.
         """
         if method_name not in valid_methods:
             logger.error("Invalid method '%s' for '%s'", method_name, type(obj).__name__)
@@ -347,11 +343,10 @@ class Super(ABC):
             ValueError: If `strict` and a method fails, or if the request named no methods.
 
         Notes:
-            - Every method that ran is reported, so nothing is lost when a request names
-              several. A handler that returned only the last result made the outcome depend
-              on the order of the keys in the request.
-            - `strict=True` reproduces what a hand-written handler loop did: stop at the
-              first failure and let `execute` turn it into a failed response.
+            - Every method that ran is reported, so a request naming several loses nothing and
+              the outcome does not depend on key order.
+            - `strict=True` stops at the first failure and lets `execute` turn it into a failed
+              response.
         """
         if not attributes:
             raise RequestError(f"No methods requested for {type(obj).__name__}")
@@ -470,11 +465,11 @@ class Super(ABC):
             Dict[str, Any]: Dictionary with status, object (name), method, result, and error (if status=False).
 
         Notes:
-            - Resolution order: the requested name if it already denotes a handler, then
-              `_<operation>_<name>`, then `_<operation>_<type>`, then
-              `_<operation>_basecontainer` for containers, then `_<operation>`.
-            - Only handlers of this operation can be reached. A request naming anything else
-              fails with "No suitable method found" instead of calling it.
+            - Resolution order: the requested name if it is already a handler, then
+              `_<operation>_<name>`, `_<operation>_<type>`, `_<operation>_basecontainer` for
+              containers, and finally `_<operation>`.
+            - Only handlers of this operation are reachable; anything else fails with "No
+              suitable method found" rather than being called.
         """
         if attributes is None:
             attributes = {}
