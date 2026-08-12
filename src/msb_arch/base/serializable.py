@@ -492,6 +492,55 @@ class Serializable(ABC, metaclass=EntityMeta):
         table[hint] = checker
         return checker
     @classmethod
+    def _hint_shape(cls, hint: Any):
+        """Return an annotation taken apart: resolved, its constraints, origin and arguments.
+
+        Args:
+            hint (Any): The annotation to read.
+
+        Returns:
+            Tuple[Any, tuple, Any, tuple]: The hint with `Annotated` unwrapped, the constraints
+                it carried, `get_origin` of it and `get_args` of it.
+
+        Notes:
+            - Taking an annotation apart gives the same answer every time and was being done
+              for every value checked: reading it accounted for about a third of restoring a
+              container from data. Cached per class, in the class's own dictionary, beside the
+              compiled validators and for the same reason.
+            - The checking itself is not cached and not duplicated. This is the reading, which
+              is what was repeated; a second implementation of the *rules* is what the
+              structural walk exists to avoid.
+        """
+        table = cls.__dict__.get('_hint_shapes')
+        if table is None:
+            table = {}
+            type.__setattr__(cls, '_hint_shapes', table)
+
+        try:
+            found = table.get(hint)
+            if found is not None:
+                return found
+            hashable = True
+        except TypeError:
+            hashable = False
+
+        resolved = cls._resolve_type(hint)
+
+        # Unwrap Annotated[X, ...] down to X, keeping the constraints it carries. They are
+        # applied after the type is known to hold, so a rule never sees a value it was not
+        # written for.
+        constraints = []
+        while hasattr(resolved, '__metadata__'):
+            constraints.extend(item for item in resolved.__metadata__
+                               if isinstance(item, Constraint))
+            resolved = cls._resolve_type(resolved.__origin__)
+
+        shape = (resolved, tuple(constraints), get_origin(resolved), get_args(resolved))
+        if hashable:
+            table[hint] = shape
+        return shape
+
+    @classmethod
     def _check_type(cls, key: str, value: Any, expected_type: Any, subject: str) -> None:
         """Recursively check a non-None value against a (possibly generic) type hint.
 
@@ -517,16 +566,7 @@ class Serializable(ABC, metaclass=EntityMeta):
             - Unresolvable or non-class hints are accepted rather than raising, so that an
               exotic annotation never blocks a valid assignment.
         """
-        resolved_type = cls._resolve_type(expected_type)
-
-        # Unwrap Annotated[X, ...] down to X, keeping the constraints it carries. They are
-        # applied after the type is known to hold, so a rule never sees a value it was not
-        # written for.
-        constraints = []
-        while hasattr(resolved_type, '__metadata__'):
-            constraints.extend(item for item in resolved_type.__metadata__
-                               if isinstance(item, Constraint))
-            resolved_type = cls._resolve_type(resolved_type.__origin__)
+        resolved_type, constraints, origin, type_args = cls._hint_shape(expected_type)
 
         if constraints:
             cls._check_type(key, value, resolved_type, subject)
@@ -538,9 +578,6 @@ class Serializable(ABC, metaclass=EntityMeta):
             return
         if resolved_type is None or resolved_type is type(None):
             raise TypeValidationError(f"{subject} must be None, got {type(value)}")
-
-        origin = get_origin(resolved_type)
-        type_args = get_args(resolved_type)
 
         if origin is None:
             if isinstance(resolved_type, (type, tuple)):
@@ -808,8 +845,7 @@ class Serializable(ABC, metaclass=EntityMeta):
         if value is None:
             return None
 
-        origin = get_origin(hint)
-        args = get_args(hint)
+        _, _, origin, args = cls._hint_shape(hint)
 
         if isinstance(value, dict):
             named = value.get(discriminator) if discriminator else value.get("type")

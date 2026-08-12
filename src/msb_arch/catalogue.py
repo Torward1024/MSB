@@ -27,6 +27,7 @@ import ast
 import inspect
 import re
 import textwrap
+import weakref
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from .utils.logging_setup import logger
@@ -63,6 +64,16 @@ def _source_of(target: Any) -> Optional[str]:
         return None
 
 
+#: Parsed method bodies, by class. Reading and parsing the source of a class hierarchy costs
+#: milliseconds and gives the same answer every time -- source does not change while a process
+#: runs -- so it is done once. Weakly held, so a class defined inside a function is collected
+#: with it.
+_PARSED: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+#: Derived handler tables, by (class, operation). Same reasoning, one level up.
+_DERIVED: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
 def _methods(owner: Any) -> Dict[str, ast.FunctionDef]:
     """Return every method a class has, by name, as syntax.
 
@@ -71,8 +82,14 @@ def _methods(owner: Any) -> Dict[str, ast.FunctionDef]:
           reports the ones it inherited. Reading only the class's own body would tell an
           application half of what it offers, which is worse than telling it nothing.
         - A method defined nearer wins, matching what Python would call.
+        - Cached per class. This reads files and parses them, which took 118 ms for six
+          operations and is asked for every time a menu is drawn.
     """
     target = owner if isinstance(owner, type) else type(owner)
+    cached = _PARSED.get(target)
+    if cached is not None:
+        return cached
+
     methods: Dict[str, ast.FunctionDef] = {}
 
     for ancestor in reversed(target.__mro__):
@@ -89,6 +106,11 @@ def _methods(owner: Any) -> Dict[str, ast.FunctionDef]:
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
                 methods[node.name] = node          # nearer classes come later and win
+
+    try:
+        _PARSED[target] = methods
+    except TypeError:                              # a class that cannot be weakly referenced
+        pass
     return methods
 
 
@@ -148,27 +170,59 @@ def derive(owner: Any, operation: Optional[str] = None,
         logger.debug("%s has no operation name; nothing to derive", owner)
         return {}
 
-    prefix = f"_{operation}_"
-    methods = _methods(owner)
-    handlers = [name for name in methods if name.startswith(prefix)]
+    derived = _edges(owner if isinstance(owner, type) else type(owner), operation)
 
     catalogue: Dict[str, Dict[str, List[str]]] = {}
-    for handler in handlers:
-        # Direct, not transitive. A scheduler wants the edges that were written; the closure
-        # follows from them, and reporting the closure instead loses which is which -- and
-        # says a handler needs something it never mentions.
-        requires = {name[len(prefix):] for name in _called_names(methods[handler])
-                    if name.startswith(prefix) and name != handler}
-        reached = _reached(handler, methods, set())
-        touches = set()
+    for handler, (requires, reached) in derived.items():
+        touches = []
         if interpret is not None:
-            touches = {meaning for meaning in (interpret(name) for name in reached) if meaning}
-        catalogue[handler[len(prefix):]] = {
-            "requires": sorted(requires),
-            "calls": sorted(reached),
-            "touches": sorted(touches),
-        }
+            touches = sorted({meaning for meaning in (interpret(name) for name in reached)
+                              if meaning})
+        catalogue[handler] = {"requires": list(requires), "calls": list(reached),
+                              "touches": touches}
     return catalogue
+
+
+def _edges(target: type, operation: str) -> Dict[str, tuple]:
+    """Return each handler's direct prerequisites and everything it reaches, cached per class.
+
+    Args:
+        target (type): The class whose handlers to read.
+        operation (str): The operation they serve.
+
+    Returns:
+        Dict[str, tuple]: `{handler: (requires, calls)}`, both sorted.
+
+    Notes:
+        - `requires` is exact and **direct**: the handlers this one names, not everything they
+          in turn reach. That is the edge set a scheduler needs, and the transitive closure
+          follows from it while the reverse does not.
+        - Cached because it reads source, which does not change while a process runs. What is
+          *not* cached is the interpretation of the names, since only the caller supplies that.
+    """
+    per_operation = _DERIVED.setdefault(target, {}) if _weakly(target) else {}
+    if operation in per_operation:
+        return per_operation[operation]
+
+    prefix = f"_{operation}_"
+    methods = _methods(target)
+    edges = {}
+    for handler in [name for name in methods if name.startswith(prefix)]:
+        requires = sorted({name[len(prefix):] for name in _called_names(methods[handler])
+                           if name.startswith(prefix) and name != handler})
+        edges[handler[len(prefix):]] = (requires, sorted(_reached(handler, methods, set())))
+
+    per_operation[operation] = edges
+    return edges
+
+
+def _weakly(target: type) -> bool:
+    """Report whether a class can be a key in a weak mapping."""
+    try:
+        weakref.ref(target)
+        return True
+    except TypeError:
+        return False
 
 
 def requirements_of(catalogue: Dict[str, Dict[str, List[str]]], name: str) -> List[str]:
