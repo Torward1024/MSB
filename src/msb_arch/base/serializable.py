@@ -262,10 +262,12 @@ class Serializable(ABC, metaclass=EntityMeta):
                 owners = {}
                 super().__setattr__('_parents', owners)
             owners[id(owner)] = weakref.ref(owner)
-        for key in self._fields:
-            if key.startswith('_'):
-                continue
+        for key in self.__class__._written_fields():
             value = getattr(self, key, None)
+            # Most fields hold a number or a string. Saying so by exact type first skips an
+            # abstract-base isinstance per field per object, which is what adoption mostly did.
+            if value is None or type(value) in _PLAIN:
+                continue
             if isinstance(value, Serializable):
                 value._adopt(self, seen)
     @property
