@@ -248,6 +248,50 @@ class Manipulator(ABC):
             raise DispatchError(f"No operation named '{operation}' is registered")
         return order(derive(owner, operation), names)
 
+    def describe_model(self, roots: Optional[List[type]] = None) -> Dict[str, Any]:
+        """Describe the shape of the model: which type holds which, and the reverse.
+
+        Args:
+            roots (Optional[List[type]]): Where to start walking. Defaults to the types this
+                manipulator knows -- the managing object's own type and whatever was registered
+                with it -- so an application that set those up needs no argument.
+
+        Returns:
+            Dict[str, Any]: `{type name: {"holds": {field: [type name]},
+                "held_by": {type name: [field]}, "container": bool}}`.
+
+        Notes:
+            - Derived from the annotations, so it cannot go stale: a field added to a class
+              changes the answer, and there is no second place saying otherwise.
+            - `held_by` is the direction nothing in the code answers. A class says what it
+              holds; nobody says what holds them, and that is the question asked when deciding
+              what a change reaches.
+            - A graph over **types**. That a `Wheel` changing may affect a `Car` is a fact about
+              the classes; *which* car is a fact about an object, and `_parents` on a live one
+              answers that exactly.
+        """
+        from ..model import derive_model
+
+        if roots is None:
+            roots = list(self._base_classes)
+            if self._managing_object is not None:
+                roots.append(type(self._managing_object))
+        return derive_model(roots)
+
+    def dependents_of(self, name: str, roots: Optional[List[type]] = None) -> List[str]:
+        """Return every type that would feel a change to this one.
+
+        Args:
+            name (str): The type to ask about, by name.
+            roots (Optional[List[type]]): As for `describe_model`.
+
+        Returns:
+            List[str]: Sorted, transitive, excluding the type itself.
+        """
+        from ..model import dependents_of
+
+        return dependents_of(self.describe_model(roots), name)
+
     def register_operation(self, super_instance: Callable, operation: Optional[str] = None) -> None:
         """Register an operation with its super-instance handler.
 

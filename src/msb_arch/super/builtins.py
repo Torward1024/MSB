@@ -233,6 +233,35 @@ class Catalogue(Super):
             raise RequestError("An 'operation' is needed to order its handlers")
         return self._manipulator.order_handlers(operation, attributes.get("names") or [])
 
+    def _catalogue_model(self, obj: Any, attributes: Dict[str, Any]) -> Dict[str, Any]:
+        """Report the shape of the model: which type holds which, and the reverse.
+
+        Args:
+            obj (Any): Ignored, as for `_catalogue`.
+            attributes (Dict[str, Any]): `roots`, the types to start walking from, defaulting
+                to the ones the manipulator knows; `of`, one type name to ask about instead of
+                the whole graph.
+
+        Returns:
+            Dict[str, Any]: The graph, or `{"dependents": [...], "holds": [...]}` when `of`
+                named one type.
+
+        Notes:
+            - The other half of what a catalogue is for. `_catalogue` says what can be done;
+              this says what it can be done to, and both are read back rather than declared.
+        """
+        graph = self._manipulator.describe_model(attributes.get("roots"))
+        wanted = attributes.get("of")
+        if not wanted:
+            logger.debug("Described %s type(s)", len(graph))
+            return graph
+
+        if wanted not in graph:
+            raise NotFoundError(f"No type named '{wanted}' is in the model")
+        from ..model import dependents_of, holdings_of
+        return {"dependents": dependents_of(graph, wanted), "holds": holdings_of(graph, wanted)}
+
+
 class _FileOperation(Super):
     """Shared by the two halves of persistence: the attribute check they both need."""
 
