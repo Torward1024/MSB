@@ -13,6 +13,44 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.4.0] - 2026-08-12
+
+### Added
+
+- **An operation whose `Super` is built the first time it is needed.**
+
+  ```python
+  manipulator.register_deferred("plot", lambda: Plotting(manipulator))
+  ```
+
+  Registering an operation costs whatever its module costs to import. For one reached from a menu
+  -- a plot, a report -- that is paid on every start whether or not anyone opens the menu.
+  Measured downstream: two such operations pulled in matplotlib, astropy.coordinates and scipy,
+  which was 2.3 s of a 4.0 s start.
+
+  The operation counts as registered from the moment it is declared: it appears in
+  `get_supported_operations()`, it has a facade, and a pipeline step may name it. The factory is
+  called once, under a lock, by whatever needs it first -- a request, a plan, or a question about
+  what the operation offers, since `describe_operations` reads its handlers and a dialog building
+  a menu from the catalogue must not be told an operation has none.
+
+- **`Manipulator.warm(operations=None)`**, which builds everything deferred. For an application
+  that would rather pay the cost in the background than at the first click: start a thread, call
+  it, and anything asking meanwhile waits on the same lock rather than building a second
+  instance.
+
+### Notes
+
+- Registering an instance under a name already declared deferred replaces the declaration, since
+  an application changing its mind is not colliding with itself. Two deferrals of one name still
+  raise, as two registrations always have.
+- Declaring a name a built-in holds displaces the built-in immediately, or dispatch would keep
+  finding it and the factory would never run.
+
+### Upgrading from 1.3.0
+
+Nothing to do. `register_deferred` is new; everything else behaves as it did.
+
 ## [1.3.0] - 2026-08-12
 
 The release that finishes the 1.0 roadmap: pipelines, a derived model graph, built-in `save` and

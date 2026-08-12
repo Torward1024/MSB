@@ -583,6 +583,27 @@ Run several requests in order and report the outcome of each.
 - Requests are independent: nothing feeds the result of one into the next. For steps that do,
   use `pipeline`.
 
+##### `register_deferred(operation: str, factory: Callable[[], Super]) -> None`
+
+Register an operation whose `Super` is built the first time it is needed.
+
+**Parameters:**
+- `operation` (str): The operation's name
+- `factory` (Callable): Called once, with no arguments, to build the `Super`. Import inside it
+
+**Raises:** `RegistrationError` for the same reasons `register_operation` raises, and if the
+factory is not callable
+
+The operation counts as registered immediately: it appears in `get_supported_operations()`, it
+has a facade, and a pipeline may name it. It is built by the first request that needs it, or by
+`describe_operations`, `order_handlers` or `requirements_of`, which read its handlers.
+
+##### `warm(operations: Optional[List[str]] = None) -> List[str]`
+
+Build every deferred operation now, or only the ones named. Returns the names built by this
+call. Safe from any thread; a caller that asks meanwhile waits rather than building a second
+instance.
+
 ##### `pipeline(plan=None, raise_on_error=True, concurrent=False, name=None) -> Any`
 
 Run several requests that feed each other, or return a draft when no plan is given.

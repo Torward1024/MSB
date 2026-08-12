@@ -70,6 +70,8 @@ class Manipulator(ABC):
         if managing_object is not None and type(managing_object) not in self._base_classes:
             self._base_classes.append(type(managing_object))
         self._operations = {}
+        self._deferred = {}
+        self._deferred_lock = Lock()
         self._registry = {}
         self._builtin_operations = set()
         self._interceptors = []
@@ -192,6 +194,13 @@ class Manipulator(ABC):
         """
         from ..catalogue import derive, label_for
 
+        # Describing an operation means reading its handlers, which needs the instance. A
+        # deferred one is built here rather than reported as empty: a caller asking what an
+        # operation offers is about to use it.
+        for name in list(self._deferred):
+            if operation is None or name == operation:
+                self._resolve_deferred(name)
+
         described: Dict[str, Any] = {}
         for name, owner in self._operations.items():
             if operation and name != operation:
@@ -220,7 +229,7 @@ class Manipulator(ABC):
         """
         from ..catalogue import derive, requirements_of
 
-        owner = self._operations.get(operation)
+        owner = self._operations.get(operation) or self._resolve_deferred(operation)
         if owner is None:
             raise DispatchError(f"No operation named '{operation}' is registered")
         return requirements_of(derive(owner, operation), name)
@@ -240,7 +249,7 @@ class Manipulator(ABC):
         """
         from ..catalogue import derive, order
 
-        owner = self._operations.get(operation)
+        owner = self._operations.get(operation) or self._resolve_deferred(operation)
         if owner is None:
             raise DispatchError(f"No operation named '{operation}' is registered")
         return order(derive(owner, operation), names)
@@ -532,11 +541,82 @@ class Manipulator(ABC):
             logger.error("Operation name must be a non-empty string")
             raise RegistrationError("Operation name must be a non-empty string")
 
-        if operation in self._operations:
+        # A built-in being replaced is a default being overridden, not two intentions
+        # colliding: registering an `Inspector` of your own has always been how that is done.
+        self._check_operation_name(operation, replacing_deferred=True)
+        self._deferred.pop(operation, None)
+
+        super_instance._operation = operation
+        self._operations[operation] = super_instance
+        self._register_methods_of(super_instance)
+        logger.debug("Registered operation '%s' with %s", operation, type(super_instance).__name__)
+
+        self._add_facade(operation)
+    
+    def register_deferred(self, operation: str, factory: Callable[[], Any]) -> None:
+        """Register an operation whose `Super` is built the first time it is needed.
+
+        Args:
+            operation (str): The operation's name.
+            factory (Callable[[], Super]): Called once, with no arguments, to build the `Super`.
+                Import inside it: that is the cost being deferred.
+
+        Raises:
+            RegistrationError: For the same reasons `register_operation` raises, and if the
+                factory is not callable.
+
+        Notes:
+            - The operation counts as registered from this moment: it appears in
+              `get_supported_operations()`, it has a facade, and a pipeline step may name it.
+              Only the building is deferred.
+            - Asking what it offers builds it. `describe_operations`, `order_handlers` and
+              `requirements_of` read a handler's source, which needs the instance -- and a
+              caller asking what an operation offers is about to use it.
+            - Built at most once, under a lock, so two threads asking at the same time get one
+              instance.
+            - `warm()` builds everything deferred, for an application that would rather pay the
+              cost in the background than at the first click.
+
+        Examples:
+            >>> manipulator.register_deferred("plot", lambda: Plotter(manipulator))
+            >>> "plot" in manipulator.get_supported_operations()
+            True
+        """
+        if not callable(factory):
+            logger.error("A deferred operation needs a factory, got %s", type(factory).__name__)
+            raise RegistrationError(
+                f"A deferred operation needs a callable factory, got {type(factory).__name__}")
+
+        self._check_operation_name(operation)
+        # Deferring a name a built-in holds means the built-in steps aside now, or dispatch
+        # would keep finding it and the factory would never run.
+        self._operations.pop(operation, None)
+        self._deferred[operation] = factory
+        logger.debug("Registered operation '%s', deferred", operation)
+        self._add_facade(operation)
+
+    def _check_operation_name(self, operation: str, replacing_deferred: bool = False) -> None:
+        """Refuse a name that cannot be an operation, or is already taken.
+
+        Args:
+            operation (str): The name to check.
+            replacing_deferred (bool): Whether a deferred registration of the same name may be
+                replaced. True when registering an instance: an application that declared an
+                operation deferred and then decides to build it eagerly is changing its mind,
+                not colliding with itself. False when deferring, so two deferrals of one name
+                are still refused.
+
+        Raises:
+            RegistrationError: If the name is not a non-empty identifier, is already registered
+                by the application, or would shadow a method of this class.
+        """
+        if not isinstance(operation, str) or not operation:
+            logger.error("Operation name must be a non-empty string")
+            raise RegistrationError("Operation name must be a non-empty string")
+
+        taken = operation in self._operations or operation in self._deferred
+        if taken and not (replacing_deferred and operation not in self._operations):
             if operation in self._builtin_operations:
-                # A default being overridden, not two intentions colliding. Registering an
-                # `Inspector` of your own is how it has always been written, and must keep
-                # meaning the same thing now that one is supplied.
                 logger.debug("Operation '%s' replaces the built-in", operation)
                 self._builtin_operations.discard(operation)
             else:
@@ -548,27 +628,83 @@ class Manipulator(ABC):
             raise RegistrationError(f"Operation name '{operation}' is not a valid identifier")
 
         if hasattr(type(self), operation):
-            logger.error("Operation '%s' would shadow %s.%s", operation, type(self).__name__, operation)
+            logger.error("Operation '%s' would shadow %s.%s", operation, type(self).__name__,
+                         operation)
             raise RegistrationError(
                 f"Operation '{operation}' would shadow the existing "
-                f"{type(self).__name__}.{operation}; choose another name"
-            )
+                f"{type(self).__name__}.{operation}; choose another name")
 
-        super_instance._operation = operation
-        self._operations[operation] = super_instance
+    def _resolve_deferred(self, operation: str) -> Optional[Any]:
+        """Build a deferred operation, or return what was built before.
 
+        Returns:
+            Optional[Super]: The instance, or None if nothing is deferred under that name.
+
+        Raises:
+            RegistrationError: If the factory produced something without `execute`.
+        """
+        if operation not in self._deferred:
+            return None
+        with self._deferred_lock:
+            built = self._operations.get(operation)
+            if built is not None:
+                return built
+
+            factory = self._deferred[operation]
+            instance = factory()
+            if not hasattr(instance, "execute"):
+                logger.error("The factory for '%s' produced %s, which has no execute",
+                             operation, type(instance).__name__)
+                raise RegistrationError(
+                    f"The factory for '{operation}' produced {type(instance).__name__}, "
+                    "which has no execute")
+
+            instance._operation = operation
+            self._operations[operation] = instance
+            self._register_methods_of(instance)
+            self._registry = self._get_method_registry()
+            self._model_cache.clear()
+            logger.debug("Built deferred operation '%s'", operation)
+            return instance
+
+    def warm(self, operations: Optional[List[str]] = None) -> List[str]:
+        """Build every deferred operation now.
+
+        Args:
+            operations (Optional[List[str]]): Limit it to these names. Defaults to all of them.
+
+        Returns:
+            List[str]: The names built by this call, in the order they were built.
+
+        Notes:
+            - For an application that would rather pay the cost in the background than at the
+              first click: start a thread, call this, and anything that asks meanwhile waits on
+              the same lock rather than building a second instance.
+
+        Examples:
+            >>> threading.Thread(target=manipulator.warm, daemon=True).start()
+        """
+        wanted = operations if operations is not None else list(self._deferred)
+        built = []
+        for operation in wanted:
+            if operation in self._deferred and operation not in self._operations:
+                self._resolve_deferred(operation)
+                built.append(operation)
+        return built
+
+    def _register_methods_of(self, super_instance: Any) -> None:
+        """Record the methods of a `Super` so requests may name them."""
         super_type = type(super_instance)
-        if super_type not in self._registry:
-            methods = {
-                name: method for name, method in inspect.getmembers(super_instance, predicate=inspect.ismethod)
-                if not name.startswith('__') and callable(method)
-            }
-            self._registry[super_type] = methods
-            logger.debug("Registered %s methods for %s", len(methods), super_type.__name__)
-        logger.debug("Registered operation '%s' with %s", operation, type(super_instance).__name__)
+        if super_type in self._registry:
+            return
+        methods = {
+            name: method
+            for name, method in inspect.getmembers(super_instance, predicate=inspect.ismethod)
+            if not name.startswith('__') and callable(method)
+        }
+        self._registry[super_type] = methods
+        logger.debug("Registered %s methods for %s", len(methods), super_type.__name__)
 
-        self._add_facade(operation)
-    
     def _create_facades(self) -> None:
         """Create facade methods for all registered operations.
 
@@ -1038,7 +1174,7 @@ class Manipulator(ABC):
             logger.error(error_msg)
             return {"status": False, "object": obj, "method": None, "result": None, "error": error_msg}
 
-        super_instance = self._operations.get(operation)
+        super_instance = self._operations.get(operation) or self._resolve_deferred(operation)
         if super_instance is None:
             error_msg = f"Operation '{operation}' not registered"
             logger.error(error_msg)
@@ -1160,7 +1296,8 @@ class Manipulator(ABC):
         Returns:
             List[str]: List of registered operation names.
         """
-        return list(self._operations.keys())
+        return list(self._operations) + [name for name in self._deferred
+                                         if name not in self._operations]
     
     def clear_cache(self) -> None:
         """Drop the method registry so that it is rebuilt on the next update.

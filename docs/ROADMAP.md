@@ -2,7 +2,9 @@
 
 **The queue is empty.** Everything planned after 1.0 shipped in 1.3.0: pipelines and the
 scheduler over them, the derived model graph, built-in `save` and `load`, scaffolding from the
-model, lineage, and the performance work that waited on the scheduler.
+model, lineage, and the performance work that waited on the scheduler. 1.4.0 added deferred
+registration, which came from an application paying 2.3 s of import on every start for two
+operations most sessions never used.
 
 What each release changed is in [`CHANGELOG.md`](../CHANGELOG.md). What will not change is in
 [`COMPATIBILITY.md`](COMPATIBILITY.md). This page is what is *not* decided.

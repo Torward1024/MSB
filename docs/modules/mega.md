@@ -113,6 +113,44 @@ An operation registered under a name a built-in already uses replaces the built-
 Two registrations of one name that are both yours raise `RegistrationError`, and so does a name
 that would shadow a method of the `Manipulator` itself.
 
+### Registering one that is expensive to build
+
+Registering an operation costs whatever its module costs to import. For one reached from a menu
+-- a plot, a report -- that is paid on every start whether or not anyone opens the menu.
+
+```python
+class Plotting(Super):
+    OPERATION = "plot"
+
+    def _plot_reading(self, obj, attributes):
+        return f"a chart of {obj.name}"
+
+def make_plotting():
+    # The expensive import goes here, so it happens when the operation is first needed.
+    return Plotting(bench)
+
+bench.register_deferred("plot", make_plotting)
+assert "plot" in bench.get_supported_operations()     # registered from this moment
+```
+
+The factory is called once, by whatever needs the operation first: a request, a pipeline step, or
+a question about what it offers -- `describe_operations` reads its handlers, and a dialog building
+a menu from the catalogue must not be told an operation has none.
+
+```python
+assert bench.plot(reading) == "a chart of r1"         # built here
+```
+
+`warm()` builds everything still deferred, for an application that would rather pay in the
+background than at the first click:
+
+```python
+import threading
+threading.Thread(target=bench.warm, daemon=True).start()
+```
+
+Anything asking meanwhile waits on the same lock rather than building a second instance.
+
 ### Teaching it about more types
 
 ```python

@@ -67,8 +67,8 @@ Their signatures will not change outside a major version.
 Everything else with a leading underscore, and every module not reachable from `msb_arch`.
 Notably `_fields`, `_type_cache`, `_entity_registry`, `_parents`, `_cached_to_dict`,
 `_compiled_validators`, `_hint_shapes`, `_init_plan`, `_written_fields`, `_revision`,
-`_operations`, `_registry`, `_interceptors`, `_chain`, `_model_cache`, `_executor`,
-`_dispatch_request` and `_process_single_request`.
+`_operations`, `_deferred`, `_registry`, `_interceptors`, `_chain`, `_model_cache`,
+`_executor`, `_dispatch_request` and `_process_single_request`.
 
 These are readable, and reading one in a debugger is fine. Depending on one in code is not
 covered, and several have already changed shape more than once.
