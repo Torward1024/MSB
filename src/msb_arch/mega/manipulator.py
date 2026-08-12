@@ -333,6 +333,34 @@ class Manipulator(ABC):
             return asyncio.run(prepared.arun(raise_on_error=raise_on_error))
         return prepared.run(raise_on_error=raise_on_error)
 
+    def scaffold(self, operation: str, roots: Optional[List[type]] = None,
+                 only: Optional[List[str]] = None) -> str:
+        """Return the source of the handlers a new operation over this model would need.
+
+        Args:
+            operation (str): The operation the handlers serve.
+            roots (Optional[List[type]]): Where to start reading the model. Defaults to the
+                types this manipulator knows.
+            only (Optional[List[str]]): Limit it to these type names.
+
+        Returns:
+            str: Python source: one `Super` with a handler per type, containers walking their
+                items and entities raising `NotImplementedError`.
+
+        Notes:
+            - Text rather than classes. A stub is meant to be read, edited and committed.
+            - The names, the signatures and the descent into containers follow from the model
+              graph. What the handlers do does not, and that is the part left to write.
+
+        Examples:
+            >>> source = manipulator.scaffold("measure")
+            >>> "def _measure_" in source
+            True
+        """
+        from ..scaffold import stubs
+
+        return stubs(self.describe_model(roots), operation, only=only)
+
     def journal(self) -> Optional[Any]:
         """Return the request journal registered with this orchestrator, if there is one.
 
