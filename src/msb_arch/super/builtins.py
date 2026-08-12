@@ -22,7 +22,11 @@ working.
 from typing import Any, Callable, Dict, List, Optional
 
 from ..base.basecontainer import BaseContainer
-from ..errors import DispatchError, RequestError
+import json
+from pathlib import Path
+
+from ..errors import (DispatchError, NotFoundError, RequestError,
+                      SerializationError)
 from ..utils.logging_setup import logger
 from .super import Super
 
@@ -228,3 +232,155 @@ class Catalogue(Super):
         if not operation:
             raise RequestError("An 'operation' is needed to order its handlers")
         return self._manipulator.order_handlers(operation, attributes.get("names") or [])
+
+class _FileOperation(Super):
+    """Shared by the two halves of persistence: the attribute check they both need."""
+
+    @staticmethod
+    def _required(attributes: Dict[str, Any], name: str, verb: str) -> Any:
+        """Return an attribute a request cannot do without, refusing to guess one.
+
+        Args:
+            attributes (Dict[str, Any]): What the request carried.
+            name (str): The attribute wanted.
+            verb (str): What the caller was trying to do, for the message.
+
+        Returns:
+            Any: The value.
+
+        Raises:
+            RequestError: If it was not given. There is no sensible default for where a
+                caller's files live.
+        """
+        value = attributes.get(name)
+        if not value:
+            raise RequestError(f"No '{name}' given; there is nowhere to {verb}")
+        return value
+
+
+class Persistence(_FileOperation):
+    """Writes any serialisable object to a file.
+
+    Args:
+        manipulator (Manipulator): The orchestrator this is reached through.
+
+    Notes:
+        - **The format is a default, not a law.** JSON over `to_dict` suits most models and
+          none perfectly; an application wanting otherwise registers its own `save`, and this
+          steps aside as any built-in does.
+        - **The write is atomic**: a temporary file beside the target, then a rename. An
+          interrupted write leaves the previous file intact rather than a truncated one, and a
+          truncated file is worse than an old one because it still looks like data. A framework
+          taking on file I/O owes its callers at least this much, or they were better off
+          writing it themselves.
+
+    Examples:
+        >>> manipulator.save(entity, path="entity.json")
+        {'path': 'entity.json'}
+    """
+
+    OPERATION = "save"
+
+    def _save(self, obj: Any, attributes: Dict[str, Any]) -> Dict[str, Any]:
+        """Write an object to a file.
+
+        Args:
+            obj (Serializable): Anything that can turn itself into a dictionary.
+            attributes (Dict[str, Any]): `path`, the file to write; optionally `indent`
+                (4) and `overwrite` (True).
+
+        Returns:
+            Dict[str, Any]: `{"path": str}`.
+
+        Raises:
+            RequestError: If no path was given, the object cannot serialise itself, or a file
+                is already there and `overwrite` is off.
+            SerializationError: If what the object produced cannot be written as JSON.
+        """
+        path = Path(self._required(attributes, "path", "save"))
+        if not hasattr(obj, "to_dict"):
+            raise RequestError(
+                f"{type(obj).__name__} cannot be written to a file: it has no to_dict")
+        if path.exists() and not attributes.get("overwrite", True):
+            raise RequestError(f"'{path}' already exists and overwrite is off")
+
+        try:
+            text = json.dumps(obj.to_dict(), indent=attributes.get("indent", 4),
+                              ensure_ascii=False, allow_nan=False)
+        except (TypeError, ValueError) as e:
+            raise SerializationError(
+                f"{type(obj).__name__} produced something that is not JSON: {e}") from e
+
+        self._write_atomically(path, text)
+        logger.info("Wrote %s to '%s'", type(obj).__name__, path)
+        return {"path": str(path)}
+
+    @staticmethod
+    def _write_atomically(path: Path, text: str) -> None:
+        """Write a file so that an interruption leaves the previous one intact.
+
+        Args:
+            path (Path): Where the content belongs.
+            text (str): What to write.
+
+        Notes:
+            - Written beside the target and renamed, because a rename within one directory is
+              atomic on every platform this runs on.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        staging = path.with_name(path.name + ".writing")
+        try:
+            staging.write_text(text, encoding="utf-8")
+            staging.replace(path)
+        finally:
+            if staging.exists():
+                staging.unlink(missing_ok=True)
+
+
+class Loader(_FileOperation):
+    """Reads a file back into an object.
+
+    Notes:
+        - Separate from `Persistence` only because a `Super` binds to one operation name.
+
+    Examples:
+        >>> manipulator.load(entity, path="entity.json")["object"]
+        Entity(name='entity', ...)
+    """
+
+    OPERATION = "load"
+
+    def _load(self, obj: Any, attributes: Dict[str, Any]) -> Dict[str, Any]:
+        """Read a file back into an object of the same kind as the one asked.
+
+        Args:
+            obj (Serializable): An object of the type to rebuild. A request runs on something,
+                and here that something says what to build -- the one place this fits the
+                request model awkwardly rather than naturally.
+            attributes (Dict[str, Any]): `path`, the file to read; optionally `kind`, the class
+                to build, for reading something that does not exist yet.
+
+        Returns:
+            Dict[str, Any]: `{"object": ...}`.
+
+        Raises:
+            RequestError: If no path was given or the type cannot rebuild itself.
+            NotFoundError: If there is no such file.
+            SerializationError: If the file is not JSON the type can read.
+        """
+        path = Path(self._required(attributes, "path", "load"))
+        kind = attributes.get("kind") or type(obj)
+        if not hasattr(kind, "from_dict"):
+            raise RequestError(
+                f"{kind.__name__} cannot be read from a file: it has no from_dict")
+        if not path.is_file():
+            raise NotFoundError(f"No file at '{path}'")
+
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as e:
+            raise SerializationError(f"'{path}' is not valid JSON: {e}") from e
+
+        restored = kind.from_dict(data)
+        logger.info("Read %s from '%s'", kind.__name__, path)
+        return {"object": restored}

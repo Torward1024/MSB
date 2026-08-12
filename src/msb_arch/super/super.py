@@ -81,7 +81,7 @@ class Super(ABC):
         self._operation = self.OPERATION
 
     def _build_response(self, obj: Any, status: bool, method: str = None, result: Any = None,
-                        error: str = None) -> Dict[str, Any]:
+                        error: str = None, error_type: str = None) -> Dict[str, Any]:
         """Format a standardized response dictionary.
 
         Args:
@@ -90,9 +90,18 @@ class Super(ABC):
             method (str, optional): Name of the method executed. Defaults to None.
             result (Any, optional): Result of the operation. Defaults to None.
             error (str, optional): Error message if status is False. Defaults to None.
+            error_type (str, optional): The name of the exception class, when a failure came
+                from one. Defaults to None.
 
         Returns:
             Dict[str, Any]: Standardized response dictionary with object name in 'object' key.
+
+        Notes:
+            - `error_type` is a **name**, not an exception. A response is data -- it is logged,
+              journalled and sent over a wire -- so it cannot hold an exception object. A name
+              costs nothing and lets a facade re-raise the kind of error that actually
+              happened, which is the difference between a caller being able to tell a missing
+              file from a corrupt one and having to read the message.
         """
         obj_name = getattr(obj, 'name', None)
         if obj_name is None:
@@ -106,6 +115,8 @@ class Super(ABC):
         }
         if not status and error:
             response["error"] = error
+            if error_type:
+                response["error_type"] = error_type
         return response
 
     def _get_methods(self, obj_type: Type) -> Dict[str, Callable]:
@@ -463,10 +474,10 @@ class Super(ABC):
             return self._build_response(obj, True, handler_name, result)
         except ValueError as e:
             logger.error("Execution failed for operation '%s': %s", self._operation, e)
-            return self._build_response(obj, False, None, None, str(e))
+            return self._build_response(obj, False, None, None, str(e), type(e).__name__)
         except Exception as e:
             logger.error("Unexpected error in execute for '%s': %s", self._operation, e)
-            return self._build_response(obj, False, None, None, str(e))
+            return self._build_response(obj, False, None, None, str(e), type(e).__name__)
         
     def clear_cache(self) -> None:
         """Clear the resolved handler lookups, forcing them to be resolved again."""

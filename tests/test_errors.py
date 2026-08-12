@@ -207,13 +207,54 @@ def test_strict_apply_methods_keeps_the_original_exception_as_the_cause(manipula
 
 
 def test_a_facade_reports_the_failure_without_the_cause(manipulator):
-    """Crossing the response boundary reduces the failure to a message, so `__cause__` is
-    gone by the time a facade re-raises. Documented rather than fixed: carrying the
-    exception object in a response would make responses unserializable."""
+    """Crossing the response boundary loses the traceback, so `__cause__` is gone by the time a
+    facade re-raises. Documented rather than fixed: carrying the exception object in a response
+    would make responses unserializable. The *kind* of failure does survive -- see below."""
     with pytest.raises(errors.HandlerError) as caught:
         manipulator.strictly(Exploding(name="e", size=1), detonate=None)
     assert caught.value.__cause__ is None
     assert "boom" in str(caught.value)
+
+
+# --- what kind of failure it was ------------------------------------------------------
+
+def test_the_kind_of_failure_survives_the_boundary(manipulator, tmp_path):
+    """A caller that cannot tell a missing file from a corrupt one has to read the message,
+    which is the taxonomy being thrown away at the last step before anyone could use it."""
+    widget = Widget(name="w", size=1)
+    with pytest.raises(errors.NotFoundError):
+        manipulator.load(widget, path=str(tmp_path / "absent.json"))
+
+    broken = tmp_path / "broken.json"
+    broken.write_text("{ not json", encoding="utf-8")
+    with pytest.raises(errors.SerializationError):
+        manipulator.load(widget, path=str(broken))
+
+
+def test_it_travels_as_a_name_so_a_response_stays_data(manipulator, tmp_path):
+    """A response is logged, journalled and sent over a wire. A name can be; an exception
+    cannot."""
+    import json
+
+    response = manipulator.load(Widget(name="w", size=1), path=str(tmp_path / "absent.json"),
+                                raise_on_error=False)
+    assert response["error_type"] == "NotFoundError"
+    json.dumps(response["error_type"])          # would raise if it were the exception itself
+
+
+def test_a_failure_that_is_not_ours_stays_a_handlererror(manipulator):
+    """Only MSB's own taxonomy is rebuilt. Turning any name that crossed a boundary into a
+    class is how a message becomes code."""
+    class Odd(Super):
+        OPERATION = "oddly"
+
+        def _oddly(self, obj, attributes):
+            raise ZeroDivisionError("not one of ours")
+
+    manipulator.register_operation(Odd(manipulator), operation="oddly")
+    with pytest.raises(errors.HandlerError) as caught:
+        manipulator.oddly(Widget(name="w", size=1))
+    assert "not one of ours" in str(caught.value)
 
 
 def test_a_handler_error_is_still_catchable_as_a_plain_exception(manipulator):

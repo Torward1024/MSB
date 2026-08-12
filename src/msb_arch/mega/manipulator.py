@@ -1,6 +1,7 @@
 # mega/manipulator.py
 from abc import ABC
 from typing import Dict, Any, Optional, Callable, List, Sequence, Type, Union
+from .. import errors
 from ..errors import DispatchError, HandlerError, NotFoundError, RegistrationError, RequestError
 from ..protocols import Interceptor
 import asyncio
@@ -79,8 +80,10 @@ class Manipulator(ABC):
         self._executor_lock = Lock()
         self._max_workers = max_workers
         if builtins:
-            from ..super.builtins import Catalogue, Configurator, Inspector
-            for builtin in (Inspector(self), Configurator(self), Catalogue(self)):
+            from ..super.builtins import (Catalogue, Configurator, Inspector, Loader,
+                                          Persistence)
+            for builtin in (Inspector(self), Configurator(self), Catalogue(self),
+                            Persistence(self), Loader(self)):
                 self.register_operation(builtin)
                 self._builtin_operations.add(builtin.OPERATION)
         if operations:
@@ -357,7 +360,7 @@ class Manipulator(ABC):
             if not raise_on_error:
                 return result
             if not result["status"]:
-                raise HandlerError(result.get("error", "Unknown error"))
+                raise self._as_error(result)
             return self._unwrap_single(result["result"])
 
         async def async_facade_wrapper(self, obj: Optional[Any] = None, method: Optional[str] = None,
@@ -386,7 +389,7 @@ class Manipulator(ABC):
             if not raise_on_error:
                 return result
             if not result["status"]:
-                raise HandlerError(result.get("error", "Unknown error"))
+                raise self._as_error(result)
             return self._unwrap_single(result["result"])
 
         facade_wrapper.__doc__ = facade_wrapper.__doc__.format(operation=operation)
@@ -814,10 +817,13 @@ class Manipulator(ABC):
             }
             if not super_result["status"]:
                 result_dict["error"] = super_result["error"]
+                if "error_type" in super_result:
+                    result_dict["error_type"] = super_result["error_type"]
             return result_dict
         except Exception as e:
             logger.error("Failed to process request '%s' via execute: %s", operation, str(e))
-            return {"status": False, "object": effective_obj, "method": None, "result": None, "error": str(e)}
+            return {"status": False, "object": effective_obj, "method": None, "result": None,
+                    "error": str(e), "error_type": type(e).__name__}
 
     def batch(self, requests: Union[Sequence[Dict[str, Any]], Dict[str, Dict[str, Any]]],
               raise_on_error: bool = False) -> Dict[str, Any]:
@@ -871,6 +877,31 @@ class Manipulator(ABC):
                 if not response.get("status"):
                     raise HandlerError(f"Request '{key}' failed: {response.get('error', 'Unknown error')}")
         return results
+
+    @staticmethod
+    def _as_error(response: Dict[str, Any]) -> Exception:
+        """Turn a failed response back into the kind of exception that caused it.
+
+        Args:
+            response (Dict[str, Any]): A response whose `status` is False.
+
+        Returns:
+            Exception: An instance of the error named in `error_type`, if that names one of
+                MSB's own errors, and `HandlerError` otherwise.
+
+        Notes:
+            - Only MSB's own taxonomy is rebuilt. A name arriving from somewhere else could
+              denote anything, and constructing an arbitrary class from a string that crossed a
+              boundary is how a message becomes code. Everything else stays a `HandlerError`,
+              which is what every failure used to be.
+            - The message survives; the traceback does not. A response carries no exception
+              object, so `__cause__` is empty by design -- see the note on `_build_response`.
+        """
+        message = response.get("error", "Unknown error")
+        named = getattr(errors, response.get("error_type") or "", None)
+        if isinstance(named, type) and issubclass(named, errors.MSBError):
+            return named(message)
+        return HandlerError(message)
 
     def get_supported_operations(self) -> List[str]:
         """Retrieve the list of supported operation names.
