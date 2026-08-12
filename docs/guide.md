@@ -368,4 +368,4 @@ assert response["status"] is False
 | Requests, pipelines, interceptors, the async surface | [Mega module](modules/mega.md) |
 | Every class and method | [API reference](api.md) |
 | What will not break, and how anything changes | [Compatibility](COMPATIBILITY.md) |
-| What is planned | [Roadmap](ROADMAP.md) |
+| What is open, and what was decided against | [Roadmap](ROADMAP.md) |

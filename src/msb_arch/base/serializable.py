@@ -913,6 +913,10 @@ class Serializable(ABC, metaclass=EntityMeta):
 
         _, _, origin, args = cls._hint_shape(hint)
 
+        # A number or a string against an unparameterized hint is already what it will be.
+        if origin is None and type(value) in _PLAIN:
+            return value
+
         if isinstance(value, dict):
             named = value.get(discriminator) if discriminator else value.get("type")
             if named is not None:
@@ -1109,10 +1113,18 @@ class Serializable(ABC, metaclass=EntityMeta):
                 # recognise. A class at version 1 therefore serializes exactly as it did
                 # before versioning existed, and data carrying no version reads as 1.
                 data[SCHEMA_FIELD] = self.SCHEMA_VERSION
-            for key in self.__class__._written_fields():
-                if not hasattr(self, key):
+            serialize = self._serialize_value
+            owner = self.__class__
+            # Read the table rather than calling for it: this runs once per object serialised.
+            known = owner.__dict__.get('_written_fields_cache')
+            written = known[0] if known is not None and known[1] == len(self._fields)                 else owner._written_fields()
+            for key in written:
+                value = getattr(self, key, _MISSING)
+                if value is _MISSING:
                     continue
-                data[key] = self._serialize_value(getattr(self, key), seen)
+                # Numbers and strings are data already, so the common field costs a dictionary
+                # write rather than a call. Anything else goes the ordinary way.
+                data[key] = value if type(value) in _PLAIN else serialize(value, seen)
         finally:
             if is_root:
                 _TRAVERSAL.reset(token)

@@ -178,7 +178,7 @@ Main classes:
 - [Super module](docs/modules/super.md) — writing your own operation
 - [Mega module](docs/modules/mega.md) — requests, pipelines, interceptors, the async surface
 - [Examples](docs/examples.md)
-- [Roadmap](docs/ROADMAP.md) — what comes after 1.0
+- [Roadmap](docs/ROADMAP.md) — what is open, and what was decided against
 - [Changelog](CHANGELOG.md) — release history and upgrade notes
 
 ## Testing

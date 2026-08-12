@@ -127,9 +127,9 @@ in one pass against the tree before this work:
 | `order_handlers` | 16.1 ms | 4.6 µs |
 | `describe_model` | 150 µs | 1.0 µs |
 | `scaffold` | 111 µs | 19.5 µs |
-| Build an entity | 22.0 µs | 8.3 µs |
-| `from_dict`, container of 200 | 9216 µs | 4703 µs |
-| `to_dict`, container of 200 | 1919 µs | 770 µs |
+| Build an entity | 22.0 µs | 8.4 µs |
+| `from_dict`, container of 200 | 9216 µs | 4249 µs |
+| `to_dict`, container of 200 | 1919 µs | 711 µs |
 | `clone` | 81.9 µs | 46.5 µs |
 | `add` | 78.7 µs | 43.1 µs |
 | Equality | 9.7 µs | 3.4 µs |
@@ -145,6 +145,11 @@ noticing it was a number; adoption did the same. The four shapes most models are
 `Optional[T]`, `List[T]`, `Set[T]`, `Dict[K, V]` — now compile into one predicate, as a fast path
 only: a refusal still goes through the structural walk so the message names the element that
 failed, and a test holds the two to each other over 24 hints and 30 values.
+
+Two more found on a second pass: serialising asked `hasattr` and then `getattr` of every field of
+every object, and called a function to be told that a number is already data. A value whose exact
+type is `str`, `int`, `float`, `bool` or `None` now short-circuits both ways, which cuts the
+calls into `_serialize_value` by 63%.
 
 ### Documentation
 

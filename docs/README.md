@@ -22,7 +22,7 @@ and every block in it runs.
 | [Diagrams](diagrams.md) | The same, drawn |
 | [API reference](api.md) | Every public class and method |
 | [Compatibility](COMPATIBILITY.md) | What will not break, and how anything changes |
-| [Roadmap](ROADMAP.md) | What comes after 1.0 |
+| [Roadmap](ROADMAP.md) | What is open, and what was decided against |
 | [Changelog](../CHANGELOG.md) | Release history and upgrade notes |
 
 ## Installation
