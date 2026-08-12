@@ -132,13 +132,14 @@ class BaseEntity(Serializable):
 
         data = cls._apply_migration(data)
 
+        resolved = cls._resolved_fields()
         kwargs = {}
         for key, value in data.items():
             if key in ("name", "isactive"):
                 continue
-            if key not in cls._fields:
+            if key not in resolved:
                 raise UnknownAttributeError(f"Unknown attribute '{key}' for {cls.__name__}")
-            expected_type = cls._resolve_type(cls._fields[key])
+            expected_type = resolved[key]
             if isinstance(expected_type, str):
                 from inspect import getmodule
                 module = getmodule(cls)

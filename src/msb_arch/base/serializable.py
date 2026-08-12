@@ -196,11 +196,18 @@ class Serializable(ABC, metaclass=EntityMeta):
         super().__setattr__('isactive', isactive)
         
         settable, known = self.__class__._init_plan()
-        for field, expected_type in settable:
+        for field, expected_type, checker in settable:
             if field in _INTERNAL and field not in kwargs:
                 continue
             value = kwargs.get(field, None)
-            self._validate_type(field, value, expected_type)
+            # The same two steps `_validate_type` takes, with the lookup of the checker done
+            # once per class rather than once per value. None is accepted for every field but
+            # `name`, which is validated above and never reaches this loop.
+            if value is not None and (checker is None or not checker(value)):
+                # The compiled form answers yes or no; the walk says which element was wrong
+                # and why. So the fast path is the yes, and anything else goes the long way to
+                # be refused with something a reader can act on.
+                self._check_type(field, value, expected_type, f"Attribute '{field}'")
             super().__setattr__(field, value)
             if isinstance(value, Serializable):
                 value._adopt(self)
@@ -385,14 +392,34 @@ class Serializable(ABC, metaclass=EntityMeta):
             return
 
         checker = self.__class__._compiled_validator(expected_type)
-        if checker is not None:
-            if not checker(value):
-                raise TypeValidationError(
-                    f"Attribute '{key}' must be of type {self._resolve_type(expected_type)}, "
-                    f"got {type(value)}")
+        if checker is not None and checker(value):
             return
 
+        # Either nothing compiled for this hint, or the compiled form said no and the walk is
+        # what turns that into a message naming the element that failed.
         self._check_type(key, value, expected_type, f"Attribute '{key}'")
+
+    @classmethod
+    def _resolved_fields(cls) -> Dict[str, Any]:
+        """Return each annotated field with its annotation resolved, worked out once.
+
+        Returns:
+            Dict[str, Any]: Field name mapped to the resolved annotation.
+
+        Notes:
+            - The same table `_init_plan` walks, in the shape a lookup by name wants. Building
+              an object goes through the fields in order; restoring one goes through the data
+              and looks each field up, and both were resolving the annotation again.
+            - Kept rather than rebuilt from the plan, since building the mapping on every call
+              would put back most of what was saved.
+        """
+        cached = cls.__dict__.get('_resolved_fields_cache')
+        if cached is not None and cached[1] == len(cls._fields):
+            return cached[0]
+
+        resolved = {field: expected for field, expected, _ in cls._init_plan()[0]}
+        type.__setattr__(cls, '_resolved_fields_cache', (resolved, len(cls._fields)))
+        return resolved
 
     @classmethod
     def _init_plan(cls):
@@ -419,9 +446,11 @@ class Serializable(ABC, metaclass=EntityMeta):
         settable = []
         for field, hint in cls._fields.items():
             try:
-                settable.append((field, cls._resolve_type(hint)))
+                resolved = cls._resolve_type(hint)
             except Exception:                       # reported later, against a real value
-                settable.append((field, hint))
+                settable.append((field, hint, None))
+                continue
+            settable.append((field, resolved, cls._compiled_validator(hint)))
         built = (tuple(settable), frozenset(cls._fields), len(cls._fields))
         type.__setattr__(cls, '_init_plan_cache', built)
         return built[0], built[1]
@@ -463,9 +492,14 @@ class Serializable(ABC, metaclass=EntityMeta):
               instance. Profiling put 42 `isinstance` calls and ten `get_origin`/`get_args`
               calls into constructing a single entity, almost all of it re-deriving the same
               answer about the same annotation.
-            - Only a plain class and `Any` compile. Everything parameterized keeps the
-              structural walk, which is where the meaning lives and where a second
-              implementation would eventually disagree with the first.
+            - A plain class, `Any`, and the four shapes almost every model is made of:
+              `Optional[T]`, `List[T]`, `Set[T]`/`FrozenSet[T]` and `Dict[K, V]`, each only
+              when what they hold compiles too. Everything else keeps the structural walk,
+              which is where the meaning lives.
+            - The compiled forms are the same rules, and a test holds them to it: it runs both
+              against a matrix of matching and mismatching values and fails if they ever
+              disagree. Without that check this would be a second implementation, which is the
+              thing the structural walk exists to avoid.
             - Keyed by the hint rather than by the field name, because a container validates
               its items under a key that carries the item's name, which would otherwise put
               one entry in the table per item.
@@ -488,9 +522,66 @@ class Serializable(ABC, metaclass=EntityMeta):
                 checker = lambda value: True                              # noqa: E731
             elif get_origin(resolved) is None and isinstance(resolved, type):
                 checker = lambda value, _type=cls._accepted_for(resolved): isinstance(value, _type)  # noqa: E731
+            else:
+                checker = cls._compiled_collection(resolved)
 
         table[hint] = checker
         return checker
+
+    @classmethod
+    def _compiled_collection(cls, resolved: Any):
+        """Compile the parameterized shapes a model is mostly made of, or return None.
+
+        Args:
+            resolved (Any): An annotation with its origin already worth looking at.
+
+        Returns:
+            Optional[Callable[[Any], bool]]: A predicate, or None to leave it to `_check_type`.
+
+        Notes:
+            - `Optional[T]` is the common `Union`, and the only one compiled: a general union
+              would have to reproduce the order in which members are tried and what a failure
+              of each means.
+            - A collection compiles only when what it holds compiles, so nesting works to any
+              depth and anything unusual anywhere in a hint falls back for the whole hint.
+            - An empty collection annotation -- a bare `List` -- has no member to check and
+              becomes a check of the collection itself, which is what the walk does too.
+        """
+        origin = get_origin(resolved)
+        args = get_args(resolved)
+
+        if origin is Union or origin is UnionType:
+            members = [arg for arg in args if arg is not type(None)]
+            if len(members) != 1 or len(args) != 2:
+                return None                    # a real union, not an Optional
+            inner = cls._compiled_validator(members[0])
+            if inner is None:
+                return None
+            return lambda value, _inner=inner: value is None or _inner(value)
+
+        if origin in (list, set, frozenset):
+            if not args:
+                return lambda value, _origin=origin: isinstance(value, _origin)
+            inner = cls._compiled_validator(args[0])
+            if inner is None:
+                return None
+            return lambda value, _origin=origin, _inner=inner: (
+                isinstance(value, _origin)
+                and all(item is None or _inner(item) for item in value))
+
+        if origin is dict:
+            if len(args) != 2:
+                return lambda value: isinstance(value, dict)
+            key_check = cls._compiled_validator(args[0])
+            value_check = cls._compiled_validator(args[1])
+            if key_check is None or value_check is None:
+                return None
+            return lambda value, _key=key_check, _value=value_check: (
+                isinstance(value, dict)
+                and all(_key(key) and (item is None or _value(item))
+                        for key, item in value.items()))
+
+        return None
     @classmethod
     def _hint_shape(cls, hint: Any):
         """Return an annotation taken apart: resolved, its constraints, origin and arguments.
