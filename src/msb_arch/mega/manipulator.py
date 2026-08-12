@@ -278,46 +278,60 @@ class Manipulator(ABC):
                 roots.append(type(self._managing_object))
         return derive_model(roots)
 
-    def pipeline(self, plan: Optional[Dict[str, Any]] = None, name: Optional[str] = None,
-                 raise_on_error: bool = True, concurrent: bool = False) -> Any:
-        """Build a pipeline, or run one that arrived as data.
+    def pipeline(self, plan: Optional[Union[Dict[str, Any], Sequence[Dict[str, Any]]]] = None,
+                 raise_on_error: bool = True, concurrent: bool = False, name: Optional[str] = None
+                 ) -> Any:
+        """Run several requests that feed each other, and work out the order from what they say.
 
         Args:
-            plan (Optional[Dict[str, Any]]): A stored plan, as `Pipeline.to_dict` produces. Left
-                out, a new empty pipeline comes back to be built.
-            name (Optional[str]): What to call a new pipeline.
-            raise_on_error (bool): When running a plan, whether the first failure raises.
-            concurrent (bool): When running a plan, whether each stage's independent steps run
-                at the same time.
+            plan (Optional[Union[Dict, Sequence]]): The steps, keyed by name or as a sequence --
+                the two shapes `batch` accepts. Each step is a request with three additions:
+                `"@name"` anywhere in it means what that step produced, `after` waits for a step
+                without taking anything from it, and any key that is not `operation`, `obj`,
+                `method` or `after` is an attribute. Left out, a draft comes back to write one
+                with.
+            raise_on_error (bool): If True, the first failure raises. If False, it is recorded,
+                the branch below it is skipped, and independent branches still run.
+            concurrent (bool): Run each stage's independent steps at the same time.
+            name (Optional[str]): What to call a draft, for a log or a repr.
 
         Returns:
-            Any: A `Pipeline` to build, or the response of every step when a plan was given.
+            Any: A `PipelineRun` -- the response of every step, keyed as the plan keyed them --
+                or a draft when no plan was given.
+
+        Raises:
+            RequestError: If the plan is not a plan, refers to a step it does not contain, or has
+                steps depending on each other in a circle.
+            DispatchError: If a step asks for an operation that is not registered.
 
         Notes:
-            - Both jobs are here because both are the manipulator's. Building a pipeline needs
-              to know what operations exist, and running one is a request like any other -- so
-              neither is something a caller should have to reach past the orchestrator for.
-            - The two are the same thing from either end: what this builds, `to_dict` turns into
-              what this runs.
+            - The same convention as `process_request` and `batch`: one call, and what it takes
+              is data. A plan can therefore be stored, sent over a wire, written by hand or
+              produced by something else, which is what keeps a command line or a server a
+              wrapper rather than a second implementation.
+            - What this adds over `batch` is three things: the order the edges imply, the
+              substitution of what one step produced into the next, and skipping the branch below
+              a failure rather than running it against nothing. Each step is one
+              `process_request`, so it meets the interceptors, the journal and the metrics like
+              any other request.
 
         Examples:
-            >>> pipe = manipulator.pipeline()
-            >>> loaded = pipe.load(path="in.json")
-            >>> pipe.save(loaded, path="out.json")
-            Step('save', on 'load')
-            >>> pipe.run().output
-            {'path': 'out.json'}
+            >>> manipulator.pipeline({
+            ...     "loaded":  {"operation": "load", "obj": thing, "path": "in.json"},
+            ...     "written": {"operation": "save", "obj": "@loaded", "path": "out.json"},
+            ... })["written"]["status"]
+            True
         """
-        from ..pipeline import Pipeline
+        from ..pipeline import _Draft, _Plan
 
         if plan is None:
-            return Pipeline(self, name)
+            return _Draft(self, name)
 
-        rebuilt = Pipeline.from_dict(self, plan)
+        prepared = _Plan(self, plan)
         if concurrent:
             import asyncio
-            return asyncio.run(rebuilt.arun(raise_on_error=raise_on_error))
-        return rebuilt.run(raise_on_error=raise_on_error)
+            return asyncio.run(prepared.arun(raise_on_error=raise_on_error))
+        return prepared.run(raise_on_error=raise_on_error)
 
     def dependents_of(self, name: str, roots: Optional[List[type]] = None) -> List[str]:
         """Return every type that would feel a change to this one.

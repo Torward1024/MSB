@@ -1,160 +1,72 @@
 # pipeline.py
-"""Several requests that feed each other, written as if they were one.
+"""A tree of requests: a batch whose steps may feed each other.
 
-A pipeline is a tree of requests. Nothing here runs anything: every step is an ordinary request,
-handed to `process_request` exactly as a single call would be, and what this adds is the three
-things a batch cannot say -- which step needs which, what one step takes from another, and what
-to do with the rest when one fails.
+`process_request` runs one request. `batch` runs several and reports each. A pipeline is the next
+one along and nothing more exotic: several requests where a step may take what an earlier step
+produced, so an order exists and the framework works it out rather than the caller.
 
-It is reached through the manipulator like everything else. `manipulator.pipeline()` gives an
-empty one to build; `manipulator.pipeline(plan=...)` runs one that arrived as data.
+It follows the same convention as the other two -- **the whole thing is one call, and what it
+takes is data**::
 
-The sugar and the graph are the same object. Writing
+    manipulator.pipeline({
+        "loaded":  {"operation": "load",    "obj": thing,     "path": "in.json"},
+        "checked": {"operation": "inspect", "obj": "@loaded", "get": "value"},
+        "written": {"operation": "save",    "obj": "@loaded", "path": "out.json"},
+    })
 
-    pipe = manipulator.pipeline()
-    loaded = pipe.load(thing, path="in.json")
-    pipe.configure(loaded, set_value=7)
-    pipe.save(path="out.json")
+A step is a request, spelled as `process_request` spells one, with three additions:
 
-reads like three ordinary facade calls, because it is three ordinary facade calls -- the same
-names, the same arguments, on the pipeline instead of the manipulator. What it produces is an
-explicit graph: each step records what it was given, a step passed as an argument is an edge, and
-a step given nothing follows the one before it. Convenience at the front, no ambiguity behind it.
+- `"@name"` anywhere in a step means *what the step called `name` produced*. That is an edge, and
+  the edges together are the graph.
+- `"after": [...]` waits for a step without taking anything from it, for the edges that are only
+  about order -- writing a file and reading it back.
+- Anything that is not `operation`, `obj`, `method` or `after` is an attribute, so the common
+  case needs no nested `attributes` mapping. Spelling it out still works.
 
-Three decisions worth not re-deciding, and the reasons:
+What a pipeline adds over a batch is exactly three things: the order the edges imply, the
+substitution of what one step produced into the next, and skipping the branch below a failure
+rather than running it against nothing. Everything else is `process_request`, once per step, so
+each step meets the interceptors, the journal and the metrics like any other request.
 
-- **A step names its input.** The chain above is the one-edge case of a graph rather than a rival
-  syntax to it, so ordering, branching and running two branches at once all fall out of the same
-  record.
-- **Adaptation between steps is itself a step.** There is deliberately no way to drop a callable
-  between two steps: a function is not data, and a pipeline holding one could not be stored,
-  sent, journalled or replayed. A conversion is an ordinary `Super` like anything else.
-- **Substitution happens before the interceptors.** By the time a request reaches the chain it is
-  concrete, so an interceptor never sees a placeholder and a recorded session stays replayable.
+Three decisions worth not re-deciding:
 
-What is deliberately *not* here yet: recomputing only what changed. That needs to know whether an
-input is the same input as last time, which needs identity for mutable objects -- and guessing at
-that is how a cache starts returning yesterday's answer.
+- **A step names its input.** A chain is the one-edge case of a graph rather than a rival syntax.
+- **Adaptation between steps is itself a step.** There is deliberately nowhere to put a callable:
+  a function is not data, and a plan holding one could not be stored, sent or replayed.
+- **Substitution happens before the interceptors**, so an interceptor sees a concrete request and
+  a recorded session stays replayable.
+
+What is deliberately not here: recomputing only what changed. That needs to know whether an input
+is the same input as last time, which needs identity for mutable objects.
 """
 import asyncio
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Sequence, Set, Union
 
-from .errors import (AttributeNotFoundError, DispatchError, NotFoundError,
-                     RequestError, SerializationError)
+from .errors import AttributeNotFoundError, DispatchError, NotFoundError, RequestError
 from .utils.logging_setup import logger
 
-__all__ = ["Pipeline", "PipelineRun", "Step"]
+__all__ = ["PipelineRun"]
 
-#: Distinguishes "the caller passed nothing" from "the caller passed None", which mean opposite
-#: things here: follow the previous step, against operate on the managing object.
+#: The keys of a step that are not attributes.
+_STRUCTURE = ("operation", "obj", "method", "after", "attributes", "name")
+
+#: Distinguishes "the caller said nothing" from "the caller said None", which mean opposite
+#: things: follow the previous step, against operate on the managing object.
 _UNSAID = object()
-
-
-class Step:
-    """One recorded request, and a reference to what it will produce.
-
-    A step is returned by every pipeline facade and is worth keeping in a variable: passing it to
-    a later step is how an edge is written.
-
-    Args:
-        name (str): What this step is called within its pipeline.
-        operation (str): The operation to request.
-        obj (Any): What to run it on -- another `Step`, an object, or None for the manipulator's
-            managing object.
-        attributes (Dict[str, Any]): The rest of the request, which may itself contain steps.
-
-    Examples:
-        >>> loaded = pipe.load(path="in.json")
-        >>> pipe.inspect(loaded, get_all=None)
-        Step('inspect', on 'load')
-    """
-
-    def __init__(self, name: str, operation: str, obj: Any, attributes: Dict[str, Any]):
-        self.name = name
-        self.operation = operation
-        self.obj = obj
-        self.attributes = attributes
-        self.key: Optional[str] = None
-        self.after: List["Step"] = []
-
-    def once(self, *steps: "Step") -> "Step":
-        """Wait for these steps without taking anything from them.
-
-        Args:
-            *steps (Step): The steps that must have run first.
-
-        Returns:
-            Step: This step.
-
-        Notes:
-            - Most edges are written by passing a step where a value goes, which says both *when*
-              and *what*. Some are only about when: writing a file and then reading it back needs
-              an order and takes nothing across. Without a way to say that, the two would look
-              independent and could run at the same time -- which is the sort of bug that passes
-              a hundred times and fails on a busy machine.
-
-        Examples:
-            >>> written = pipe.save(path="out.json")
-            >>> pipe.load(thing, path="out.json").once(written)
-            Step('load', on 'Thing')
-        """
-        self.after.extend(steps)
-        return self
-
-    def named(self, name: str) -> "Step":
-        """Rename this step, and return it so a call can be renamed where it is written.
-
-        Args:
-            name (str): The new name. Names are how steps are referred to in a stored plan and
-                in a report, so a meaningful one is worth the four characters.
-
-        Returns:
-            Step: This step.
-
-        Examples:
-            >>> pipe.inspect(get_all=None).named("before")
-            Step('before', on 'load')
-        """
-        self.name = name
-        return self
-
-    def __getitem__(self, key: str) -> "Step":
-        """Refer to one method's result rather than to the whole of what a step produced.
-
-        Args:
-            key (str): The method name whose result is wanted.
-
-        Returns:
-            Step: A reference to this step, narrowed. The step itself is unchanged, so one step
-                can be read in several ways.
-
-        Notes:
-            - A step that ran exactly one method produces that method's value, which is what a
-              facade returns and is right almost always. This is for the rest: a step that ran
-              four methods produces all four, and the next step wants one of them.
-        """
-        narrowed = Step(self.name, self.operation, self.obj, self.attributes)
-        narrowed.key = key
-        narrowed.after = self.after
-        return narrowed
-
-    def __repr__(self) -> str:
-        on = f"'{self.obj.name}'" if isinstance(self.obj, Step) else type(self.obj).__name__
-        return f"Step('{self.name}', on {on})"
 
 
 class PipelineRun(dict):
     """What a pipeline produced: the response of every step, by name.
 
-    A `dict` of responses, so nothing new has to be learned to read one, with the two things a
-    caller usually wants named rather than dug out.
+    A `dict` of responses, keyed as the plan keyed its steps -- the shape `batch` already answers
+    with -- and with the two things a caller usually wants named rather than dug out.
 
     Examples:
-        >>> outcome = pipe.run()
+        >>> outcome = manipulator.pipeline(plan)
+        >>> outcome["written"]["status"]
+        True
         >>> outcome.output
         {'path': 'out.json'}
-        >>> outcome["load"]["status"]
-        True
     """
 
     def __init__(self, responses: Dict[str, Any], produced: Dict[str, Any], last: Optional[str]):
@@ -164,7 +76,7 @@ class PipelineRun(dict):
 
     @property
     def output(self) -> Any:
-        """What the last step produced, unwrapped as a facade would unwrap it."""
+        """What the last step of the plan produced, unwrapped as a facade would unwrap it."""
         return self._produced.get(self._last)
 
     def of(self, name: str) -> Any:
@@ -177,7 +89,7 @@ class PipelineRun(dict):
             Any: Its value, unwrapped as a facade would unwrap it.
 
         Raises:
-            NotFoundError: If no step of that name ran.
+            NotFoundError: If no step of that name produced anything.
         """
         if name not in self._produced:
             raise NotFoundError(f"No step named '{name}' produced anything")
@@ -185,49 +97,319 @@ class PipelineRun(dict):
 
     @property
     def failed(self) -> List[str]:
-        """The names of the steps that did not succeed, in the order they were attempted."""
+        """The names of the steps that did not succeed, in the order of the plan."""
         return [name for name, response in self.items() if not response.get("status")]
 
 
-class Pipeline:
-    """Several requests that feed each other, built by calling the operations by name.
+class _Step:
+    """One step of a plan, read out of the data it was written as."""
 
-    Args:
-        manipulator (Manipulator): The orchestrator whose operations may be requested, and which
-            runs every step. Built through `manipulator.pipeline()` rather than directly: the
-            manipulator is the way in to everything, and a pipeline is no exception.
-        name (Optional[str]): What to call this pipeline in a log or a stored plan.
+    def __init__(self, name: str, entry: Dict[str, Any], previous: Optional[str]):
+        if not isinstance(entry, dict):
+            raise RequestError(f"Step '{name}' is not a request: {entry!r}")
+        operation = entry.get("operation")
+        if not operation:
+            raise RequestError(f"Step '{name}' names no operation")
+
+        self.name = name
+        self.operation = operation
+        self.method = entry.get("method")
+        self.after = [str(waited).lstrip("@") for waited in entry.get("after") or []]
+        self.obj = entry["obj"] if "obj" in entry else (f"@{previous}" if previous else None)
+
+        attributes = dict(entry.get("attributes") or {})
+        attributes.update({key: value for key, value in entry.items() if key not in _STRUCTURE})
+        self.attributes = attributes
+
+    def __repr__(self) -> str:
+        return f"_Step('{self.name}', {self.operation})"
+
+
+class _Plan:
+    """The steps of one plan, the graph they imply, and the running of them.
 
     Notes:
-        - **Every registered operation is a method here**, with the same signature as the
-          manipulator's facade for it. The difference is that it records a step rather than
-          running one, so the way to write a pipeline is to write the calls you would have made.
-        - A step given no object follows the one before it. A step given a `Step` follows that
-          one, wherever it was. A step given `None` explicitly operates on the managing object,
-          which is why "given nothing" and "given None" have to mean different things.
-        - Names on this class -- `run`, `add`, `order` and the rest -- win over an operation of
-          the same name. An operation called `run` is still reachable through `add`.
+        - Internal. A plan is data and the manipulator is what runs it; this exists so the
+          reading, the ordering and the running are one thing rather than three loose functions
+          passing a dictionary between them.
+    """
+
+    def __init__(self, manipulator: Any, plan: Union[Dict[str, Any], Sequence[Dict[str, Any]]]):
+        self._manipulator = manipulator
+        self._steps: Dict[str, _Step] = {}
+
+        for name, entry in _entries(plan):
+            if name in self._steps:
+                raise RequestError(f"Two steps of one plan are called '{name}'")
+            previous = next(reversed(self._steps), None) if self._steps else None
+            step = _Step(name, entry, previous)
+            if step.operation not in manipulator.get_supported_operations():
+                raise DispatchError(
+                    f"Step '{name}' asks for operation '{step.operation}', which is not "
+                    "registered")
+            self._steps[name] = step
+
+        if not self._steps:
+            raise RequestError("A plan with no steps has nothing to run")
+        self._check_references()
+
+    # --- the graph ------------------------------------------------------------------------
+
+    def _check_references(self) -> None:
+        """Refuse a plan that refers to a step it does not contain.
+
+        Notes:
+            - Checked before anything runs, so a typo in the last step does not surface after the
+              first three have already written files.
+        """
+        for name in self._steps:
+            for referred in self.requires(name):
+                if referred not in self._steps:
+                    raise RequestError(
+                        f"Step '{name}' refers to '{referred}', which is not in the plan")
+
+    def requires(self, name: str) -> List[str]:
+        """Return the steps one step waits for, directly."""
+        step = self._steps[name]
+        found = _referenced(step.obj) | _referenced(step.attributes) | set(step.after)
+        return sorted(found - {name})
+
+    def order(self) -> List[List[str]]:
+        """Return the steps grouped into the stages they can run in.
+
+        Returns:
+            List[List[str]]: Each list holds steps that wait for nothing outside the stages
+                before it, so everything in one stage may run at the same time. A plain chain
+                comes back as one step per stage, which is correct rather than a special case.
+
+        Raises:
+            RequestError: If the steps depend on each other in a circle.
+        """
+        waiting = {name: set(self.requires(name)) for name in self._steps}
+        stages: List[List[str]] = []
+        done: Set[str] = set()
+
+        while waiting:
+            ready = [name for name in self._steps if name in waiting and waiting[name] <= done]
+            if not ready:
+                raise RequestError(
+                    f"Steps {sorted(waiting)} depend on each other in a circle and cannot be "
+                    "ordered")
+            stages.append(ready)
+            done.update(ready)
+            for name in ready:
+                del waiting[name]
+        return stages
+
+    # --- running --------------------------------------------------------------------------
+
+    def run(self, raise_on_error: bool = True) -> PipelineRun:
+        """Run every step, each after the ones it waits for."""
+        produced: Dict[str, Any] = {}
+        responses: Dict[str, Any] = {}
+        skipped: Set[str] = set()
+
+        for stage in self.order():
+            for name in stage:
+                request = self._prepare(name, produced, responses, skipped, raise_on_error)
+                if request is None:
+                    continue
+                responses[name] = self._manipulator.process_request(request)
+                self._accept(name, responses[name], produced, skipped, raise_on_error)
+        logger.debug("Ran a plan of %s step(s)", len(responses))
+        return self._outcome(responses, produced)
+
+    async def arun(self, raise_on_error: bool = True) -> PipelineRun:
+        """Run the plan with the independent steps of each stage running at the same time.
+
+        Notes:
+            - A stage is what `order` grouped, so everything in one goes onto the executor
+              together: a plan of two independent branches costs its slower branch rather than
+              both. Stages still follow one another, since a stage exists because its steps need
+              the one before.
+        """
+        produced: Dict[str, Any] = {}
+        responses: Dict[str, Any] = {}
+        skipped: Set[str] = set()
+
+        for stage in self.order():
+            requests = {}
+            for name in stage:
+                request = self._prepare(name, produced, responses, skipped, raise_on_error)
+                if request is not None:
+                    requests[name] = request
+
+            gathered = await asyncio.gather(*[self._manipulator.aprocess_request(request)
+                                              for request in requests.values()])
+            for name, response in zip(requests, gathered):
+                responses[name] = response
+                self._accept(name, response, produced, skipped, raise_on_error)
+        logger.debug("Ran a plan of %s step(s) concurrently", len(responses))
+        return self._outcome(responses, produced)
+
+    def _outcome(self, responses: Dict[str, Any], produced: Dict[str, Any]) -> PipelineRun:
+        """Put the responses back in the order of the plan, whatever order they ran in."""
+        ordered = {name: responses[name] for name in self._steps if name in responses}
+        return PipelineRun(ordered, produced, next(reversed(self._steps), None))
+
+    def _prepare(self, name: str, produced: Dict[str, Any], responses: Dict[str, Any],
+                 skipped: Set[str], raise_on_error: bool) -> Optional[Dict[str, Any]]:
+        """Return the concrete request for a step, or None if it cannot be attempted.
+
+        Notes:
+            - Every reference is replaced here, **before** the request is handed over, so the
+              interceptor chain only ever sees concrete requests and a journal records something
+              that can be replayed.
+        """
+        blocking = [waited for waited in self.requires(name) if waited in skipped]
+        if blocking:
+            logger.debug("Skipped step '%s': %s produced nothing", name, blocking)
+            responses[name] = {
+                "status": False, "object": None, "method": None, "result": None, "skipped": True,
+                "error": f"Skipped: {', '.join(blocking)} did not produce a value"}
+            skipped.add(name)
+            return None
+
+        step = self._steps[name]
+        try:
+            obj = _substitute(step.obj, produced)
+            if _is_reference(step.obj) and obj is None:
+                raise RequestError(
+                    f"Step '{name}' was to run on what '{step.obj[1:]}' produced, and it produced "
+                    "nothing. An operation that applies methods to an object -- configure, "
+                    "inspect -- reports what the methods returned rather than handing the object "
+                    "on, so name the object this step runs on.")
+            request = {"operation": step.operation, "obj": obj,
+                       "attributes": _substitute(step.attributes, produced)}
+            if step.method:
+                request["method"] = step.method
+            return request
+        except RequestError as e:
+            responses[name] = {"status": False, "object": None, "method": None, "result": None,
+                               "error": str(e), "error_type": type(e).__name__}
+            self._accept(name, responses[name], produced, skipped, raise_on_error)
+            return None
+
+    def _accept(self, name: str, response: Dict[str, Any], produced: Dict[str, Any],
+                skipped: Set[str], raise_on_error: bool) -> None:
+        """Record what a step produced, or deal with its failure.
+
+        Raises:
+            Exception: If it failed and the caller asked for failures to raise. The kind is the
+                step's own, since that is what a caller would have caught calling the facade
+                directly; only the message gains the step's name.
+        """
+        if response.get("status"):
+            produced[name] = self._manipulator._unwrap_single(response["result"])
+            return
+
+        message = f"Step '{name}' failed: {response.get('error')}"
+        if raise_on_error:
+            raise self._manipulator._as_error(dict(response, error=message))
+        logger.warning("%s", message)
+        skipped.add(name)
+
+
+# --- reading the data ---------------------------------------------------------------------------
+
+def _entries(plan: Union[Dict[str, Any], Sequence[Dict[str, Any]]]):
+    """Yield `(name, step)` from either shape a plan may be written in.
+
+    Notes:
+        - A mapping keyed by name, or a sequence whose steps may carry their own `name` -- the two
+          shapes `batch` already accepts, for the same reason: one reads better when the names
+          matter and the other when the order does.
+    """
+    if isinstance(plan, dict):
+        yield from plan.items()
+        return
+    if isinstance(plan, (list, tuple)):
+        for position, entry in enumerate(plan):
+            name = entry.get("name") if isinstance(entry, dict) else None
+            yield name or f"step_{position + 1}", entry
+        return
+    raise RequestError(
+        f"A plan is a mapping of steps or a sequence of them, not {type(plan).__name__}")
+
+
+def _is_reference(value: Any) -> bool:
+    """Report whether a value refers to another step."""
+    return isinstance(value, str) and value.startswith("@") and not value.startswith("@@")
+
+
+def _referenced(value: Any) -> Set[str]:
+    """Return the names of every step referred to anywhere inside a value."""
+    if _is_reference(value):
+        return {value[1:].split(".", 1)[0]}
+    if isinstance(value, dict):
+        return set().union(*(_referenced(item) for item in value.values())) if value else set()
+    if isinstance(value, (list, tuple, set)):
+        return set().union(*(_referenced(item) for item in value)) if value else set()
+    return set()
+
+
+def _substitute(value: Any, produced: Dict[str, Any]) -> Any:
+    """Replace every reference with what the step it names produced.
+
+    Notes:
+        - Recursive, so a reference reaches wherever a request can hold one -- an argument, an
+          item of a list, a value in a mapping.
+        - `"@@literal"` is how a string that really does begin with `@` is written. Without an
+          escape, a framework convention would quietly eat a caller's data.
+        - `"@step.method"` names one of several method results. A step that ran exactly one method
+          produces that method's value, which is what a facade returns and is right almost always;
+          this is for the rest.
+    """
+    if isinstance(value, str):
+        if value.startswith("@@"):
+            return value[1:]
+        if not value.startswith("@"):
+            return value
+        name, _, key = value[1:].partition(".")
+        found = produced.get(name)
+        if not key:
+            return found
+        try:
+            narrowed = found[key]
+        except (KeyError, IndexError, TypeError) as e:
+            raise RequestError(f"Step '{name}' produced nothing under '{key}'") from e
+        return narrowed.get("result") if isinstance(narrowed, dict) and "result" in narrowed \
+            else narrowed
+    if isinstance(value, dict):
+        return {key: _substitute(item, produced) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_substitute(item, produced) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_substitute(item, produced) for item in value)
+    return value
+
+
+# --- sugar, and nothing but ----------------------------------------------------------------------
+
+class _Draft:
+    """Writes a plan by calling the operations, for a caller who would rather not type a mapping.
+
+    Obtained from `manipulator.pipeline()` with no plan. It is **purely a way of producing the
+    mapping above**: `plan()` hands back exactly what could have been written by hand, and `run()`
+    passes it to `manipulator.pipeline(plan)` like any other caller. There is one execution path
+    and this is not it -- which is what keeps the convention the thing and this a convenience.
 
     Examples:
-        >>> pipe = manipulator.pipeline()
-        >>> loaded = pipe.load(thing, path="in.json")
-        >>> pipe.configure(loaded, set_value=7)
-        Step('configure', on 'load')
-        >>> pipe.save(path="out.json")
-        Step('save', on 'configure')
-        >>> pipe.run().output
-        {'path': 'out.json'}
+        >>> draft = manipulator.pipeline()
+        >>> loaded = draft.load(thing, path="in.json")
+        >>> draft.save(loaded, path="out.json")
+        '@save'
+        >>> draft.plan()["save"]["obj"]
+        '@load'
     """
 
     def __init__(self, manipulator: Any, name: Optional[str] = None):
         self._manipulator = manipulator
-        self.name = name or "pipeline"
-        self._steps: List[Step] = []
-
-    # --- building -------------------------------------------------------------------------
+        self._name = name or "plan"
+        self._plan: Dict[str, Dict[str, Any]] = {}
 
     def __getattr__(self, operation: str):
-        """Return a recorder for a registered operation, so facades read the same here.
+        """Return a recorder for a registered operation, so a draft reads like the facades.
 
         Raises:
             AttributeNotFoundError: If nothing of that name is registered. It derives from
@@ -241,434 +423,77 @@ class Pipeline:
             raise AttributeNotFoundError(
                 f"No operation named '{operation}' is registered with this manipulator")
 
-        def record(obj: Any = _UNSAID, method: Optional[str] = None, **attributes) -> Step:
-            return self.add(operation, obj, method=method, **attributes)
+        def record(obj: Any = _UNSAID, method: Optional[str] = None,
+                   after: Optional[List[str]] = None, step: Optional[str] = None,
+                   **attributes) -> str:
+            return self.add(operation, obj, method=method, after=after, step=step, **attributes)
 
         record.__name__ = operation
-        record.__doc__ = (f"Record a '{operation}' step. Same arguments as the manipulator's "
-                          f"facade; returns the Step rather than running it.")
+        record.__doc__ = (f"Write a '{operation}' step into the plan and return a reference to "
+                          f"it. Same arguments as the manipulator's facade for it.")
         return record
 
     def add(self, operation: str, obj: Any = _UNSAID, method: Optional[str] = None,
-            **attributes) -> Step:
-        """Record a step explicitly, for an operation whose name this class already uses.
+            after: Optional[List[str]] = None, step: Optional[str] = None, **attributes) -> str:
+        """Write one step, and for an operation whose name this class already uses, the only way.
 
         Args:
             operation (str): The operation to request.
-            obj (Any): What to run it on. Omitted means the previous step; `None` means the
-                manipulator's managing object; a `Step` means that step's output.
+            obj (Any): What to run it on. Omitted leaves it out of the plan, which means the step
+                before; `None` means the managing object; a reference means that step's value.
             method (Optional[str]): A specific handler, as for any facade.
-            **attributes: The rest of the request. A `Step` anywhere in here is an edge too.
+            after (Optional[List[str]]): References to wait for without taking anything from.
+            step (Optional[str]): What to call this step. Defaults to the operation, numbered if
+                that name is taken.
+            **attributes: The rest of the request.
 
         Returns:
-            Step: The recorded step.
+            str: A reference to the step -- `"@load"` -- to pass wherever its value is wanted.
 
         Raises:
-            DispatchError: If no such operation is registered. Refused here rather than at run
-                time, because a plan that cannot run should not be buildable.
+            DispatchError: If no such operation is registered. Refused while drafting, because a
+                plan that cannot run should not be writable.
         """
         if operation not in self._manipulator.get_supported_operations():
             raise DispatchError(f"No operation named '{operation}' is registered")
-        if obj is _UNSAID:
-            obj = self._steps[-1] if self._steps else None
-        if method:
-            attributes = dict(attributes, method=method)
 
-        step = Step(self._unique(operation), operation, obj, attributes)
-        self._steps.append(step)
-        logger.debug("Recorded step '%s' in pipeline '%s'", step.name, self.name)
-        return step
+        name = step or self._unique(operation)
+        if name in self._plan:
+            raise RequestError(f"Two steps of one plan are called '{name}'")
+
+        entry: Dict[str, Any] = {"operation": operation}
+        if obj is not _UNSAID:
+            entry["obj"] = obj
+        if method:
+            entry["method"] = method
+        if after:
+            entry["after"] = [str(reference).lstrip("@") for reference in after]
+        entry.update(attributes)
+
+        self._plan[name] = entry
+        return f"@{name}"
 
     def _unique(self, operation: str) -> str:
         """Return a step name not yet used, numbering repeats of one operation."""
-        taken = {step.name for step in self._steps}
-        if operation not in taken:
+        if operation not in self._plan:
             return operation
         count = 2
-        while f"{operation}_{count}" in taken:
+        while f"{operation}_{count}" in self._plan:
             count += 1
         return f"{operation}_{count}"
 
-    def __getitem__(self, name: str) -> Step:
-        """Return a recorded step by name, for referring to one built earlier."""
-        for step in self._steps:
-            if step.name == name:
-                return step
-        raise NotFoundError(f"No step named '{name}' in pipeline '{self.name}'")
+    def plan(self) -> Dict[str, Dict[str, Any]]:
+        """Return the plan this drafted: exactly what could have been written by hand."""
+        return dict(self._plan)
+
+    def run(self, raise_on_error: bool = True, concurrent: bool = False) -> PipelineRun:
+        """Hand the drafted plan to the manipulator, like any other caller."""
+        return self._manipulator.pipeline(self.plan(), raise_on_error=raise_on_error,
+                                          concurrent=concurrent)
 
     def __len__(self) -> int:
-        return len(self._steps)
+        return len(self._plan)
 
     def __repr__(self) -> str:
-        return (f"Pipeline('{self.name}', {len(self._steps)} step(s), "
-                f"of {type(self._manipulator).__name__})")
-
-    def steps(self) -> List[Step]:
-        """Return the steps in the order they were written."""
-        return list(self._steps)
-
-    # --- the graph ------------------------------------------------------------------------
-
-    def requires(self, name: str) -> List[str]:
-        """Return the steps one step waits for, directly.
-
-        Args:
-            name (str): The step to ask about.
-
-        Returns:
-            List[str]: Sorted names. Empty for a step that starts a branch.
-        """
-        step = self[name]
-        found = _references(step.obj) | _references(step.attributes) | set(step.after)
-        return sorted({referred.name for referred in found})
-
-    def order(self) -> List[List[str]]:
-        """Return the steps grouped into the stages they can run in.
-
-        Returns:
-            List[List[str]]: Each list holds steps that depend on nothing outside the stages
-                before it, so everything in one stage may run at the same time. A plain sequence
-                comes back as one step per stage, which is correct rather than a special case.
-
-        Raises:
-            RequestError: If the steps cannot be ordered because they depend on each other in a
-                circle. Unreachable while building -- a step can only refer to an earlier one --
-                and reachable through a plan that was written or edited by hand.
-        """
-        waiting = {step.name: set(self.requires(step.name)) for step in self._steps}
-        stages: List[List[str]] = []
-        done: Set[str] = set()
-
-        while waiting:
-            ready = sorted(name for name, needs in waiting.items() if needs <= done)
-            if not ready:
-                raise RequestError(
-                    f"Steps {sorted(waiting)} of pipeline '{self.name}' depend on each other in "
-                    "a circle and cannot be ordered")
-            stages.append(ready)
-            done.update(ready)
-            for name in ready:
-                del waiting[name]
-        return stages
-
-    # --- running --------------------------------------------------------------------------
-
-    def run(self, raise_on_error: bool = True) -> PipelineRun:
-        """Run every step, each after the ones it waits for.
-
-        Args:
-            raise_on_error (bool): If True, the first failure raises. If False, the failure is
-                recorded, every step that depended on it is skipped, and independent branches
-                are still run.
-
-        Returns:
-            PipelineRun: The response of every step, by name.
-
-        Raises:
-            Exception: If `raise_on_error` and a step fails, of whatever kind the step's failure
-                was, with the step named in the message.
-        """
-        produced: Dict[str, Any] = {}
-        responses: Dict[str, Any] = {}
-        skipped: Set[str] = set()
-
-        for stage in self.order():
-            for name in stage:
-                step = self[name]
-                if self._blocked(step, skipped):
-                    responses[name] = self._skip(step, skipped)
-                    skipped.add(name)
-                    continue
-                try:
-                    request = self._request(step, produced)
-                except RequestError as e:
-                    responses[name] = self._refused(step, e)
-                    self._accept(step, responses[name], produced, skipped, raise_on_error)
-                    continue
-                response = self._manipulator.process_request(request)
-                responses[name] = response
-                self._accept(step, response, produced, skipped, raise_on_error)
-        logger.debug("Pipeline '%s' ran %s step(s)", self.name, len(responses))
-        return PipelineRun(responses, produced, self._steps[-1].name if self._steps else None)
-
-    async def arun(self, raise_on_error: bool = True) -> PipelineRun:
-        """Run the pipeline with the independent steps of each stage running at the same time.
-
-        Args:
-            raise_on_error (bool): As for `run`.
-
-        Returns:
-            PipelineRun: The response of every step, by name.
-
-        Notes:
-            - A stage is what `order` grouped: steps that wait for nothing outside the stages
-              before them. Everything in a stage goes onto the executor together, so a pipeline
-              of two independent branches takes as long as its slower branch rather than as long
-              as both.
-            - Stages still run one after another, because a stage exists precisely because its
-              steps need the previous one.
-        """
-        produced: Dict[str, Any] = {}
-        responses: Dict[str, Any] = {}
-        skipped: Set[str] = set()
-
-        for stage in self.order():
-            runnable = [name for name in stage if not self._blocked(self[name], skipped)]
-            for name in stage:
-                if name not in runnable:
-                    responses[name] = self._skip(self[name], skipped)
-                    skipped.add(name)
-
-            requests, attempted = {}, []
-            for name in runnable:
-                try:
-                    requests[name] = self._request(self[name], produced)
-                    attempted.append(name)
-                except RequestError as e:
-                    responses[name] = self._refused(self[name], e)
-                    self._accept(self[name], responses[name], produced, skipped, raise_on_error)
-
-            gathered = await asyncio.gather(*[
-                self._manipulator.aprocess_request(requests[name]) for name in attempted])
-
-            for name, response in zip(attempted, gathered):
-                responses[name] = response
-                self._accept(self[name], response, produced, skipped, raise_on_error)
-        logger.debug("Pipeline '%s' ran %s step(s) asynchronously", self.name, len(responses))
-        return PipelineRun(responses, produced, self._steps[-1].name if self._steps else None)
-
-    @staticmethod
-    def _refused(step: Step, why: Exception) -> Dict[str, Any]:
-        """Return the response for a step that could not even be turned into a request.
-
-        Notes:
-            - A step whose references cannot be resolved has failed as surely as one whose
-              handler raised, and a caller who asked for failures to be reported rather than
-              raised meant that one too.
-        """
-        return {"status": False, "object": None, "method": None, "result": None,
-                "error": str(why), "error_type": type(why).__name__}
-
-    def _blocked(self, step: Step, skipped: Set[str]) -> bool:
-        """Report whether anything this step waits for did not produce a value."""
-        return any(name in skipped for name in self.requires(step.name))
-
-    def _skip(self, step: Step, skipped: Set[str]) -> Dict[str, Any]:
-        """Return the response recorded for a step that could not be attempted."""
-        blocking = sorted(name for name in self.requires(step.name) if name in skipped)
-        logger.debug("Skipped step '%s': %s did not produce a value", step.name, blocking)
-        return {"status": False, "object": None, "method": None, "result": None, "skipped": True,
-                "error": f"Skipped: {', '.join(blocking)} did not produce a value"}
-
-    def _accept(self, step: Step, response: Dict[str, Any], produced: Dict[str, Any],
-                skipped: Set[str], raise_on_error: bool) -> bool:
-        """Record what a step produced, or deal with its failure.
-
-        Returns:
-            bool: True if the step succeeded.
-
-        Raises:
-            Exception: If it failed and the caller asked for failures to raise. The kind is the
-                step's own, since that is what a caller would have caught calling the facade
-                directly; only the message gains the step's name.
-        """
-        if response.get("status"):
-            produced[step.name] = self._manipulator._unwrap_single(response["result"])
-            return True
-
-        message = f"Step '{step.name}' of pipeline '{self.name}' failed: {response.get('error')}"
-        if raise_on_error:
-            raise self._manipulator._as_error(dict(response, error=message))
-        logger.warning("%s", message)
-        skipped.add(step.name)
-        return False
-
-    def _request(self, step: Step, produced: Dict[str, Any]) -> Dict[str, Any]:
-        """Turn a recorded step into a concrete request.
-
-        Notes:
-            - Every reference is replaced here, **before** the request is handed over, so the
-              interceptor chain only ever sees concrete requests and a journal records something
-              that can be replayed.
-        """
-        obj = _substitute(step.obj, produced)
-        if isinstance(step.obj, Step) and obj is None:
-            raise RequestError(
-                f"Step '{step.name}' was to run on what '{step.obj.name}' produced, and it "
-                "produced nothing. An operation that applies methods to an object -- configure, "
-                "inspect -- reports what the methods returned rather than handing the object on, "
-                "so name the object this step runs on.")
-        return {"operation": step.operation,
-                "obj": obj,
-                "attributes": _substitute(step.attributes, produced)}
-
-    # --- as data --------------------------------------------------------------------------
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return the plan as data, so it can be stored, sent or replayed.
-
-        Returns:
-            Dict[str, Any]: `{"name": str, "steps": [{"name", "operation", "obj", "attributes"}]}`,
-                where a reference to another step appears as `{"$step": name}`.
-
-        Raises:
-            SerializationError: If a step holds something that is not data -- a live object, a
-                callable. A pipeline that cannot be written down is one that cannot be replayed,
-                and finding that out at the moment of saving is better than at the moment of
-                reading.
-        """
-        import json
-
-        plan = {"name": self.name,
-                "steps": [{"name": step.name,
-                           "operation": step.operation,
-                           "obj": _as_data(step.obj),
-                           "attributes": _as_data(step.attributes),
-                           "after": [waited.name for waited in step.after]}
-                          for step in self._steps]}
-        try:
-            json.dumps(plan)
-        except (TypeError, ValueError) as e:
-            raise SerializationError(
-                f"Pipeline '{self.name}' holds something that is not data: {e}") from e
-        return plan
-
-    @classmethod
-    def from_dict(cls, manipulator: Any, plan: Dict[str, Any]) -> "Pipeline":
-        """Rebuild a pipeline from a stored plan.
-
-        Args:
-            manipulator (Manipulator): The orchestrator to run against. A plan is a plan, not a
-                binding: the same one can be replayed against a different model.
-            plan (Dict[str, Any]): What `to_dict` produced.
-
-        Returns:
-            Pipeline: The rebuilt pipeline.
-
-        Raises:
-            RequestError: If the plan is not the shape `to_dict` produces, or refers to a step
-                that is not in it.
-        """
-        if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list):
-            raise RequestError("A pipeline plan needs a 'steps' list")
-
-        pipeline = cls(manipulator, plan.get("name"))
-        by_name: Dict[str, Step] = {}
-        for entry in plan["steps"]:
-            if not isinstance(entry, dict) or "operation" not in entry:
-                raise RequestError(f"Step {entry!r} has no operation")
-            step = Step(entry.get("name") or entry["operation"], entry["operation"],
-                        _from_data(entry.get("obj"), by_name, pipeline),
-                        _from_data(entry.get("attributes") or {}, by_name, pipeline))
-            for waited in entry.get("after") or []:
-                if waited not in by_name:
-                    raise RequestError(f"Step '{step.name}' waits for '{waited}', "
-                                       "which is not in the plan")
-                step.after.append(by_name[waited])
-            pipeline._steps.append(step)
-            by_name[step.name] = step
-        return pipeline
-
-
-# --- references, resolved and recorded ------------------------------------------------------
-
-def _references(value: Any) -> Set[Step]:
-    """Return every step referred to anywhere inside a value."""
-    if isinstance(value, Step):
-        return {value}
-    if isinstance(value, dict):
-        return set().union(*(_references(item) for item in value.values())) if value else set()
-    if isinstance(value, (list, tuple, set)):
-        return set().union(*(_references(item) for item in value)) if value else set()
-    return set()
-
-
-def _substitute(value: Any, produced: Dict[str, Any]) -> Any:
-    """Replace every step reference with what that step produced.
-
-    Notes:
-        - Recursive through dictionaries and sequences, so a reference reaches wherever a
-          request can hold one -- an argument, an item of a list, a value in a mapping.
-    """
-    if isinstance(value, Step):
-        found = produced.get(value.name)
-        if value.key is not None:
-            try:
-                narrowed = found[value.key]
-            except (KeyError, IndexError, TypeError) as e:
-                raise RequestError(
-                    f"Step '{value.name}' produced nothing under '{value.key}'") from e
-            return narrowed.get("result") if isinstance(narrowed, dict) and "result" in narrowed \
-                else narrowed
-        return found
-    if isinstance(value, dict):
-        return {key: _substitute(item, produced) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_substitute(item, produced) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_substitute(item, produced) for item in value)
-    return value
-
-
-def _as_data(value: Any) -> Any:
-    """Turn recorded arguments into something storable, references and objects included.
-
-    Notes:
-        - A modelled object is written as its own data under its type's name. A plan naming a
-          live object is the ordinary case -- the first step of most pipelines runs on something
-          -- so a plan that refused to hold one would be a plan that could rarely be stored.
-    """
-    from .base.serializable import Serializable
-
-    if isinstance(value, Step):
-        return {"$step": value.name} if value.key is None else {"$step": value.name,
-                                                                "$key": value.key}
-    if isinstance(value, Serializable):
-        return {"$type": type(value).__name__, "$data": value.to_dict()}
-    if isinstance(value, dict):
-        return {key: _as_data(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_as_data(item) for item in value]
-    return value
-
-
-def _named_type(name: str) -> type:
-    """Return the modelled type of that name, refusing to guess between two.
-
-    Raises:
-        RequestError: If nothing of that name has been imported, or more than one thing has.
-            Only `Serializable` subclasses are searched -- a name that crossed a boundary
-            selects among the model's own types and nothing else.
-    """
-    from .base.serializable import Serializable
-
-    found, pending = [], [Serializable]
-    while pending:
-        candidate = pending.pop()
-        if candidate.__name__ == name and candidate not in found:
-            found.append(candidate)
-        pending.extend(candidate.__subclasses__())
-
-    if not found:
-        raise RequestError(f"A plan names the type '{name}', which is not imported here")
-    if len(found) > 1:
-        raise RequestError(
-            f"A plan names the type '{name}', and {len(found)} imported types are called that: "
-            f"{', '.join(sorted(found_type.__module__ for found_type in found))}")
-    return found[0]
-
-
-def _from_data(value: Any, by_name: Dict[str, Step], pipeline: Pipeline) -> Any:
-    """Turn stored arguments back into recorded ones, references and objects included."""
-    if isinstance(value, dict) and "$step" in value:
-        referred = by_name.get(value["$step"])
-        if referred is None:
-            raise RequestError(f"A step refers to '{value['$step']}', which is not in the plan")
-        return referred[value["$key"]] if "$key" in value else referred
-    if isinstance(value, dict) and "$type" in value:
-        return _named_type(value["$type"]).from_dict(value.get("$data") or {})
-    if isinstance(value, dict):
-        return {key: _from_data(item, by_name, pipeline) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_from_data(item, by_name, pipeline) for item in value]
-    return value
+        return (f"<draft plan '{self._name}', {len(self._plan)} step(s), "
+                f"for {type(self._manipulator).__name__}>")
