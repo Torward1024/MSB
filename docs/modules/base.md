@@ -351,14 +351,14 @@ Every mapping carries the version of the class that wrote it, under `schema_vers
 the older shape:
 
 ```python
-class Telescope(BaseEntity):
+class Widget(BaseEntity):
     SCHEMA_VERSION = 2
-    diameter: float                 # this was called 'size' in version 1
+    price: float                 # this was called 'size' in version 1
 
     @classmethod
     def migrate(cls, data, from_version):
         if from_version == 1:
-            data["diameter"] = data.pop("size")
+            data["price"] = data.pop("size")
         return data
 ```
 

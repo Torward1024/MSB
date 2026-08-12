@@ -1,47 +1,81 @@
-# Super Module
+# Super module
 
-The Super module provides operation handling and project management capabilities. It consists of the `Super` abstract base class for operation processing and the `Project` class for managing collections of entities.
+A `Super` is an operation. Subclass it, name the operation, and write handlers; the orchestrator
+picks the handler by operation and by the type of the object.
 
-## Super Class
+This page also covers `Project`, a named collection of entities with a factory.
 
-`Super` is an abstract super-class providing common functionality for operation handlers. Designed to work with a Manipulator, this class defines a framework for executing operations on objects based on attributes. Subclasses implement specific operations (e.g., configuration, inspection, calculation, etc.) by defining methods with naming conventions like `_<operation>_<type>` or `_<operation>`.
+## The class
 
-### Attributes
+| | |
+| --- | --- |
+| `OPERATION` | The operation's name. Set it on the class, or pass a name to `register_operation` |
+| `_manipulator` | Whatever drives it. Anything answering `get_methods_for_type` will do |
+| `_methods` | Methods registered on this instance for a type, tried before the manipulator's |
+| `execute(obj, attributes, method)` | Resolves a handler and runs it. The manipulator calls this |
 
-- `_manipulator` (Manipulator): The associated Manipulator instance for method lookup.
-- `_methods` (Dict[Type, Dict[str, Callable]]): Custom method registry for specific object types.
-- `_method_cache` (OrderedDict): Cache method.
-- `_cache_size` (int): Cache size.
-- `OPERATION` (str): The operation name, set by Manipulator during registration.
+Handlers are named `_<operation>` or `_<operation>_<something>`. Nothing else is reachable: the
+name arrives inside a request, so allowing any method would let a caller invoke anything on the
+instance.
 
-### Notes
-
-- Method resolution order: explicit method, prefixed method (`_<operation>_<method>`), type-specific method (`_<operation>_<type>`), default method (`_<operation>`).
-- Logging is integrated via `utils.logging_setup.logger`.
-- Results are returned as dictionaries with keys: status (bool), object (str), method (str | None), result (Any), error (str | None, included only if status=False).
-
-### Key Features
-
-- **Method Resolution**: Automatic method lookup with fallback strategies
-- **Caching**: Method resolution caching for performance
-- **Standardized Responses**: Consistent response format for all operations
-- **Nested Operations**: Support for operations on nested objects
-- **Extensible**: Easy to subclass for specific operation types
-
-### Method Resolution Order
-
-When executing an operation, `Super` follows this resolution order:
+### How a handler is chosen
 
 1. The requested name, if it already denotes a handler of this operation
-2. Prefixed method (`_<operation>_<method>`)
-3. Type-specific method (`_<operation>_<object_type>`)
-4. Container method (`_<operation>_basecontainer`)
-5. Default method (`_<operation>`)
+2. `_<operation>_<name>` -- the name a request asked for
+3. `_<operation>_<type>` -- the type of the object, lower-cased
+4. `_<operation>_basecontainer` -- for any container
+5. `_<operation>` -- the fallback
 
-Only handlers of the operation are reachable, that is `_<operation>` and `_<operation>_*`.
-The name arrives inside a request, so allowing anything else would let a caller invoke
-arbitrary methods on the instance. A request naming something else falls through the
-cascade to a more general handler rather than reaching it.
+A request naming something outside the operation falls through to a more general handler rather
+than reaching it.
+
+## The built-in operations
+
+Five are registered for you, in `msb_arch.super.builtins`:
+
+| Class | Operation | What it does |
+| --- | --- | --- |
+| `Inspector` | `inspect` | Applies the methods a request names, reporting every outcome |
+| `Configurator` | `configure` | The same, stopping at the first failure |
+| `Catalogue` | `catalogue` | What is registered, and the shape of the model |
+| `Persistence` | `save` | Writes an object to a file as JSON, atomically |
+| `Loader` | `load` | Reads one back |
+
+Each is thin -- usually one call to `_apply_methods` -- so subclassing one to change the
+behaviour for a single type leaves the rest working:
+
+```python
+from msb_arch import BaseEntity, Configurator, Manipulator, RequestError
+
+class Widget(BaseEntity):
+    price: float
+
+    def set_price(self, value: float) -> bool:
+        self.price = value
+        return True
+
+class Careful(Configurator):
+    def _configure_widget(self, obj, attributes):
+        if attributes.get("set_price", 0) > 100:
+            raise RequestError("too expensive")
+        return self._apply_methods(obj, attributes, strict=True)
+
+class Workshop(Manipulator):
+    pass
+
+workshop = Workshop(base_classes=[Widget])
+workshop.register_operation(Careful(workshop), operation="configure")
+
+widget = Widget(name="hinge", price=5.0)
+assert workshop.configure(widget, set_price=500.0, raise_on_error=False)["status"] is False
+assert widget.price == 5.0
+```
+
+Registering over a built-in replaces it silently, since it is a default rather than a collision.
+
+A handler refuses by raising, not by returning a failed response: `execute` wraps whatever a
+handler returns, so a returned failure ends up as the successful result of a request. Raise one
+of MSB's own errors and the kind survives to the caller.
 
 ## Writing your own Super
 
@@ -71,17 +105,17 @@ The examples from here on run against this setup:
 ```python
 from msb_arch import BaseEntity, Manipulator, Super
 
-class Telescope(BaseEntity):
-    diameter: float
+class Widget(BaseEntity):
+    price: float
 
     def get_code(self) -> str:
         return self.name
 
-    def get_diameter(self) -> float:
-        return self.diameter
+    def get_price(self) -> float:
+        return self.price
 
-    def set_diameter(self, value: float) -> bool:
-        self.diameter = value
+    def set_price(self, value: float) -> bool:
+        self.price = value
         return True
 
 class Inspector(Super):
@@ -90,23 +124,23 @@ class Inspector(Super):
     def _inspect(self, obj, attributes):
         return self._apply_methods(obj, attributes)
 
-class Observatory(Manipulator):
+class Workshop(Manipulator):
     pass
 
-manipulator = Observatory(base_classes=[Telescope])
+manipulator = Workshop(base_classes=[Widget])
 manipulator.register_operation(Inspector(manipulator))
-telescope = Telescope(name="T1", diameter=25.0)
+widget = Widget(name="T1", price=25.0)
 ```
 
 ```python
 results = manipulator.process_request({
-    "operation": "inspect", "obj": telescope,
-    "attributes": {"get_code": None, "get_diameter": None},
+    "operation": "inspect", "obj": widget,
+    "attributes": {"get_code": None, "get_price": None},
 })["result"]
 
 assert results == {
     "get_code":     {"status": True, "result": "T1"},
-    "get_diameter": {"status": True, "result": 25.0},
+    "get_price": {"status": True, "result": 25.0},
 }
 ```
 
@@ -114,10 +148,10 @@ The facade is sugar, so it unwraps the common case: a request naming exactly one
 gives back that value rather than a mapping of one.
 
 ```python
-assert manipulator.inspect(telescope, get_code=None) == "T1"
+assert manipulator.inspect(widget, get_code=None) == "T1"
 
-both = manipulator.inspect(telescope, get_code=None, get_diameter=None)
-assert both["get_diameter"]["result"] == 25.0        # a mapping, not a value
+both = manipulator.inspect(widget, get_code=None, get_price=None)
+assert both["get_price"]["result"] == 25.0        # a mapping, not a value
 ```
 
 `strict=True`, the default, stops at the first failed method and lets `execute` turn it into
@@ -132,8 +166,8 @@ wraps that in the standard response.
 class Configurator(Super):
     OPERATION = "configure"
 
-    def _configure_telescope(self, obj, attributes):
-        # a type-specific handler: reached for any object whose class is Telescope
+    def _configure_widget(self, obj, attributes):
+        # a type-specific handler: reached for any object whose class is Widget
         return self._apply_methods(obj, attributes)
 
     def _configure(self, obj, attributes):
@@ -148,19 +182,19 @@ used for its effect and the handler decides what comes back.
 class ReturningConfigurator(Super):
     OPERATION = "configure"
 
-    def _configure_telescope(self, obj, attributes):
+    def _configure_widget(self, obj, attributes):
         self._apply_methods(obj, attributes)
-        return obj.get_diameter()          # the handler decides what comes back
+        return obj.get_price()          # the handler decides what comes back
 
 manipulator.register_operation(ReturningConfigurator(manipulator))
-assert manipulator.configure(telescope, set_diameter=30.0) == 30.0
+assert manipulator.configure(widget, set_price=30.0) == 30.0
 ```
 
 Handlers may of course call each other directly. Only the entry point goes through
 `execute`, so a helper such as `_generate_observations` does not need to follow the naming
 convention as long as one of the handlers calls it.
 
-### Basic Usage
+### A worked example
 
 The operation name comes from `OPERATION`. A `Super` can be driven directly, without a
 `Manipulator`, as long as that is set: `__init__` copies it to `_operation`, so assigning
@@ -190,9 +224,7 @@ assert result["status"] is True
 assert result["result"] == 8
 ```
 
-### Advanced Features
-
-#### Custom Method Registration
+### Registering a method for a type at run time
 
 ```python
 class DataProcessor(Super):
@@ -212,7 +244,7 @@ result = processor.execute([1, 2, 3], {"method": "length"})
 print(result["result"])  # 3
 ```
 
-#### Nested Operations
+### Descending into a container
 
 ```python
 class NestedProcessor(Super):
@@ -249,7 +281,7 @@ result = processor.execute(container, {"item": "item1", "operation": "get_value"
 - **Validation**: Name validation and type checking
 - **Extensible**: Abstract `create_item()` method for custom entity creation
 
-### Basic Usage
+### A worked example
 
 ```python
 from msb_arch.super import Project
@@ -288,7 +320,7 @@ print(len(project_data["items"]))  # 2
 
 ### Project Operations
 
-#### Item Management
+### Items
 
 ```python
 # Add existing item
@@ -310,7 +342,7 @@ project.deactivate_item("test")
 project.remove_item("test")
 ```
 
-#### Bulk Operations
+### In bulk
 
 ```python
 # Activate/deactivate all
@@ -325,7 +357,7 @@ project.drop_active()  # Remove all active items
 project.drop_inactive()  # Remove all inactive items
 ```
 
-#### Project Configuration
+### Reading and writing the whole project
 
 ```python
 # Get project info
@@ -362,37 +394,33 @@ result = bench.process_request({
 assert result["result"] == 30
 ```
 
-## Best Practices
+## The response
 
-1. **Naming Conventions**: Use clear operation names and follow the `_<operation>_<method>` pattern for methods.
-
-2. **Error Handling**: Always return standardized response dictionaries with proper status and error information.
-
-3. **Caching**: Enable caching for frequently used operations to improve performance.
-
-4. **Type Safety**: Use specific types in method signatures for better validation.
-
-5. **Documentation**: Document all operation methods with clear docstrings.
-
-## Response Format
-
-All Super operations return responses in this format:
+Every handler answers in the same shape, which is what makes a session replayable:
 
 ```text
 {
-    "status": bool,        # True if successful, False otherwise
-    "object": Any,         # Name or identifier of the processed object
-    "method": str,         # Name of the method that was executed
-    "result": Any,         # Result of the operation (if status=True)
-    "error": str           # Error message (if status=False)
+    "status": bool,
+    "object": Any,         # the object's name
+    "method": str,         # the handler that ran
+    "result": Any,         # when status is True
+    "error": str,          # when status is False
+    "error_type": str,     # when status is False: the exception class's name
 }
 ```
 
-## Error Handling
+`_build_response` produces it. `_apply_methods` produces `MethodResults`, which is that shape per
+method named.
 
-- **ValueError**: Invalid parameters or method not found
-- **TypeError**: Type mismatches in operation parameters
-- **AttributeError**: Missing required attributes
-- **KeyError**: Object not found in collections
+## Errors a handler meets
 
-All errors are logged and returned in the standardized response format.
+| Error | When |
+| --- | --- |
+| `RequestError` | The request asked for something that cannot be done: no methods named, no path |
+| `DispatchError` | No handler could be resolved for the operation and the object |
+| `HandlerError` | A method failed while `strict=True`, or a handler raised something else |
+| `NotFoundError` | A named item or file is not there |
+
+Raising one of MSB's own errors from a handler is worth the two extra characters: the type
+survives the response boundary, so a facade re-raises the same kind rather than flattening
+everything into `HandlerError`.

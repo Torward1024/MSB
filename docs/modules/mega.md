@@ -1,448 +1,325 @@
-# Mega Module
+# Mega module
 
-The Mega module provides the `Manipulator` class, which serves as the central orchestration component of the MSB Framework. It manages operations, processes requests, and coordinates interactions between objects and Super classes.
+The `Manipulator`: the entry point. It holds the registered operations, knows which methods may
+be applied to which type, turns requests into responses, and answers questions about itself and
+about the model.
 
-## Abstract Manipulator Class
-
-`Manipulator` is an abstract class for managing and processing operations on objects. It acts as a registry for operations and provides a unified interface for executing complex workflows.
-
-### Key Features
-
-- **Operation Registry**: Register and manage multiple operation handlers
-- **Request Processing**: Handle single and batch requests with detailed error handling
-- **Method Discovery**: Automatic method registry generation for base classes
-- **Facade Methods**: Dynamic facade method creation for simplified operation calls
-- **Caching**: LRU caching for method resolution and serialization
-- **Type Safety**: Optional strict type checking for objects
-
-### Basic Usage
+Everything in this page runs; the test suite executes it top to bottom.
 
 ```python
-from msb_arch.mega import Manipulator
-from msb_arch.super import Super
-
-class MathOperations(Super):
-    OPERATION = "math"
-
-    def _math_add(self, obj, attributes):
-        return attributes.get("a", 0) + attributes.get("b", 0)
-
-    def _math_multiply(self, obj, attributes):
-        return attributes.get("a", 1) * attributes.get("b", 1)
-
-# Create manipulator
-manipulator = Manipulator()
-
-# Register operation
-manipulator.register_operation(MathOperations())
-
-# Process requests
-result = manipulator.process_request({
-    "operation": "math",
-    "obj": int,
-    "attributes": {"method": "add", "a": 5, "b": 3}
-})
-
-print(result)
-# {"status": True, "object": None, "method": "_math_add", "result": 8}
-
-# Use facade method (created automatically)
-result = manipulator.math(int, a=10, b=4, method="multiply")
-print(result)  # 40
-```
-
-### Advanced Features
-
-#### Managing Objects
-
-```python
-# Set a central managing object
-from msb_arch.base import BaseContainer, BaseEntity
-
-class Item(BaseEntity):
-    name: str
-    value: int
-
-class ItemsContainer(BaseContainer[Item]):
-    pass
-
-container = ItemsContainer(name="items")
-manipulator.set_managing_object(container)
-
-# Now operations can work on the managing object implicitly
-result = manipulator.process_request({
-    "operation": "math",
-    "attributes": {"method": "add", "a": 1, "b": 2}
-})
-```
-
-#### Batch Processing
-
-```python
-# Process multiple requests
-requests = {
-    "req1": {
-        "operation": "math",
-        "attributes": {"method": "add", "a": 1, "b": 2}
-    },
-    "req2": {
-        "operation": "math",
-        "attributes": {"method": "multiply", "a": 3, "b": 4}
-    }
-}
-
-results = manipulator.process_request(requests)
-print(results["req1"]["result"])  # 3
-print(results["req2"]["result"])  # 12
-```
-
-#### Base Class Registration
-
-```python
-# Register base classes for method discovery
-manipulator = Manipulator(base_classes=[list, dict, str])
-
-# Now methods from these classes are available
-result = manipulator.process_request({
-    "obj": [1, 2, 3],
-    "operation": "custom_operation",  # Assuming operation that uses list methods
-    "attributes": {"method": "append", "value": 4}
-})
-```
-
-### Operation Registration
-
-#### Automatic Registration
-
-```python
-class DataProcessor(Super):
-    OPERATION = "process"  # Auto-register with this name
-
-processor = DataProcessor()
-manipulator.register_operation(processor)  # Uses "process" as operation name
-```
-
-#### Manual Registration
-
-```python
-manipulator.register_operation(processor, operation="data_process")
-```
-
-#### Multiple Operations
-
-```python
-from msb_arch import BaseEntity, Manipulator, Super
+from msb_arch import BaseContainer, BaseEntity, Manipulator, Super
 
 class Reading(BaseEntity):
     value: float
 
-class Calculator(Super):
-    OPERATION = "calculate"
+    def get_value(self) -> float:
+        return self.value
 
-    def _calculate_reading(self, obj, attributes):
-        return obj.value * attributes.get("factor", 1.0)
-
-class Formatter(Super):
-    OPERATION = "format"
-
-    def _format_reading(self, obj, attributes):
-        return f"{obj.name}: {obj.value:.2f}"
-
-class Pipeline(Manipulator):
-    pass
-
-manipulator = Pipeline(base_classes=[Reading])
-manipulator.register_operation(Calculator(manipulator))
-manipulator.register_operation(Formatter(manipulator))
-
-reading = Reading(name="sensor-1", value=21.5)
-manipulator.calculate(reading, factor=2.0)   # 43.0
-manipulator.format(reading)                  # 'sensor-1: 21.50'
-```
-
-### Request Processing
-
-#### Single Request Format
-
-```text
-request = {
-    "operation": "operation_name",    # Required
-    "obj": object_to_process,         # Optional (uses managing object if None)
-    "method": "specific_method",      # Optional
-    "attributes": {                   # Optional
-        "param1": "value1",
-        "param2": "value2"
-    }
-}
-
-result = manipulator.process_request(request)
-```
-
-#### Batch Request Format
-
-```text
-requests = {
-    "request_id_1": { /* single request */ },
-    "request_id_2": { /* single request */ }
-}
-
-results = manipulator.process_request(requests)
-# Returns: {"request_id_1": result1, "request_id_2": result2}
-```
-
-### Facade Methods
-
-When you register an operation, Manipulator automatically creates a facade method with the same name:
-
-```python
-manipulator.register_operation(MathOperations(), operation="math")
-
-# This creates manipulator.math() method
-result = manipulator.math(int, a=1, b=2, method="add")
-# Equivalent to:
-result = manipulator.process_request({
-    "operation": "math",
-    "obj": int,
-    "attributes": {"a": 1, "b": 2, "method": "add"}
-})
-```
-
-Facade methods support these parameters:
-- `obj`: Object to operate on (optional)
-- `method`: Specific method to call (optional)
-- `raise_on_error`: If True, raises exceptions; if False, returns dict (default: True)
-- Any other keyword arguments become attributes
-
-### Method Registry
-
-Manipulator maintains a registry of available methods for different object types:
-
-```python
-# the methods registered for a type the manipulator knows about
-methods = manipulator.get_methods_for_type(Reading)
-sorted(methods)[:3]                 # ['activate', 'clear', 'clone']
-
-# teach it about further types
-manipulator.update_registry(additional_classes=[list])
-sorted(manipulator.get_methods_for_type(list))[:3]   # ['append', 'clear', 'copy']
-```
-
-### Configuration Options
-
-#### Strict Type Checking
-
-```python
-manipulator = Manipulator(strict_type_check=True)
-# Will raise errors for unsupported object types
-```
-
-#### Cache Size
-
-```python
-# In Super classes
-super_instance = MathOperations(cache_size=500)  # Default is 2048
-```
-
-### Error Handling
-
-Manipulator provides comprehensive error handling:
-
-```python
-class Inspector(Super):
-    OPERATION = "inspect"
-
-    def _inspect(self, obj, attributes):
-        return self._apply_methods(obj, attributes)
-
-manipulator.register_operation(Inspector(manipulator))
-
-# raise_on_error is True by default: a failure is raised
-try:
-    manipulator.inspect(reading, no_such_method=None)
-except Exception as e:
-    print(f"raised: {e}")            # Method 'no_such_method' not found
-
-# with raise_on_error=False the whole response comes back instead
-response = manipulator.inspect(reading, no_such_method=None, raise_on_error=False)
-if not response["status"]:
-    print(response["error"])         # Method 'no_such_method' not found
-```
-
-Common error scenarios:
-- **Operation not registered**: `ValueError`
-- **Invalid request format**: `TypeError`
-- **Method not found**: `ValueError`
-- **Type validation errors**: `TypeError`
-
-### Performance Optimization
-
-#### Caching
-
-- Method resolution results are cached using `lru_cache`
-- Super instances can have configurable cache sizes
-- Registry updates clear relevant caches
-
-#### Best Practices
-
-1. **Batch Operations**: Use batch requests for multiple operations to reduce overhead.
-
-2. **Facade Methods**: Use facade methods for simple operations instead of full request dictionaries.
-
-3. **Managing Object**: Set a managing object when most operations work on the same object.
-
-4. **Operation Naming**: Use consistent, descriptive operation names.
-
-5. **Error Handling**: Use `raise_on_error=False` for programmatic error handling.
-
-## Built-in operations
-
-A `Manipulator` answers `inspect` and `configure` without being told. They follow from the
-request model rather than from any domain -- an attribute names a method, and the method reads
-or writes -- so an application that only reads and writes its model needs no `Super` at all.
-
-```python
-from msb_arch import BaseEntity, Manipulator
-
-class Telescope(BaseEntity):
-    diameter: float
-
-    def get_diameter(self) -> float:
-        return self.diameter
-
-    def set_diameter(self, value: float) -> bool:
-        self.diameter = value
+    def set_value(self, value: float) -> bool:
+        self.value = value
         return True
 
-class Observatory(Manipulator):
+class Readings(BaseContainer[Reading]):
     pass
 
-manipulator = Observatory(base_classes=[Telescope])
-dish = Telescope(name="DSS14", diameter=70.0)
+class Bench(Manipulator):
+    pass
 
-manipulator.configure(dish, set_diameter=64.0)
-assert manipulator.inspect(dish, get_diameter=None) == 64.0
+bench = Bench(base_classes=[Reading, Readings])
+reading = Reading(name="r1", value=19.0)
 ```
 
-They differ in one thing. `Inspector` applies every method a request names and reports each
-outcome; `Configurator` stops at the first failure. A caller reading several things wants the
-whole picture, while a half-applied configuration is worse than a rejected one.
+## The request
+
+A request is data:
+
+```text
+{
+    "operation": str,          # which registered operation
+    "obj": Any,                # what to run it on; None means the managing object
+    "method": str,             # optional: a specific handler
+    "attributes": {...},       # what the operation is given
+}
+```
+
+A response is data too:
+
+```text
+{
+    "status": bool,
+    "object": Any,             # the object's name
+    "method": str | None,      # the handler that ran
+    "result": Any,
+    "error": str,              # only when status is False
+    "error_type": str,         # only when status is False
+}
+```
+
+```python
+response = bench.process_request({
+    "operation": "inspect",
+    "obj": reading,
+    "attributes": {"get_value": None},
+})
+assert response["status"] is True
+assert response["result"]["get_value"]["result"] == 19.0
+```
+
+### Facades
+
+Registering an operation adds a method of the same name, and an `a`-prefixed twin. It is the
+same request, written shorter, and it unwraps the common case of one method named.
+
+```python
+assert bench.inspect(reading, get_value=None) == 19.0
+```
+
+| Argument | Meaning |
+| --- | --- |
+| `obj` | What to run it on. Omitted or None means the managing object |
+| `method` | A specific handler |
+| `raise_on_error` | True by default. False returns the whole response instead of raising |
+| `**attributes` | The rest of the request |
+
+### The managing object
+
+Set one, and a request may leave `obj` out.
+
+```python
+bench.set_managing_object(reading)
+assert bench.inspect(get_value=None) == 19.0
+bench.set_managing_object(None)
+```
+
+### Registering operations
+
+```python
+class Statistics(Super):
+    OPERATION = "stats"
+
+    def _stats_readings(self, obj, attributes):
+        values = [item.value for item in obj.get_items()]
+        return {"count": len(values), "mean": sum(values) / len(values) if values else 0.0}
+
+bench.register_operation(Statistics(bench))
+
+series = Readings(name="series")
+series.add(reading)
+series.add(Reading(name="r2", value=21.0))
+assert bench.stats(series)["mean"] == 20.0
+```
+
+An operation registered under a name a built-in already uses replaces the built-in silently.
+Two registrations of one name that are both yours raise `RegistrationError`, and so does a name
+that would shadow a method of the `Manipulator` itself.
+
+### Teaching it about more types
+
+```python
+class Note(BaseEntity):
+    text: str
+
+    def get_text(self) -> str:
+        return self.text
+
+bench.update_registry(additional_classes=[Note])
+assert bench.inspect(Note(name="n", text="hello"), get_text=None) == "hello"
+```
+
+`get_methods_for_type(Note)` returns what a request may name for that type.
+
+## Several requests at once
+
+### batch
+
+Independent requests, each answered separately. Give a sequence or a mapping keyed by name.
+
+```python
+responses = bench.batch([
+    {"operation": "configure", "obj": reading, "attributes": {"set_value": 25.0}},
+    {"operation": "inspect", "obj": reading, "attributes": {"get_value": None}},
+])
+assert responses["1"]["result"]["get_value"]["result"] == 25.0
+```
+
+`raise_on_error=True` stops at the first failure; the default reports all of them.
+
+### pipeline
+
+Requests that feed each other. Same convention: one call, taking data.
+
+```python
+outcome = bench.pipeline({
+    "raised":  {"operation": "configure", "obj": reading, "set_value": 30.0},
+    "summary": {"operation": "stats", "obj": series, "after": ["raised"]},
+})
+assert outcome.output["count"] == 2
+```
+
+A step is a request with three additions:
+
+| | |
+| --- | --- |
+| `"@name"` | What the step called `name` produced. Works anywhere in the step |
+| `"after": [...]` | Wait for a step without using its value |
+| Any other key | An attribute, so the common case needs no nested `attributes` |
+
+What a pipeline adds over a batch: the order the edges imply, substitution of what a step
+produced, and skipping the branch below a failure.
+
+```python
+answer = bench.pipeline({
+    "measured": {"operation": "inspect", "obj": reading, "get_value": None},
+    "copied":   {"operation": "configure", "obj": Reading(name="r3", value=0.0),
+                 "set_value": "@measured"},
+})
+assert answer.failed == []
+```
+
+`PipelineRun` is the response of every step, keyed as the plan keyed them, plus `output` (what
+the last step produced), `of(name)` and `failed`.
+
+Steps that wait for nothing may run together: `bench.pipeline(plan, concurrent=True)`, or
+`await bench.apipeline(plan)` from inside an event loop.
+
+Drafting a plan by calling the operations, when the mapping is a nuisance to type:
+
+```python
+draft = bench.pipeline()
+draft.inspect(reading, get_value=None)
+assert draft.plan()["inspect"]["obj"] is reading
+assert draft.run().failed == []
+```
+
+The draft produces a plan and hands it to `pipeline`; it runs nothing itself.
+
+## The built-in operations
+
+| Operation | Handler | What it does |
+| --- | --- | --- |
+| `inspect` | `_inspect` | Applies the methods a request names, reporting every outcome |
+| `configure` | `_configure` | The same, stopping at the first failure |
+| `catalogue` | `_catalogue`, `_catalogue_order`, `_catalogue_model` | What is registered, and the shape of the model |
+| `save` | `_save` | Writes an object to a file as JSON, atomically |
+| `load` | `_load` | Reads one back |
+
+`Manipulator(builtins=False)` starts with none of them.
+
+```python
+bench.save(series, path="series.json")
+restored = bench.load(series, path="series.json")
+assert restored == series
+```
+
+`save` takes `path`, and optionally `indent` (4) and `overwrite` (True). `load` takes `path`,
+and optionally `kind` -- a class or its name -- for reading something no instance exists of.
+
+The write goes to a temporary file beside the target and is renamed, so an interrupted write
+leaves the previous file rather than a truncated one. The format is a default: register your own
+`save` and it takes over.
 
 ### Reaching one member of a collection
 
-A request against a collection means one of two things, and only the request can say which:
+A request against a container means one of two things, and only the request says which.
 
 ```python
-class Telescopes(BaseContainer[Telescope]):
-    pass
-
-array = Telescopes(name="array")
-array.add(Telescope(name="DSS14", diameter=70.0))
-manipulator.update_registry(additional_classes=[Telescopes])
-
-assert list(manipulator.inspect(array, get_all=None)) == ["DSS14"]      # ask the collection
-assert manipulator.inspect(array, name="DSS14", get_diameter=None) == 70.0   # ask one member
+assert sorted(bench.inspect(series, get_all=None)) == ["r1", "r2"]   # the container
+assert bench.inspect(series, name="r2", get_value=None) == 21.0      # one member
 ```
 
-The key is removed before descending, so the member sees only the methods meant for it.
+The key is `NESTED_KEY`, `"name"` by default. How to fetch a member is `_nested_getter`, which a
+`BaseContainer` answers with `get`; override it for a type that answers differently.
 
-**The descent is not uniform**, which is why it is a hook rather than a convention: a
-`BaseContainer` answers `get(name)`, a `Project` answers `get_observation(name)`, and a model
-of your own answers however it likes. Two things say how:
+## What the orchestrator knows
+
+Derived from what is registered and from the annotations, so nothing here can go stale.
 
 ```python
-from msb_arch import Inspector
-
-class RegistryInspector(Inspector):
-    NESTED_KEY = "entry"                    # what a request calls the member
-
-    def _nested_getter(self, obj):          # how to fetch it
-        getter = getattr(obj, "get_entry", None)
-        return getter or super()._nested_getter(obj)
-
-assert RegistryInspector.NESTED_KEY == "entry"
+described = bench.describe_operations("catalogue")
+assert sorted(described["catalogue"]) == ["model", "order"]
+assert described["catalogue"]["model"]["label"] == "Model"
 ```
 
-Anything holding no members is unaffected: the hook returns `None` and the request is applied
-to the object itself.
+Handlers are found by reading the source of the class, so the operations shown here are the
+built-in ones: a class defined inside a documentation example has no source file to read.
 
-**Registering your own replaces a built-in silently.** That is how every application written
-before they existed is already spelled, and it has to keep meaning the same thing. Two
-registrations of one name that are both yours still raise. Pass `builtins=False` to start with
-nothing registered.
+`describe_operations()` reports, per operation, each handler with:
+
+| Key | Meaning |
+| --- | --- |
+| `requires` | Other handlers of the same operation that this one calls. Exact, direct |
+| `calls` | Every name it reaches. An upper bound: a shared helper is followed for each caller |
+| `touches` | What the `interpret` callback made of those names. Empty without one |
+| `label` | A display name, with `acronyms` for words that keep their capitals |
+
+`order_handlers(operation, names)` sorts handlers so each follows what it needs;
+`requirements_of(operation, name)` is the transitive walk.
+
+The model graph comes from the annotations:
+
+```python
+model = bench.describe_model()
+assert model["Readings"]["holds"]["items"] == ["Reading"]
+assert model["Reading"]["held_by"] == {"Readings": ["items"]}
+assert bench.dependents_of("Reading") == ["Readings"]
+```
+
+And the handlers a new operation over that model would need:
+
+```python
+source = bench.scaffold("audit")
+assert "def _audit_reading(" in source
+assert "def _audit_readings(" in source
+```
+
+Containers get a working walk over their items; entities get a stub that raises.
 
 ## The asynchronous surface
 
-Every facade has an `a`-prefixed twin, and so do `process_request` and `batch`. The synchronous
-API is untouched.
+Every facade has an `a`-prefixed twin that runs the work on an executor the framework owns, so
+an event loop stays responsive.
 
 ```python
 import asyncio
 
 async def main():
-    await manipulator.aconfigure(dish, set_diameter=64.0)
-    return await manipulator.ainspect(dish, get_diameter=None)
+    await bench.aconfigure(reading, set_value=12.0)
+    return await bench.ainspect(reading, get_value=None)
 
-assert asyncio.run(main()) == 64.0
+assert asyncio.run(main()) == 12.0
 ```
 
-**Why it is not simply `async def` on the entry point.** Awaiting does not create concurrency;
-it marks a point where control *may* be yielded, and a synchronous handler has none. Measured
-against a heartbeat task during one 0.5-second operation:
+`aprocess_request`, `abatch` and `apipeline` are the same for the other three entry points. The
+whole synchronous pipeline runs on the executor, interceptors included, so one interceptor
+serves both paths -- and cannot await inside.
 
-| | the loop ran |
-| --- | --- |
-| a plain synchronous call | **0 times** |
-| an `async def` entry point over a synchronous handler | **0 times** |
-| the work moved onto an executor | **19 times** |
+The hop onto the executor costs about 170 µs. It pays for work longer than that.
 
-So the work moves off the loop. The whole synchronous pipeline runs on an executor the
-framework owns — interceptors included, which is what lets one interceptor serve both paths
-unchanged. The consequence is that an interceptor runs on a worker thread here and cannot await
-inside it.
-
-Threads rather than processes: the numerical libraries this was written for release the GIL, so
-a thread is real parallelism there, and a process would have to pickle the model to reach the
-work.
-
-### Methods that are themselves coroutines
-
-An entity may declare one, and the asynchronous surface awaits it back on the loop:
+A handler that is itself a coroutine is awaited rather than run on the executor:
 
 ```python
-class Dish(BaseEntity):
+class Probe(BaseEntity):
     async def fetch_status(self) -> str:
         await asyncio.sleep(0)
-        return "online"
+        return "ready"
 
-remote = Observatory(base_classes=[Dish])
-assert asyncio.run(remote.ainspect(Dish(name="d"), fetch_status=None)) == "online"
-remote.close()
+remote = Bench(base_classes=[Probe])
+assert asyncio.run(remote.ainspect(Probe(name="p"), fetch_status=None)) == "ready"
 ```
 
-### The executor
-
-Created on first asynchronous use and never before, so an application that stays synchronous
-never starts a thread. Size it with `Manipulator(max_workers=...)`.
-
-It is the one resource MSB owns, so it is the one thing to shut down:
+The executor is created on first asynchronous use and never before. `close()` shuts it down, or
+use the manipulator as a context manager:
 
 ```python
-manipulator.close()
-
-# or let a context manager do it
-with Observatory(base_classes=[Telescope]) as orchestrator:
-    assert asyncio.run(orchestrator.ainspect(dish, get_diameter=None)) == 64.0
+with Bench(base_classes=[Reading]) as orchestrator:
+    assert asyncio.run(orchestrator.ainspect(reading, get_value=None)) == 12.0
 ```
-
-`close()` is safe when nothing was started and safe to call twice, and the orchestrator stays
-usable afterwards: the next asynchronous call starts a new executor.
 
 ## Interceptors
 
 Something that sees a request before it runs and its response after. Metrics, auditing, rate
-limiting and authorisation are four uses of this one hook, which is why MSB supplies the hook
-and none of the four: a library that chose a metrics backend would stop being dependency-free,
-and one that chose an authorisation model would be wrong about somebody's.
+limiting and authorisation are four uses of this one hook, which is why MSB supplies the hook and
+none of the four.
 
 ```python
 import time
@@ -450,80 +327,82 @@ import time
 def timing(request, call_next):
     started = time.perf_counter()
     response = call_next(request)
-    print(request["operation"], time.perf_counter() - started)
+    del started
     return response
 
-manipulator.add_interceptor(timing)
+bench.add_interceptor(timing)
 ```
 
-An interceptor may pass the request on, do something either side of that, **refuse** by
-returning a response without calling `call_next` -- which is what rate limiting and
-authorisation need -- or **rewrite** the request before passing it on. The first added is the
-outermost. Each entry of a batch is intercepted separately, because a batch is a container of
-requests rather than a request.
-
-With none registered, a request pays one check.
+An interceptor may pass the request on, do something either side of that, **refuse** by returning
+a response without calling `call_next`, or **rewrite** the request before passing it on. The
+first added is the outermost. Each entry of a batch is intercepted separately. With none
+registered, a request pays one check.
 
 ### What ships
-
-Both are ordinary interceptors with no privileged access, and neither is registered by default.
 
 ```python
 from msb_arch import RequestJournal, RequestMetrics
 
-metrics = RequestMetrics()
-journal = RequestJournal()
-manipulator.add_interceptor(metrics)
-manipulator.add_interceptor(journal)
+bench.remove_interceptor(timing)
+bench.add_interceptor(RequestMetrics())
+bench.add_interceptor(RequestJournal(fingerprints=True))
 
-manipulator.configure(dish, set_diameter=12.0)
+bench.configure(reading, set_value=15.0)
+bench.inspect(reading, get_value=None)
 
-metrics.snapshot()["configure"]["calls"]      # 1
-journal.touching("DSS14")                     # everything that touched this object
+assert bench.metrics()["configure"]["calls"] == 1
+assert len(bench.history("r1")) == 2
+assert [entry["operation"] for entry in bench.history(changed_only=True)] == ["configure"]
 ```
 
 `RequestMetrics` counts, times and records failures per operation. `snapshot()` gives a plain
-mapping to export wherever you like -- Prometheus, statsd, a log line, a status page.
+mapping to export wherever you like; `manipulator.metrics()` returns the same thing.
 
-`RequestJournal` records what ran. Read backwards it answers *what produced this*; read
-forwards, `replay(manipulator)` runs the session again. It is nearly free here only because a
-request is data rather than a call, and a response already reports every method that ran.
-
-Two limits worth knowing. Entries hold the live object the request named, which is what makes
-replay exact and what stops a journal from being written to a file as it stands. And replay
-assumes handlers are deterministic: one that reads the clock, a file or a random seed cannot be
-reconstructed from its request alone.
-
-For the size of the serialization cache, `cache_statistics()` reports it on demand. Counters
-for how often invalidation runs, or how long serialization takes, are deliberately not
-maintained: both would put an unconditional increment into paths measured in microseconds, to
-answer a question most applications never ask.
-
-## Integration Patterns
-
-### With Base Classes
+`RequestJournal` records what ran. `manipulator.history(name, changed_only)` reads it,
+`manipulator.replay(journal)` runs the session again by turning it into a plan and passing it to
+`pipeline`.
 
 ```python
-from msb_arch import BaseContainer
-
-class Readings(BaseContainer[Reading]):
-    pass
-
-class Recorder(Super):
-    OPERATION = "record"
-
-    def _record_readings(self, obj, attributes):
-        obj.add(Reading(name=attributes["name"], value=attributes["value"]))
-        return len(obj)
-
-recorder = Pipeline(base_classes=[Reading, Readings])
-recorder.register_operation(Recorder(recorder))
-
-series = Readings(name="series")
-recorder.record(series, name="sensor-2", value=19.0)   # 1
+journal = bench.journal()
+bench.remove_interceptor(journal)          # or the replay records itself
+assert bench.replay(journal).failed == []
 ```
 
-### With Projects
+With `fingerprints=True` the journal hashes the object either side of each request, so it can
+report which requests actually changed something. It costs a serialisation each way.
+
+Two limits: entries hold the live object the request named, which is what makes replay exact and
+what stops a journal from being written to a file as it stands; and replay assumes deterministic
+handlers.
+
+## Errors
+
+A facade raises the kind of failure that happened, with the operation's own error types
+preserved across the response boundary.
+
+```python
+from msb_arch import errors
+
+try:
+    bench.load(reading, path="absent.json")
+except errors.NotFoundError:
+    pass
+```
+
+The traceback does not survive, because a response carries no exception object. Ask for the
+response instead of the exception when you would rather read it:
+
+```python
+response = bench.configure(reading, no_such_method=None, raise_on_error=False)
+assert response["status"] is False
+assert response["error_type"] == "HandlerError"
+```
+
+`inspect` would report `status: True` here with the failure recorded against that one method:
+reading is where a caller usually wants every outcome, writing is where a half-applied change is
+worse than a refused one.
+
+## With a Project
 
 ```python
 from msb_arch import Project
@@ -534,29 +413,10 @@ class ReadingProject(Project):
     def create_item(self, item_code="R", isactive=True):
         self.add_item(Reading(name=item_code, value=0.0, isactive=isactive))
 
-managed = Pipeline(base_classes=[Reading])
-managed.register_operation(Inspector(managed), operation="inspect")
-
-project = ReadingProject(name="observations")
+managed = Bench(base_classes=[Reading])
+project = ReadingProject(name="series")
 project.create_item("R1")
 
-# with a managing object set, obj may be omitted from a request
 managed.set_managing_object(project)
-managed.inspect(get_name=None)      # 'observations'
+assert managed.inspect(get_name=None) == "series"
 ```
-
-## Response Format
-
-All Manipulator operations return standardized responses:
-
-```text
-{
-    "status": bool,        # Operation success status
-    "object": Any,         # Object identifier/name
-    "method": str,         # Executed method name
-    "result": Any,         # Operation result (if status=True)
-    "error": str           # Error message (if status=False)
-}
-```
-
-For batch operations, returns a dictionary mapping request IDs to response objects.
