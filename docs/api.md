@@ -1,4 +1,4 @@
-# MSB Framework API Reference
+# API reference
 
 This document provides a complete API reference for the MSB Framework.
 
@@ -74,6 +74,16 @@ Create entity from dictionary.
 **Returns:** New entity instance
 
 **Raises:** `TypeError`, `ValueError`
+
+##### `revision -> int` (property)
+
+How many times this object has been written to. 0 for one nobody has changed. About this object,
+not what it holds, and not serialized.
+
+##### `fingerprint() -> str`
+
+A hash of everything this object holds, itself and below. Sixteen hexadecimal characters; equal
+contents give equal strings.
 
 ##### `has_attribute(key: str) -> bool`
 
@@ -347,6 +357,35 @@ Clear the method cache.
 
 Clear all references for cleanup.
 
+### The built-in operations
+
+In `msb_arch.super.builtins`. All are registered by a `Manipulator` unless `builtins=False`.
+
+| Class | `OPERATION` | Handlers |
+| --- | --- | --- |
+| `Inspector` | `inspect` | `_inspect` |
+| `Configurator` | `configure` | `_configure` |
+| `Catalogue` | `catalogue` | `_catalogue`, `_catalogue_order`, `_catalogue_model` |
+| `Persistence` | `save` | `_save` |
+| `Loader` | `load` | `_load` |
+
+`save` takes `path`, and optionally `indent` (4) and `overwrite` (True); it answers
+`{"path": str}`. `load` takes `path`, and optionally `kind` — a class or its name — and answers
+with the object itself.
+
+`Inspector` and `Configurator` both take `NESTED_KEY` (`"name"`) to address one member of a
+collection, and both have a `_nested_getter(obj)` hook returning how to fetch a member.
+
+### PipelineRun
+
+What `pipeline` and `replay` return. A `dict` of responses keyed as the plan keyed its steps.
+
+| | |
+| --- | --- |
+| `output` | What the last step produced |
+| `of(name)` | What one step produced. Raises `NotFoundError` if it produced nothing |
+| `failed` | The names of the steps that did not succeed |
+
 ### Project
 
 Abstract base class for managing entity projects.
@@ -458,7 +497,9 @@ Central orchestrator for operations and objects.
 #### Constructor
 
 ```python
-Manipulator(managing_object: Optional[Any] = None, base_classes: Optional[List[Type]] = None, operations: Optional[Dict[str, Callable]] = None, strict_type_check: bool = False)
+Manipulator(managing_object: Optional[Any] = None, base_classes: Optional[List[Type]] = None,
+            operations: Optional[Dict[str, Callable]] = None, strict_type_check: bool = False,
+            builtins: bool = True, max_workers: Optional[int] = None)
 ```
 
 **Parameters:**
@@ -466,6 +507,8 @@ Manipulator(managing_object: Optional[Any] = None, base_classes: Optional[List[T
 - `base_classes` (Optional[List[Type]]): Base classes for method discovery
 - `operations` (Optional[Dict]): Initial operations
 - `strict_type_check` (bool): Enforce strict typing
+- `builtins` (bool): Register `inspect`, `configure`, `catalogue`, `save` and `load`
+- `max_workers` (Optional[int]): Size of the executor the asynchronous surface uses
 
 #### Methods
 
@@ -537,8 +580,78 @@ Run several requests in order and report the outcome of each.
 **Notes:**
 - Sugar over the sequence form of `process_request`, as the per-operation facades are sugar
   over its single form.
-- Requests are independent: nothing feeds the result of one into the next. Dependent steps
-  are tracked as a separate direction in the roadmap.
+- Requests are independent: nothing feeds the result of one into the next. For steps that do,
+  use `pipeline`.
+
+##### `pipeline(plan=None, raise_on_error=True, concurrent=False, name=None) -> Any`
+
+Run several requests that feed each other, or return a draft when no plan is given.
+
+**Parameters:**
+- `plan` (Optional[Union[Dict, Sequence]]): Steps keyed by name, or a sequence of them
+- `raise_on_error` (bool): Raise on the first failure, or record it and skip its branch
+- `concurrent` (bool): Run each stage's independent steps together
+- `name` (Optional[str]): What to call a draft
+
+**Returns:** `PipelineRun` — the response of every step — or a draft
+
+**Raises:** `RequestError` for a malformed plan, a missing reference or a cycle;
+`DispatchError` for an unregistered operation
+
+##### `apipeline(plan, raise_on_error=True) -> PipelineRun` (coroutine)
+
+The same from inside an event loop. Always concurrent within a stage.
+
+##### `describe_operations(operation=None, interpret=None, acronyms=None) -> Dict[str, Any]`
+
+What is registered: per operation, each handler with `requires`, `calls`, `touches` and `label`.
+
+##### `order_handlers(operation: str, names: List[str]) -> List[str]`
+
+The named handlers, each after the ones it needs that were also asked for.
+
+##### `requirements_of(operation: str, name: str) -> List[str]`
+
+Everything a handler needs, directly or through what it needs.
+
+##### `describe_model(roots=None) -> Dict[str, Any]`
+
+The model graph: `{type: {"holds": {field: [type]}, "held_by": {type: [field]}, "container": bool}}`.
+
+##### `dependents_of(name: str, roots=None) -> List[str]`
+
+Every type that would feel a change to this one. Sorted, transitive.
+
+##### `scaffold(operation: str, roots=None, only=None) -> str`
+
+Python source: a `Super` with one handler per type in the model.
+
+##### `journal() -> Optional[RequestJournal]`
+
+The journal registered as an interceptor, if there is one.
+
+##### `history(name=None, changed_only=False) -> List[Dict[str, Any]]`
+
+What has been requested in this session, optionally about one object, optionally only the
+requests that changed something.
+
+**Raises:** `NotFoundError` if no journal is registered
+
+##### `metrics() -> Optional[Dict[str, Dict[str, Any]]]`
+
+What `RequestMetrics.snapshot()` reports, or None if none is registered.
+
+##### `replay(journal=None, skip_failures=True, concurrent=False) -> PipelineRun`
+
+Run a recorded session again, as a pipeline.
+
+##### `add_interceptor(interceptor) -> None`, `remove_interceptor(interceptor) -> None`, `get_interceptors() -> List`
+
+Manage the chain that wraps every request. The first added is the outermost.
+
+##### `close() -> None`
+
+Shut down the executor. Also happens on exit from the manipulator as a context manager.
 
 ##### `get_supported_operations() -> List[str]`
 
@@ -791,12 +904,3 @@ See [Type Validation](modules/base.md#type-validation-_validate_type) for the fu
 - `logging.DEBUG`, `logging.INFO`, `logging.WARNING`, `logging.ERROR`: Log levels
 - `inspect.Parameter.empty`: Empty parameter default
 - `ABC`: Abstract base class marker
-
-## Design Patterns Used
-
-- **Template Method**: Base classes define algorithms, subclasses customize steps
-- **Strategy**: Super classes as pluggable operation strategies
-- **Factory**: Project.create_item() for object creation
-- **Composite**: Containers managing entity collections
-- **Observer**: Logging system observing operations
-- **Registry**: Manipulator maintaining operation and method registries

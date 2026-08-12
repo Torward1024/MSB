@@ -26,13 +26,18 @@ short:
 | | |
 | --- | --- |
 | **Data** | `Serializable`, `BaseEntity`, `BaseContainer`, `Project` |
-| **Operations** | `Super`, `Inspector`, `Configurator`, `MethodResults` |
+| **Operations** | `Super`, `MethodResults` |
+| **Built-in operations** | `Inspector`, `Configurator`, `Catalogue`, `Persistence`, `Loader` |
 | **Entry point** | `Manipulator` |
 | **Protocols** | `MethodProvider`, `Interceptor` |
 | **Interceptors** | `RequestMetrics`, `RequestJournal` |
+| **Derivation** | `derive`, `label_for`, `order`, `derive_model`, `dependents_of`, `holdings_of` |
 | **Constraints** | `Constraint`, `Positive`, `NonNegative`, `NonZero`, `NonEmpty`, `Range`, `Predicate` |
 | **Exceptions** | `MSBError` and everything beneath it |
 | **Utilities** | `logger`, `setup_logging`, `cache_statistics` |
+
+A pipeline is reached through `Manipulator.pipeline`; the classes behind it are not exported and
+not part of this list. What is promised there is the shape of a plan and of a `PipelineRun`.
 
 Their public methods, the request and response protocol, and the meaning of an annotation are
 all covered.
@@ -46,7 +51,7 @@ they are part of the contract:
 | Member | On |
 | --- | --- |
 | `_apply_methods(obj, attributes, valid_methods, extra_args, strict)` | `Super` |
-| `_build_response(obj, status, method, result, error)` | `Super` |
+| `_build_response(obj, status, method, result, error, error_type)` | `Super` |
 | `_get_methods(obj_type)` | `Super` |
 | `_validate_and_apply_method(obj, name, args, valid_methods, extra_args)` | `Super` |
 | `_do_nested(obj, attributes, key, getter, handler)` | `Super` |
@@ -61,7 +66,8 @@ Their signatures will not change outside a major version.
 
 Everything else with a leading underscore, and every module not reachable from `msb_arch`.
 Notably `_fields`, `_type_cache`, `_entity_registry`, `_parents`, `_cached_to_dict`,
-`_compiled_validators`, `_operations`, `_registry`, `_interceptors`, `_chain`, `_executor`,
+`_compiled_validators`, `_hint_shapes`, `_init_plan`, `_written_fields`, `_revision`,
+`_operations`, `_registry`, `_interceptors`, `_chain`, `_model_cache`, `_executor`,
 `_dispatch_request` and `_process_single_request`.
 
 These are readable, and reading one in a debugger is fine. Depending on one in code is not
@@ -90,6 +96,12 @@ Nothing on the public surface is removed without warning first.
 So a name deprecated in 1.4 still works in 1.9 and disappears in 2.0. A deprecated name keeps
 working exactly as it did while it is deprecated; the warning is the only change.
 
+### Currently deprecated
+
+| Name | Since | Use instead | Goes |
+| --- | --- | --- | --- |
+| `RequestJournal.replay(manipulator)` | 1.3.0 | `manipulator.replay(journal)` | 2.0 |
+
 ## What is deliberately not promised
 
 - **Thread safety of a single object.** What MSB shares between objects is guarded; one object
@@ -99,7 +111,9 @@ working exactly as it did while it is deprecated; the warning is the only change
   numbers themselves are not a contract.
 - **Log message wording.** The logger name `msb_arch` is stable; what it says is not.
 - **Exception messages.** The *types* are contractual, and are what to catch. The strings are
-  written for people and are free to improve.
+  written for people and are free to improve. A response also carries `error_type`, the name of
+  the class, which a facade uses to re-raise the same kind; the traceback does not survive that
+  boundary, since a response carries no exception object.
 - **Ordering of a mapping**, except where documented: a set serializes in a stable order
   precisely because that one is promised.
 

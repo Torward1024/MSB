@@ -91,8 +91,8 @@ the clock, a file or a random seed cannot be reconstructed from its request alon
 | P18 | **`save` and `load` as built-in operations** | 1.3.0. JSON over `to_dict` as a default an application replaces by registering its own, and an atomic write, which were the two conditions for it being better than each application doing it itself |
 | P19 | **Routine work says nothing at INFO** | 1.3.0. Six messages moved to DEBUG; a check counts what is said while building, serialising and reading a container of a thousand items and expects nothing |
 | P15a | **Revision counters** | 1.3.0. The first of P15's four steps, and the one needing no decision about identity |
-| P17 | A nested-descent hook on the built-in `Inspector` and `Configurator` | 1.1.0. Predicted under P3 before the built-ins existed, confirmed by pAstroCORE, whose ten container handlers exist for exactly this |
-| -- | Mapping keys restored from the annotation | 1.0.1. Also found by pAstroCORE: a `Dict[float, float]` could not round-trip through JSON at all |
+| P17 | A nested-descent hook on the built-in `Inspector` and `Configurator` | 1.1.0. Predicted under P3 before the built-ins existed, and confirmed downstream: ten container handlers existed for exactly this |
+| -- | Mapping keys restored from the annotation | 1.0.1. Also found downstream: a `Dict[float, float]` could not round-trip through JSON at all |
 
 ### Rejected, and why
 

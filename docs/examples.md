@@ -1,530 +1,361 @@
-# MSB Framework Examples
+# Examples
 
-This document provides comprehensive examples of using the MSB Framework for various scenarios.
+Worked examples, longer than the [guide](guide.md)'s. Every block runs: the test suite executes
+this page top to bottom.
 
-## Basic Entity and Container Usage
+## An inventory
 
-### Creating Entities
-
-```python
-from msb_arch.base import BaseEntity
-
-class Person(BaseEntity):
-    name: str
-    age: int
-    email: str = "default@example.com"
-
-# Create instances
-person1 = Person(name="Alice", age=30)
-person2 = Person(name="Bob", age=25, email="bob@example.com")
-
-print(person1.name)      # "Alice"
-print(person1.isactive)  # True
-print(person2.email)     # "bob@example.com"
-```
-
-### Using Containers
+The model: parts, boxes of parts, and a warehouse of boxes.
 
 ```python
-from msb_arch.base import BaseContainer
+from typing import Annotated, List, Optional, Tuple
+from msb_arch import BaseContainer, BaseEntity, Manipulator, NonEmpty, Positive, Super
 
-# Create typed container
-class MyContainer(BaseContainer[Person]):
+class Part(BaseEntity):
+    price: Annotated[float, Positive()]
+    material: Annotated[str, NonEmpty()]
+    quantity: int
+    tags: List[str]
+
+    def get_price(self) -> float:
+        return self.price
+
+    def set_price(self, value: float) -> bool:
+        self.price = value
+        return True
+
+    def line_total(self) -> float:
+        return self.price * self.quantity
+
+class Box(BaseContainer[Part]):
     pass
 
-people = MyContainer(name="people")
-
-# Add items
-people.add(person1)
-people.add(person2)
-
-# Access items
-alice = people["Alice"]
-print(alice.age)  # 30
-
-# Query items
-adults = people.get_by_value({"age": 25})
-print(len(adults))  # 1
-
-# Iterate over items
-for person in people:
-    print(f"{person.name}: {person.age}")
+class Warehouse(BaseContainer[Box]):
+    pass
 ```
 
-## Advanced Entity Features
-
-### Nested Entities
+Annotations are the schema. A constraint travels with one, so it is enforced on construction, on
+assignment and on restore.
 
 ```python
-from msb_arch.base import BaseEntity
-class Address(BaseEntity):
-    street: str
-    city: str
-    zip_code: str
+bolt = Part(name="bolt", price=4.5, material="steel", quantity=100, tags=["fastener"])
+nut = Part(name="nut", price=1.5, material="brass", quantity=250, tags=["fastener"])
 
-class Company(BaseEntity):
-    name: str
-    address: Address
-    employee_count: int
+crate = Box(name="crate")
+crate.add(bolt, copy_items=False)
+crate.add(nut, copy_items=False)
 
-# Create nested structure
-address = Address(name='address1', street="123 Business St", city="Tech City", zip_code="12345")
-company = Company(name="Tech Corp", address=address, employee_count=50)
+store = Warehouse(name="store")
+store.add(crate, copy_items=False)
 
-# Access nested properties
-print(company.address.city)  # "Tech City"
-
-# Serialize with nesting
-data = company.to_dict()
-print(data["address"]["city"])  # "Tech City"
+assert store["crate"]["bolt"] is bolt
+assert len(crate) == 2
 ```
 
-### Serialization and Deserialization
+`add` stores a **copy** by default, so `add(bolt)` would leave you holding a different object
+from the one in the container -- and `store.add(crate)` would copy the crate and everything in
+it. `copy_items=False` stores the object itself, which is what you want when the variable and the
+container should stay the same thing:
 
 ```python
-# Serialize to dict
-person_dict = person1.to_dict()
-print(person_dict)
-# {'name': 'Alice', 'isactive': True, 'age': 30, 'email': 'default@example.com', 'type': 'Person'}
+scratch = Box(name="scratch")
+scratch.add(bolt)                              # a copy this time
 
-# Deserialize from dict
-person_copy = Person.from_dict(person_dict)
-print(person_copy.name)  # "Alice"
-
-# Container serialization
-people_data = people.to_dict()
-print(people_data["items"]["Alice"]["age"])  # 30
-
-# Container deserialization
-people_copy = MyContainer.from_dict(people_data)
+bolt.price = 9.0
+assert scratch.get("bolt").price == 4.5        # unaffected
+bolt.price = 4.5
 ```
 
-## Project Management
-
-### Basic Project
+### Querying
 
 ```python
-from msb_arch.super import Project
-from msb_arch.base import BaseEntity
-
-class Task(BaseEntity):
-    title: str
-    priority: int
-    completed: bool = False
-
-class TaskProject(Project):
-    _item_type = Task
-
-    def create_item(self, item_code="TASK"):
-        self.add_item(Task(name=item_code, title=f"New {item_code}", priority=1))
-    
-    def from_dict():
-        pass
-
-# Create project
-project = TaskProject(name="my_tasks")
-
-# Add tasks
-task1 = Task(name='DesignSystemTask', title="Design system", priority=3)
-project.add_item(task1)
-project.create_item("Implement")  # Creates and adds automatically
-
-# Manage tasks
-project.activate_item("DesignSystemTask")
-high_priority = project.get_active_items()
-print(len(high_priority))  # 2
+assert [part.name for part in crate.get_by_value({"material": "brass"})] == ["nut"]
+assert sorted(crate.get_all()) == ["bolt", "nut"]
+assert crate.get("bolt").tags == ["fastener"]
 ```
 
-### Project Operations
+### An operation of your own
 
 ```python
-# Bulk operations
-project.deactivate_all()
-inactive = project.get_inactive_items()
-print(len(inactive))  # 2
+class Costing(Super):
+    OPERATION = "cost"
 
-# Query by attributes
-urgent_tasks = project._items.get_by_value({"priority": 3})
-print(len(urgent_tasks))  # 1
+    def _cost_part(self, obj, attributes):
+        return obj.line_total()
 
-# Project serialization
-project_data = project.to_dict()
-print(project_data["name"])  # "my_tasks"
-print(len(project_data["items"]))  # 2
+    def _cost_box(self, obj, attributes):
+        return sum(self._cost_part(part, attributes) for part in obj.get_items())
+
+    def _cost_warehouse(self, obj, attributes):
+        return sum(self._cost_box(box, attributes) for box in obj.get_items())
+
+class Depot(Manipulator):
+    pass
+
+depot = Depot(base_classes=[Part, Box, Warehouse])
+depot.register_operation(Costing(depot))
+
+assert depot.cost(bolt) == 450.0              # 4.5 x 100
+assert depot.cost(crate) == 825.0              # and 1.5 x 250 for the nuts
+assert depot.cost(store) == 825.0
 ```
 
-## Operation Handling with Super
+One handler per type, each named so dispatch finds it. Adding a fourth type means adding a fourth
+handler and changing nothing else.
 
-### Calculator Operations
+## Reading and writing without writing code
+
+`inspect`, `configure`, `save` and `load` are registered for you.
 
 ```python
-from msb_arch.super import Super
+assert depot.inspect(bolt, get_price=None) == 4.5
+depot.configure(bolt, set_price=5.0)
+assert bolt.price == 5.0
 
-class Calculator(Super):
-    _operation = "calculate" # if you use without Manipulator
-
-    def _calculate_add(self, obj, attributes):
-        """Add two numbers"""
-        return attributes.get("a", 0) + attributes.get("b", 0)
-
-    def _calculate_multiply(self, obj, attributes):
-        """Multiply two numbers"""
-        return attributes.get("a", 1) * attributes.get("b", 1)
-
-    def _calculate_power(self, obj, attributes):
-        """Calculate power"""
-        return attributes.get("base", 1) ** attributes.get("exp", 1)
-
-# Use calculator
-calc = Calculator()
-
-# Execute operations
-result1 = calc.execute(None, {"method": "add", "a": 5, "b": 3})
-print(result1["result"])  # 8
-
-result2 = calc.execute(None, {"method": "power", "base": 2, "exp": 3})
-print(result2["result"])  # 8
+depot.save(store, path="store.json")
+restored = depot.load(store, path="store.json")
+assert restored == store
+assert depot.cost(restored) == 875.0           # 5.0 x 100 + 1.5 x 250
 ```
 
-### Data Processor
+Reaching one member of a collection, rather than the collection:
 
 ```python
-from msb_arch.super import Super
-
-class DataProcessor(Super):
-    _operation = 'process'
-    
-    def _process_string_upper(self, obj, attributes):
-        return str(obj).upper()
-
-    def _process_string_lower(self, obj, attributes):
-        return str(obj).lower()
-
-    def _process_list_sort(self, obj, attributes):
-        if isinstance(obj, list):
-            return sorted(obj)
-        return obj
-
-processor = DataProcessor()
-
-# Process different data types
-upper_result = processor.execute("hello", {"method": "string_upper"})
-print(upper_result["result"])  # "HELLO"
-
-sort_result = processor.execute([3, 1, 4, 1, 5], {"method": "list_sort"})
-print(sort_result["result"])  # [1, 1, 3, 4, 5]
+assert depot.inspect(crate, name="nut", get_price=None) == 1.5
 ```
 
-## Manipulator Orchestration
+## A pipeline
 
-### Basic Setup
+Steps that feed each other, given as data.
 
 ```python
-from msb_arch.mega import Manipulator
-from msb_arch.super import Super
-
-class DataProcessor(Super):
-    OPERATION = 'process' # if you Manipulator
-    
-    def _process_string_upper(self, obj, attributes):
-        return str(obj).upper()
-
-    def _process_string_lower(self, obj, attributes):
-        return str(obj).lower()
-
-    def _process_list_sort(self, obj, attributes):
-        if isinstance(obj, list):
-            return sorted(obj)
-        return obj
-    
-class Calculator(Super):
-    OPERATION = "calculate" # if you Manipulator
-
-    def _calculate_add(self, obj, attributes):
-        """Add two numbers"""
-        return attributes.get("a", 0) + attributes.get("b", 0)
-
-    def _calculate_multiply(self, obj, attributes):
-        """Multiply two numbers"""
-        return attributes.get("a", 1) * attributes.get("b", 1)
-
-    def _calculate_power(self, obj, attributes):
-        """Calculate power"""
-        return attributes.get("base", 1) ** attributes.get("exp", 1)
-
-# Create manipulator
-manipulator = Manipulator()
-
-# Register operations
-manipulator.register_operation(Calculator())
-manipulator.register_operation(DataProcessor())
-
-# Process requests
-add_result = manipulator.process_request({
-    "operation": "calculate",
-    "obj": int,
-    "attributes": {"method": "add", "a": 10, "b": 20}
+outcome = depot.pipeline({
+    "written": {"operation": "save", "obj": store, "path": "snapshot.json"},
+    "read":    {"operation": "load", "obj": store, "path": "snapshot.json",
+                "after": ["written"]},
+    "total":   {"operation": "cost", "obj": "@read"},
 })
-print(add_result["result"])  # 30
 
-upper_result = manipulator.process_request({
-    "operation": "process",
-    "obj": "world",
-    "attributes": {"method": "string_upper"}
-})
-print(upper_result["result"])  # "WORLD"
+assert outcome.output == 875.0
+assert outcome.failed == []
+assert list(outcome) == ["written", "read", "total"]
 ```
 
-### Using Facade Methods
+`after` is for order without a value: the file has to exist before it is read.
+
+### When a step fails
 
 ```python
-# Facade methods are created automatically
-calc_result = manipulator.calculate(int, a=5, b=7, method="multiply")
-print(calc_result)  # 35
+outcome = depot.pipeline({
+    "missing": {"operation": "load", "obj": store, "path": "absent.json"},
+    "below":   {"operation": "cost", "obj": "@missing"},
+    "elsewhere": {"operation": "cost", "obj": crate},
+}, raise_on_error=False)
 
-process_result = manipulator.process(obj="hello world", method="string_lower")
-print(process_result)  # "hello world"
+assert outcome.failed == ["missing", "below"]
+assert outcome["below"]["skipped"] is True
+assert outcome.of("elsewhere") == 875.0
 ```
 
-### Batch Processing
+The branch below the failure is skipped; the independent one still runs.
+
+### Two branches at once
 
 ```python
-# Process multiple operations
-batch_request = {
-    "calc1": {
-        "operation": "calculate",
-        "obj": int,
-        "attributes": {"method": "add", "a": 1, "b": 2}
-    },
-    "calc2": {
-        "operation": "calculate",
-        "obj": int,
-        "attributes": {"method": "multiply", "a": 3, "b": 4}
-    },
-    "process1": {
-        "operation": "process",
-        "obj": "TEST",
-        "attributes": {"method": "string_lower"}
-    }
+plan = {
+    "left":  {"operation": "cost", "obj": crate},
+    "right": {"operation": "cost", "obj": store},
 }
-
-batch_results = manipulator.process_request(batch_request)
-print(batch_results["calc1"]["result"])    # 3
-print(batch_results["calc2"]["result"])    # 12
-print(batch_results["process1"]["result"]) # "test"
+assert depot.pipeline(plan, concurrent=True).failed == []
 ```
 
-## Complex Application Example
+Both wait for nothing, so they share a stage.
 
-### E-commerce System
+## A project
+
+A named set of entities with a factory.
 
 ```python
-from msb_arch.base import BaseEntity, BaseContainer
-from msb_arch.super import Project, Super
-from msb_arch.mega import Manipulator
+from msb_arch import Project
 
-# Define entities
-class Product(BaseEntity):
-    name: str
-    price: float
-    category: str
-    stock: int
+class PartsProject(Project):
+    _item_type = Part
 
-class Customer(BaseEntity):
-    name: str
-    email: str
-    loyalty_points: int = 0
+    def create_item(self, item_code="P", isactive=True):
+        self.add_item(Part(name=item_code, price=1.0, material="steel",
+                           quantity=1, tags=[], isactive=isactive))
 
-class Order(BaseEntity):
-    customer: Customer
-    products: list[Product]
-    total: float
-    status: str = "pending"
+project = PartsProject(name="restock")
+project.create_item("washer")
+project.create_item("screw")
 
-class Products(BaseContainer[Product]):
-    pass
-
-class Customers(BaseContainer[Customer]):
-    pass
-
-class Orders(BaseContainer[Order]):
-    pass
-
-# Define operations
-class OrderProcessor(Super):
-    OPERATION = "order"
-
-    def _order_create(self, obj, attributes):
-        customer_name = attributes["customer"]
-        product_names = attributes["products"]
-        customer = obj["customers"].get(customer_name)
-        products = [obj["products"].get(name) for name in product_names]
-
-        if not customer or not all(products):
-            return False
-
-        total = sum(p.price for p in products)
-        order = Order(name='test', customer=customer, products=products, total=total)
-        return order
-
-    def _order_process_payment(self, obj, attributes):
-        order_id = attributes.get("order_id")
-        # Payment processing logic here
-        return f"Payment processed for order {order_id}"
-
-# Create system components
-products = Products(name="products")
-customers = Customers(name="customers")
-orders = Orders(name="orders")
-
-# Add sample data
-products.add(Product(name="Laptop", price=999.99, category="Electronics", stock=10))
-products.add(Product(name="Book", price=19.99, category="Education", stock=50))
-customers.add(Customer(name="John Doe", email="john@example.com", loyalty_points=100))
-
-# Create manipulator and register operations
-manipulator = Manipulator()
-manipulator.register_operation(OrderProcessor())
-
-# Set managing objects
-manipulator.set_managing_object({"products": products, "customers": customers, "orders": orders})
-
-
-# Create order
-order_result = manipulator.order(
-    customer="John Doe",
-    products=["Laptop", "Book"],
-    method="create",
-    raise_on_error=False
-)
-
-assert order_result["status"], order_result.get("error", "Unknown error")
-order = order_result["result"]
-assert order.total == 1019.98            # 999.99 + 19.99
-orders.add(order)
+assert len(project.get_items()) == 2
+assert project.get_item("washer").material == "steel"
 ```
 
-## Error Handling Examples
-
-### Validation Errors
+With a managing object set, a request may leave `obj` out:
 
 ```python
-try:
-    # This will fail validation
-    invalid_person = Person(name="", age=-5)
-except ValueError as e:
-    print(f"Validation error: {e}")
+depot.set_managing_object(project)
+assert depot.inspect(get_name=None) == "restock"
+depot.set_managing_object(None)
+```
+
+## Watching a session
+
+```python
+from msb_arch import RequestJournal, RequestMetrics
+
+depot.add_interceptor(RequestMetrics())
+depot.add_interceptor(RequestJournal(fingerprints=True))
+
+depot.inspect(bolt, get_price=None)
+depot.configure(bolt, set_price=6.0)
+depot.configure(bolt, set_price=6.0)           # the same value again
+
+assert depot.metrics()["configure"]["calls"] == 2
+assert len(depot.history("bolt")) == 3
+assert len(depot.history(changed_only=True)) == 1
+```
+
+Only one of the three requests changed anything: reading does not, and writing the value an
+object already holds does not either.
+
+### Replaying it
+
+```python
+journal = depot.journal()
+depot.remove_interceptor(journal)              # or the replay records itself
+
+bolt.price = 4.5
+assert depot.replay(journal).failed == []
+assert bolt.price == 6.0
+```
+
+### Refusing a request
+
+An interceptor may answer without calling the next one.
+
+```python
+def read_only(request, call_next):
+    if request["operation"] == "configure":
+        return {"status": False, "object": None, "method": None, "result": None,
+                "error": "read-only mode", "error_type": "RequestError"}
+    return call_next(request)
+
+depot.add_interceptor(read_only)
+response = depot.configure(bolt, set_price=99.0, raise_on_error=False)
+
+assert response["status"] is False
+assert bolt.price == 6.0
+depot.remove_interceptor(read_only)
+```
+
+## Asking what the application can do
+
+Everything here is derived, so a menu built from it cannot go stale.
+
+```python
+model = depot.describe_model()
+assert model["Box"]["holds"]["items"] == ["Part"]
+assert model["Warehouse"]["container"] is True
+assert depot.dependents_of("Part") == ["Box", "Warehouse"]
+```
+
+The handlers a new operation over that model would need:
+
+```python
+source = depot.scaffold("audit")
+assert "def _audit_part(" in source
+assert "def _audit_box(" in source
+```
+
+## Versioning a model
+
+```python
+class Fastener(BaseEntity):
+    SCHEMA_VERSION = 2
+    price: float                   # this was 'cost' in version 1
+
+    @classmethod
+    def migrate(cls, data, from_version):
+        if from_version == 1:
+            data["price"] = data.pop("cost")
+        return data
+
+old = {"name": "f", "isactive": True, "type": "Fastener", "schema_version": 1, "cost": 3.0}
+assert Fastener.from_dict(old).price == 3.0
+```
+
+A class that has never versioned itself writes exactly what it wrote before versioning existed,
+and data with no version reads as version 1.
+
+## Serialization round trips
+
+```python
+import json
+
+class Assembly(BaseEntity):
+    parts: List[Part]
+    spare: Optional[Part]
+    codes: Tuple[int, ...]
+
+assembly = Assembly(name="a", parts=[bolt], spare=None, codes=(1, 2))
+data = json.loads(json.dumps(assembly.to_dict()))
+restored = Assembly.from_dict(data)
+
+assert restored == assembly
+assert isinstance(restored.codes, tuple)     # JSON had a list; the annotation says tuple
+assert restored.parts[0].price == 6.0
+```
+
+The annotation is the schema: JSON has no tuple, so the declared type is what says the list was
+one.
+
+## Errors
+
+```python
+from msb_arch import errors
 
 try:
-    # Type mismatch
-    wrong_type = Person(name="Test", age="not_a_number")
-except TypeError as e:
-    print(f"Type error: {e}")
+    Part(name="bad", price=-1.0, material="steel", quantity=1, tags=[])
+except errors.ConstraintError as error:
+    assert "must be positive" in str(error)
+
+try:
+    depot.load(store, path="nowhere.json")
+except errors.NotFoundError:
+    pass
+
+response = depot.configure(bolt, no_such_method=None, raise_on_error=False)
+assert response["status"] is False
 ```
 
-### Operation Errors
+A facade raises the kind of failure that happened. Ask for the response instead when you would
+rather read it.
 
-```python
-class Calculator(Super):
-    OPERATION = "calculate"
+## Behind a web API
 
-    def _calculate_add(self, obj, attributes):
-        return attributes.get("a", 0) + attributes.get("b", 0)
-
-manipulator.register_operation(Calculator(manipulator))
-
-# An unregistered operation is reported, not raised
-result = manipulator.process_request({"operation": "nonexistent", "attributes": {}})
-assert result["status"] is False
-assert "error" in result
-
-# raise_on_error=False gives the whole response back instead of raising
-result = manipulator.calculate(a=1, b=2, method="invalid_method", raise_on_error=False)
-assert result["status"] is False
-```
-
-## Performance Optimization
-
-### Using Caching
-
-```python
-# Enable caching for entities
-person = Person(name="Cached", age=25, use_cache=True)
-
-# First serialization
-data1 = person.to_dict()
-
-# Modify and serialize again (uses cache if no changes)
-person.age = 26
-data2 = person.to_dict()
-
-# Clear cache when needed
-person._invalidate_cache()
-```
-
-### Batch Operations for Performance
-
-```python
-# Instead of ten individual calls
-results = [manipulator.calculate(a=i, b=i + 1, method="add") for i in range(10)]
-assert results[3] == 7
-
-# Send them as one batch, keyed by an identifier of your choosing
-batch = {
-    f"calc_{i}": {"operation": "calculate", "attributes": {"method": "add", "a": i, "b": i + 1}}
-    for i in range(10)
-}
-batch_results = manipulator.process_request(batch)
-assert batch_results["calc_3"]["result"] == 7
-```
-
-## Integration with External Systems
-
-### REST API Example
+The request already is data, so the translation is a rename.
 
 ```text
-import json
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-# Framework setup
-manipulator = Manipulator()
-# ... register operations ...
+@app.post("/api/request")
+def handle():
+    incoming = request.get_json()
+    response = depot.process_request({
+        "operation": incoming["operation"],
+        "obj": depot.get_managing_object(),
+        "attributes": incoming.get("attributes", {}),
+    })
+    return jsonify(response), 200 if response["status"] else 400
 
-@app.route('/api/operation', methods=['POST'])
-def handle_operation():
-    try:
-        req_data = request.get_json()
-
-        # Convert to framework format
-        fw_request = {
-            "operation": req_data["operation"],
-            "obj": req_data.get("obj"),
-            "attributes": req_data.get("attributes", {})
-        }
-
-        # Process with framework
-        result = manipulator.process_request(fw_request)
-
-        # Convert back to API format
-        if result["status"]:
-            return jsonify({
-                "success": True,
-                "data": result["result"],
-                "method": result["method"]
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "error": result["error"]
-            }), 400
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-if __name__ == '__main__':
-    app.run(debug=True)
+@app.post("/api/pipeline")
+def run_plan():
+    return jsonify(dict(depot.pipeline(request.get_json(), raise_on_error=False)))
 ```
 
-These examples demonstrate the flexibility and power of the MSB Framework for building complex, maintainable applications with strong typing, validation, and operation orchestration.
+A plan is data too, so a client can post one and get every step's response back.

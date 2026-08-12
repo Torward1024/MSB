@@ -13,6 +13,156 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.3.0] - 2026-08-12
+
+The release that finishes the 1.0 roadmap: pipelines, a derived model graph, built-in `save` and
+`load`, scaffolding, and the first step of lineage. Plus six bugs, a sweep of every hot path, and
+the documentation rewritten.
+
+Nothing on the public surface changed meaning. One name is deprecated.
+
+### Added
+
+- **Pipelines.** Several requests that feed each other, in one call, taking data — the same
+  convention as `process_request` and `batch`:
+
+  ```python
+  manipulator.pipeline({
+      "loaded":  {"operation": "load",    "obj": thing,     "path": "in.json"},
+      "checked": {"operation": "inspect", "obj": "@loaded", "get": "value"},
+      "written": {"operation": "save",    "obj": "@loaded", "path": "out.json"},
+  })
+  ```
+
+  A step is a request with three additions: `"@name"` anywhere means what that step produced,
+  `after` waits for a step without using its value, and any key that is not `operation`, `obj`,
+  `method` or `after` is an attribute.
+
+  Over a batch it adds exactly three things: the order the edges imply, substitution of what a
+  step produced, and skipping the branch below a failure. Every step is one `process_request`, so
+  it meets the interceptors, the journal and the metrics like any other.
+
+  Steps that wait for nothing run together with `concurrent=True`, or `await apipeline(plan)`
+  from inside an event loop: two independent 0.3 s steps take 0.31 s against 0.61 s in sequence.
+
+  `manipulator.pipeline()` with no plan returns a draft that writes one by calling the
+  operations. It produces a plan and hands it back to `pipeline`; there is one execution path and
+  the draft is not it.
+
+- **`save` and `load` as built-in operations.** JSON over `to_dict`, written atomically —
+  a temporary file beside the target, then a rename — so an interrupted write leaves the previous
+  file rather than a truncated one. The format is a default: register your own `save` and it
+  takes over. `load` accepts `kind` as a class or as a name, which is how a type arrives in a
+  plan or over a wire.
+
+- **A derived model graph.** `manipulator.describe_model()` reports which type holds which, and
+  the reverse — `held_by`, the direction nothing in the code answers and every caller asks in.
+  `dependents_of(name)` walks it transitively. Read from the annotations, so a field added to a
+  class changes the answer. Reachable as a request: `catalogue(method="model")`.
+
+- **Scaffolding.** `manipulator.scaffold("measure")` returns the source of a `Super` with one
+  handler per type in the model: containers get a working walk over their items, entities get a
+  stub that raises. The names are the ones dispatch looks for, which is the part worth
+  generating.
+
+- **`revision` and `fingerprint()`.** Two answers to "did this change", with different costs.
+  `revision` counts writes to one object and costs an increment on the path that already
+  invalidates the cache. `fingerprint()` hashes the whole subtree, costs one serialisation, and
+  holds across processes.
+
+- **The session, through the orchestrator.** `manipulator.journal()`, `history(name,
+  changed_only)`, `metrics()` and `replay(journal)`. A journal is an interceptor the orchestrator
+  already holds, so a caller need not keep its own reference. `RequestJournal(fingerprints=True)`
+  records a hash either side of each request, so the journal can say which requests actually
+  changed something.
+
+- **`error_type` in a failed response.** The name of the exception class — a name, not an
+  exception, so a response stays data. A facade re-raises the kind of failure that happened, so a
+  caller can tell a missing file from a corrupt one without reading the message.
+
+- **`apipeline`**, the `a`-prefixed twin `pipeline` was missing.
+
+### Changed
+
+- **`load` answers with the object** rather than `{"object": ...}`, so a pipeline step reading a
+  file hands the object straight to the next step. It never shipped in another shape.
+- **Routine work says nothing at INFO.** Six messages moved to DEBUG: initialising a project,
+  reading its configuration, a nested operation, registering a method, setting the managing
+  object, updating the registry. A check counts what the library says while building, serialising
+  and reading a container of a thousand items, and expects nothing.
+- **Every numeric check refuses NaN**, and a `bool` stops being a number to them.
+
+### Deprecated
+
+- **`RequestJournal.replay(manipulator)`** — use `manipulator.replay(journal)`. The orchestrator
+  is what runs requests, and replaying a session is running a plan. The old name warns, works
+  unchanged, and goes in 2.0.
+
+### Fixed
+
+- **A cached container did not see a change to an item it was built with.** Items handed to the
+  constructor were never adopted, so writing to one did not invalidate the container's cached
+  mapping and `to_dict` went on reporting the value the item used to hold. Silent, and only with
+  `use_cache=True`. Items added later were adopted and worked, which is why nothing caught it.
+- **NaN passed or failed depending on how a rule was spelled.** `value <= 0` is false for NaN, so
+  `Positive()` accepted it; `not 0 <= value <= 1` is true, so `Range()` refused it.
+- **`load(kind="Item")` failed** on `'str' object has no attribute '__name__'`. A name is now
+  looked up among the model's own types, and refused when two of them answer to it.
+- **`"after": "written"`** iterated the string and waited for steps called `w`, `r`, `i`.
+- **A step named with a dot** could not be referred to, because the dot was split before the name
+  was looked for.
+- **`pipeline(concurrent=True)` inside a running event loop** raised asyncio's own error about
+  asyncio. It now says to await `apipeline`, which is the fix.
+- **Saving to a directory** surfaced whatever the operating system said about a failed rename, in
+  whatever language it was configured for.
+
+### Performance
+
+Everything that recomputed per object what is decided per class. Medians of paired samples, taken
+in one pass against the tree before this work:
+
+| | Before | After |
+| --- | --- | --- |
+| `describe_operations` | 112 ms | 12.8 µs |
+| `order_handlers` | 16.1 ms | 4.6 µs |
+| `describe_model` | 150 µs | 1.0 µs |
+| `scaffold` | 111 µs | 19.5 µs |
+| Build an entity | 22.0 µs | 8.3 µs |
+| `from_dict`, container of 200 | 9216 µs | 4703 µs |
+| `to_dict`, container of 200 | 1919 µs | 770 µs |
+| `clone` | 81.9 µs | 46.5 µs |
+| `add` | 78.7 µs | 43.1 µs |
+| Equality | 9.7 µs | 3.4 µs |
+| `inspect` | 25.0 µs | 7.1 µs |
+| `configure` | 30.3 µs | 16.0 µs |
+| Pipeline of 5, chained | 103 µs | 70.8 µs |
+| `_check_type` on a generic | 10.8 µs | 4.1 µs |
+
+What changed: the catalogue parsed the source of every registered class on every call; signatures
+were read per call; annotations were resolved per object; the validator for a field was looked up
+per value; `to_dict` asked of every value whether it was one of four container types before
+noticing it was a number; adoption did the same. The four shapes most models are made of —
+`Optional[T]`, `List[T]`, `Set[T]`, `Dict[K, V]` — now compile into one predicate, as a fast path
+only: a refusal still goes through the structural walk so the message names the element that
+failed, and a test holds the two to each other over 24 hints and 30 values.
+
+### Documentation
+
+Every page rewritten: what a thing does, how, why where the why is not obvious, and an example
+where one helps. The examples use parts, widgets and a workshop, so nothing turns on knowing the
+domain MSB was first written for. `README.md` names the one project using MSB, and that is the
+only mention of it.
+
+### Upgrading from 1.2.0
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| `DeprecationWarning: RequestJournal.replay is deprecated` | Replaying moved to the orchestrator | Call `manipulator.replay(journal)`. The old name works until 2.0 |
+| A `load` result no longer has `["object"]` | `load` answers with the object itself | Drop the subscript |
+| A `Positive()` field that accepted NaN now raises | NaN is refused by every numeric check | Was almost certainly a bug in the caller; if NaN is meant, use `Predicate` |
+| A cached container now reports a changed item | Items given to the constructor are adopted | Nothing. The old answer was stale |
+| A response has an extra `error_type` key | Facades re-raise the kind of failure | Nothing unless you compare whole responses |
+
 ## [1.2.0] - 2026-08-11
 
 ### Added
@@ -68,7 +218,7 @@ statement has since been overtaken, a note says where it was resolved.
   general checker used by `set` and item assignment, because the first reached only half the
   routes to an attribute. There is a test that goes through all three.
 
-  Reported from pAstroCORE, where adding a space telescope with `pitch_range=(0, 90)` failed.
+  Reported downstream, where adding an object with `pitch_range=(0, 90)` failed.
 
 ## [1.1.1] - 2026-08-10
 
@@ -84,7 +234,7 @@ statement has since been overtaken, a note says where it was resolved.
   Nothing is written while the version is 1, so a file saved by an application that never
   touches this is byte for byte what it always was.
 
-  Found by pAstroCORE, whose project class is exactly the thing worth versioning before its
+  Found downstream, where the project class is exactly the thing worth versioning before its
   storage format changes.
 
 ### Upgrading from 1.1.0
@@ -117,7 +267,7 @@ statement has since been overtaken, a note says where it was resolved.
           return obj.get_entry if isinstance(obj, Registry) else super()._nested_getter(obj)
   ```
 
-  Predicted under P3 before the built-ins existed and confirmed by pAstroCORE, whose ten
+  Predicted under P3 before the built-ins existed and confirmed downstream, where ten
   container handlers exist for exactly this and could not adopt the built-ins without losing it.
 
 ### Changed
@@ -524,7 +674,7 @@ down the contract `Super` subclasses were already relying on.
   wiped attributes or removed items, and the item operators disagreed the same way. An
   `isinstance` check that should accept either must now name `Serializable`; naming
   `BaseEntity` no longer matches a container. There were seven such checks inside the
-  framework and none in pAstroCORE.
+  framework and none downstream.
 - **`BaseContainer.to_dict` takes `handle_cyclic_refs` keyword-only**, because
   `Serializable` declares `to_dict(_seen)` and a positional first argument would mean two
   different things depending on the class.
@@ -552,7 +702,7 @@ down the contract `Super` subclasses were already relying on.
 - `Serializable`, exported from `msb_arch`, for `isinstance` checks and for annotations that
   accept an entity or a container.
 - A "Writing your own Super" section in the module guide. `_get_methods`,
-  `_validate_and_apply_method` and `_do_nested` are called 22, 33 and 9 times by pAstroCORE
+  `_validate_and_apply_method` and `_do_nested` are called 22, 33 and 9 times downstream
   and never by the framework: they are the integration surface, the single underscore means
   protected rather than private, and nothing said so. The class docstring lists them as
   extension points.
@@ -717,7 +867,7 @@ it is a minor version bump rather than a patch. Read
 
 - The five `__del__` finalizers described above.
 - `Super._make_hashable`, `Super._update_cache` and `BaseContainer.__getattribute__`.
-- `ScheduleManipulator` and `ScheduleProject` log strings copy-pasted from pAstroCORE,
+- `ScheduleManipulator` and `ScheduleProject` log strings copy-pasted from the application,
   which existed only inside the removed finalizers.
 
 ### Changed
