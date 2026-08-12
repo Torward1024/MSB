@@ -24,6 +24,12 @@ class Items(BaseContainer[Item]):
     pass
 
 
+class OnlyThisOne(BaseEntity):
+    """A name no other test module declares, for the tests about naming a type."""
+
+    value: int
+
+
 @pytest.fixture
 def item():
     return Item(name="one", value=7)
@@ -162,3 +168,51 @@ def test_refusing_to_overwrite_when_asked_to(manipulator, item, tmp_path):
 
     with pytest.raises(RequestError):
         manipulator.save(item, path=str(path), overwrite=False)
+
+
+def test_a_type_can_be_named_by_a_string(manipulator, tmp_path):
+    """How a type arrives in a plan or over a wire. It used to fail on `'str' has no __name__`.
+
+    The class is named uniquely on purpose: several test modules declare an `Item`, and a name
+    that two imported types answer to is refused rather than guessed between. The test below
+    checks that refusal.
+    """
+    only_one_of_these = OnlyThisOne(name="single", value=7)
+    path = tmp_path / "item.json"
+    manipulator.save(only_one_of_these, path=str(path))
+
+    restored = result_of(manipulator.load(None, path=str(path), kind="OnlyThisOne"))
+    assert isinstance(restored, OnlyThisOne) and restored.value == 7
+
+
+def test_a_name_two_types_answer_to_is_refused_rather_than_guessed(manipulator, item, tmp_path):
+    """Several modules in this suite declare an `Item`, which is exactly the situation."""
+    path = tmp_path / "item.json"
+    manipulator.save(item, path=str(path))
+
+    with pytest.raises(RequestError, match="are called 'Item'"):
+        manipulator.load(None, path=str(path), kind="Item")
+
+
+def test_a_name_nothing_answers_to_says_so(manipulator, item, tmp_path):
+    path = tmp_path / "item.json"
+    manipulator.save(item, path=str(path))
+
+    with pytest.raises(RequestError, match="Sasquatch"):
+        manipulator.load(None, path=str(path), kind="Sasquatch")
+
+
+def test_something_that_is_not_a_type_at_all(manipulator, item, tmp_path):
+    with pytest.raises(RequestError):
+        manipulator.load(None, path=str(tmp_path / "x.json"), kind=42)
+
+
+def test_writing_to_a_directory_says_so(manipulator, item, tmp_path):
+    """It used to surface as whatever the operating system said about a failed rename, in
+    whatever language it was configured for."""
+    directory = tmp_path / "somewhere"
+    directory.mkdir()
+
+    with pytest.raises(RequestError, match="is a directory"):
+        manipulator.save(item, path=str(directory))
+    assert not list(tmp_path.glob("*.writing"))

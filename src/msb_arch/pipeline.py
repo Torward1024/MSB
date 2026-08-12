@@ -114,7 +114,10 @@ class _Step:
         self.name = name
         self.operation = operation
         self.method = entry.get("method")
-        self.after = [str(waited).lstrip("@") for waited in entry.get("after") or []]
+        waits = entry.get("after") or []
+        if isinstance(waits, str):
+            waits = [waits]                  # one name, not a string to iterate letter by letter
+        self.after = [str(waited).lstrip("@") for waited in waits]
         self.obj = entry["obj"] if "obj" in entry else (f"@{previous}" if previous else None)
 
         attributes = dict(entry.get("attributes") or {})
@@ -171,7 +174,9 @@ class _Plan:
     def requires(self, name: str) -> List[str]:
         """Return the steps one step waits for, directly."""
         step = self._steps[name]
-        found = _referenced(step.obj) | _referenced(step.attributes) | set(step.after)
+        known = set(self._steps)
+        found = (_referenced(step.obj, known) | _referenced(step.attributes, known)
+                 | set(step.after))
         return sorted(found - {name})
 
     def order(self) -> List[List[str]]:
@@ -271,8 +276,9 @@ class _Plan:
             return None
 
         step = self._steps[name]
+        known = set(self._steps)
         try:
-            obj = _substitute(step.obj, produced)
+            obj = _substitute(step.obj, produced, known)
             if _is_reference(step.obj) and obj is None:
                 raise RequestError(
                     f"Step '{name}' was to run on what '{step.obj[1:]}' produced, and it produced "
@@ -280,7 +286,7 @@ class _Plan:
                     "inspect -- reports what the methods returned rather than handing the object "
                     "on, so name the object this step runs on.")
             request = {"operation": step.operation, "obj": obj,
-                       "attributes": _substitute(step.attributes, produced)}
+                       "attributes": _substitute(step.attributes, produced, known)}
             if step.method:
                 request["method"] = step.method
             return request
@@ -337,18 +343,34 @@ def _is_reference(value: Any) -> bool:
     return isinstance(value, str) and value.startswith("@") and not value.startswith("@@")
 
 
-def _referenced(value: Any) -> Set[str]:
+def _split(reference: str, known: Optional[Set[str]] = None):
+    """Return `(step name, key)` for a reference, preferring a name that exists.
+
+    Notes:
+        - A step may legitimately be called `totals.by_month`. Splitting on the dot first would
+          make `"@totals.by_month"` mean "the by_month result of step totals", which is a
+          different thing and, worse, a plausible one. Looking among the names that exist
+          resolves it the only way that cannot surprise anybody.
+    """
+    body = reference[1:]
+    if known is not None and body in known:
+        return body, ""
+    name, _, key = body.partition(".")
+    return name, key
+
+
+def _referenced(value: Any, known: Optional[Set[str]] = None) -> Set[str]:
     """Return the names of every step referred to anywhere inside a value."""
     if _is_reference(value):
-        return {value[1:].split(".", 1)[0]}
+        return {_split(value, known)[0]}
     if isinstance(value, dict):
-        return set().union(*(_referenced(item) for item in value.values())) if value else set()
+        return set().union(*(_referenced(item, known) for item in value.values())) if value             else set()
     if isinstance(value, (list, tuple, set)):
-        return set().union(*(_referenced(item) for item in value)) if value else set()
+        return set().union(*(_referenced(item, known) for item in value)) if value else set()
     return set()
 
 
-def _substitute(value: Any, produced: Dict[str, Any]) -> Any:
+def _substitute(value: Any, produced: Dict[str, Any], known: Optional[Set[str]] = None) -> Any:
     """Replace every reference with what the step it names produced.
 
     Notes:
@@ -365,7 +387,7 @@ def _substitute(value: Any, produced: Dict[str, Any]) -> Any:
             return value[1:]
         if not value.startswith("@"):
             return value
-        name, _, key = value[1:].partition(".")
+        name, key = _split(value, known)
         found = produced.get(name)
         if not key:
             return found
@@ -376,11 +398,11 @@ def _substitute(value: Any, produced: Dict[str, Any]) -> Any:
         return narrowed.get("result") if isinstance(narrowed, dict) and "result" in narrowed \
             else narrowed
     if isinstance(value, dict):
-        return {key: _substitute(item, produced) for key, item in value.items()}
+        return {key: _substitute(item, produced, known) for key, item in value.items()}
     if isinstance(value, list):
-        return [_substitute(item, produced) for item in value]
+        return [_substitute(item, produced, known) for item in value]
     if isinstance(value, tuple):
-        return tuple(_substitute(item, produced) for item in value)
+        return tuple(_substitute(item, produced, known) for item in value)
     return value
 
 

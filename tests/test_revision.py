@@ -81,3 +81,38 @@ def test_it_is_not_serialised():
 
     assert "revision" not in item.to_dict() and "_revision" not in item.to_dict()
     assert Item.from_dict(item.to_dict()).revision == 0
+
+
+# --- what a cache must not do -------------------------------------------------------------
+
+def test_a_cached_container_sees_a_change_to_an_item_it_was_built_with():
+    """Items given to the constructor are owned exactly as items added later are.
+
+    They were not, so writing to one did not invalidate the container's cached mapping and
+    `to_dict` went on reporting the old value -- silently, and only when caching was on.
+    """
+    box = Items(name="box", items={"i": Item(name="i", value=1)}, use_cache=True)
+    box.to_dict()                                   # fill the cache
+
+    box.get("i").value = 5
+
+    assert box.to_dict()["items"]["i"]["value"] == 5
+
+
+def test_the_same_holds_for_an_item_added_afterwards():
+    box = Items(name="box", use_cache=True)
+    box.add(Item(name="i", value=1))
+    box.to_dict()
+
+    box.get("i").value = 5
+
+    assert box.to_dict()["items"]["i"]["value"] == 5
+
+
+def test_a_fingerprint_follows_the_cache():
+    box = Items(name="box", items={"i": Item(name="i", value=1)}, use_cache=True)
+    before = box.fingerprint()
+
+    box.get("i").value = 5
+
+    assert box.fingerprint() != before

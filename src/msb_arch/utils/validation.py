@@ -34,6 +34,32 @@ def check_type(value, expected_type, name: str) -> None:
         logger.error("%s must be of type %s, got %s", name, expected_type, type(value))
         raise TypeValidationError(f"{name} must be of type {expected_type}, got {type(value)}")
 
+def _numeric(value: Any, name: str) -> float:
+    """Return a value that can be compared, or refuse it.
+
+    Args:
+        value (Any): What arrived.
+        name (str): The field, for the message.
+
+    Returns:
+        float: The value.
+
+    Raises:
+        TypeValidationError: If it is not a number.
+        ConstraintError: If it is NaN. Every comparison with NaN is false, so a check written
+            as `value <= 0` lets it through and a check written as `not 0 <= value` rejects it
+            -- the same value passing or failing depending on how the rule happens to be
+            spelled. It is refused here instead, once.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        logger.error("%s must be a number, got %s", name, type(value))
+        raise TypeValidationError(f"{name} must be a number, got {type(value)}")
+    if value != value:
+        logger.error("%s must be a number, got NaN", name)
+        raise ConstraintError(f"{name} must be a real number, got NaN")
+    return value
+
+
 def check_range(value: float, min_val: float, max_val: float, name: str) -> None:
     """Check if a numeric value is within a specified range.
 
@@ -57,9 +83,7 @@ def check_range(value: float, min_val: float, max_val: float, name: str) -> None
         ...
         ValueError: my_value must be between 0.0 and 10.0, got -1
     """
-    if not isinstance(value, (int, float)):
-        logger.error("%s must be a number, got %s", name, type(value))
-        raise TypeValidationError(f"{name} must be a number, got {type(value)}")
+    value = _numeric(value, name)
     if not min_val <= value <= max_val:
         logger.error("%s must be between %s and %s, got %s", name, min_val, max_val, value)
         raise ConstraintError(f"{name} must be between {min_val} and {max_val}, got {value}")
@@ -85,9 +109,7 @@ def check_positive(value: float, name: str) -> None:
         ...
         ValueError: my_value must be positive, got 0
     """
-    if not isinstance(value, (int, float)):
-        logger.error("%s must be a number, got %s", name, type(value))
-        raise TypeValidationError(f"{name} must be a number, got {type(value)}")
+    value = _numeric(value, name)
     if value <= 0:
         logger.error("%s must be positive, got %s", name, value)
         raise ConstraintError(f"{name} must be positive, got {value}")
@@ -142,9 +164,7 @@ def check_non_negative(value: float, name: str) -> None:
         ...
         ValueError: my_value must be non-negative, got -1.0
     """
-    if not isinstance(value, (int, float)):
-        logger.error("%s must be a number, got %s", name, type(value))
-        raise TypeValidationError(f"{name} must be a number, got {type(value)}")
+    value = _numeric(value, name)
     if value < 0:
         logger.error("%s must be non-negative, got %s", name, value)
         raise ConstraintError(f"{name} must be non-negative, got {value}")
@@ -198,9 +218,7 @@ def check_non_zero(value: float, name: str) -> None:
         ...
         ValueError: my_value must be non-zero, got 0.0
     """
-    if not isinstance(value, (int, float)):
-        logger.error("%s must be a number, got %s", name, type(value))
-        raise TypeValidationError(f"{name} must be a number, got {type(value)}")
+    value = _numeric(value, name)
     if value == 0:
         logger.error("%s must be non-zero, got %s", name, value)
         raise ConstraintError(f"{name} must be non-zero, got {value}")

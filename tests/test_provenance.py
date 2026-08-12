@@ -161,3 +161,21 @@ def test_the_old_way_still_works_and_warns(manipulator, item):
 
     assert item.value == 3
     assert len(responses) == 1
+
+
+# --- the other interceptor, reached the same way ------------------------------------------
+
+def test_metrics_are_asked_of_the_manipulator(manipulator, item):
+    from msb_arch import RequestMetrics
+
+    manipulator.add_interceptor(RequestMetrics())
+    manipulator.inspect(item, get="value")
+    manipulator.inspect(item, get="name")
+
+    assert manipulator.metrics()["inspect"]["calls"] == 2
+
+
+def test_no_metrics_registered_is_not_an_error(manipulator):
+    """Unlike a history, which is asked for because somebody wanted one: metrics are a number
+    that either exists or does not."""
+    assert manipulator.metrics() is None

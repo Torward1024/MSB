@@ -221,3 +221,36 @@ def test_the_validator_table_belongs_to_the_class_that_built_it():
     assert Child(name="c", value="text").value == "text"
     with pytest.raises(errors.TypeValidationError):
         Child(name="c", value=1)
+
+
+# --- the value every comparison is false about ---------------------------------------------
+
+@pytest.mark.parametrize("constraint", [Positive(), NonZero(), Range(0.0, 1.0)])
+def test_nan_is_refused_by_every_numeric_constraint(constraint):
+    """`value <= 0` lets NaN through and `not 0 <= value <= 1` rejects it, so the same value
+    passed or failed depending on how a rule happened to be spelled. It is refused once, in
+    the one place that turns a value into something comparable."""
+    with pytest.raises(errors.ConstraintError):
+        constraint.check(float("nan"), "size")
+
+
+def test_a_constrained_field_refuses_nan():
+    class Sized(BaseEntity):
+        size: Annotated[float, Positive()]
+
+    with pytest.raises(errors.ConstraintError):
+        Sized(name="s", size=float("nan"))
+
+
+def test_infinity_is_still_a_number():
+    """It compares, so every rule means what it says about it. Only NaN is the odd one."""
+    class Sized(BaseEntity):
+        size: Annotated[float, Positive()]
+
+    assert Sized(name="s", size=float("inf")).size == float("inf")
+
+
+def test_a_bool_is_not_a_number_for_a_constraint():
+    """True is 1 to Python, and a rule about a size should not accept it."""
+    with pytest.raises(errors.TypeValidationError):
+        Positive().check(True, "size")

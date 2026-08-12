@@ -328,10 +328,16 @@ class Manipulator(ABC):
             return _Draft(self, name)
 
         prepared = _Plan(self, plan)
-        if concurrent:
-            import asyncio
+        if not concurrent:
+            return prepared.run(raise_on_error=raise_on_error)
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
             return asyncio.run(prepared.arun(raise_on_error=raise_on_error))
-        return prepared.run(raise_on_error=raise_on_error)
+        raise RequestError(
+            "pipeline(concurrent=True) starts an event loop, and one is already running here. "
+            "Await apipeline(plan) instead.")
 
     def scaffold(self, operation: str, roots: Optional[List[type]] = None,
                  only: Optional[List[str]] = None) -> str:
@@ -361,6 +367,26 @@ class Manipulator(ABC):
 
         return stubs(self.describe_model(roots), operation, only=only)
 
+    async def apipeline(self, plan: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+                        raise_on_error: bool = True) -> Any:
+        """Run a plan from inside an event loop, with each stage's independent steps together.
+
+        Args:
+            plan (Union[Dict, Sequence]): The steps, as `pipeline` takes them.
+            raise_on_error (bool): As for `pipeline`.
+
+        Returns:
+            PipelineRun: The response of every step, keyed as the plan keyed them.
+
+        Notes:
+            - The `a`-prefixed twin every facade has, for the same reason: a caller already
+              inside a loop -- a server, a window -- cannot start another one.
+            - Always concurrent within a stage. A plan run one step at a time is `pipeline`.
+        """
+        from ..pipeline import _Plan
+
+        return await _Plan(self, plan).arun(raise_on_error=raise_on_error)
+
     def journal(self) -> Optional[Any]:
         """Return the request journal registered with this orchestrator, if there is one.
 
@@ -377,6 +403,31 @@ class Manipulator(ABC):
         for interceptor in self._interceptors:
             if isinstance(interceptor, RequestJournal):
                 return interceptor
+        return None
+
+    def metrics(self) -> Optional[Dict[str, Dict[str, Any]]]:
+        """Return what has been measured about the requests this orchestrator ran.
+
+        Returns:
+            Optional[Dict[str, Dict[str, Any]]]: What `RequestMetrics.snapshot` reports, or None
+                if no metrics interceptor is registered.
+
+        Notes:
+            - Metrics are an interceptor, so the orchestrator already holds one. Asking it means
+              a caller does not have to keep a reference to the recorder alongside the thing
+              being recorded.
+
+        Examples:
+            >>> manipulator.add_interceptor(RequestMetrics())
+            >>> manipulator.inspect(thing, get="value")
+            >>> manipulator.metrics()["inspect"]["calls"]
+            1
+        """
+        from ..interceptors import RequestMetrics
+
+        for interceptor in self._interceptors:
+            if isinstance(interceptor, RequestMetrics):
+                return interceptor.snapshot()
         return None
 
     def history(self, name: Optional[str] = None, changed_only: bool = False) -> List[Dict[str, Any]]:

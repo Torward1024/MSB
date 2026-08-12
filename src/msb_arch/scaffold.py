@@ -83,6 +83,12 @@ def stubs(graph: Dict[str, Dict[str, Any]], operation: str,
         >>> print(stubs(graph, "measure"))
         \"\"\"Handlers for the `measure` operation....
     """
+    if not operation.isidentifier():
+        from .errors import RequestError
+        raise RequestError(
+            f"'{operation}' cannot be an operation name, so nothing valid can be generated for "
+            "it: a handler is a method and a method needs an identifier")
+
     wanted = [name for name in _deepest_first(graph) if only is None or name in only]
     if not wanted:
         return ""

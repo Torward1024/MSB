@@ -137,6 +137,11 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         )
         
         self._validate_items(self._items)
+        # Items passed here are owned exactly as items added later are. Without this they had
+        # no owner, so writing to one did not invalidate this container's cached mapping and
+        # `to_dict` went on reporting the value the item used to hold.
+        for item in self._items.values():
+            item._adopt(self)
         logger.debug(
             "Initialized %s with name=%s, isactive=%s, item_count=%s", self.__class__.__name__, name, isactive, len(self._items)
         )

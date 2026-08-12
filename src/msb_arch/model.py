@@ -24,7 +24,7 @@ from .utils.logging_setup import logger
 
 #: The derivation only. Callers ask the manipulator -- `manipulator.describe_model()` --
 #: rather than running these over one from outside.
-__all__ = ["derive_model", "dependents_of", "holdings_of"]
+__all__ = ["derive_model", "dependents_of", "holdings_of", "named_type"]
 
 
 def _serializable_types(hint: Any, owner: Optional[type] = None) -> List[type]:
@@ -214,3 +214,39 @@ def holdings_of(graph: Dict[str, Dict[str, Any]], name: str) -> List[str]:
         pending.extend(held for names in graph.get(target, {}).get("holds", {}).values()
                        for held in names)
     return sorted(found)
+
+
+def named_type(name: str) -> type:
+    """Return the modelled type of that name, refusing to guess between two.
+
+    Args:
+        name (str): A class name, as it arrives in a plan, a request or a file.
+
+    Returns:
+        type: The `Serializable` subclass called that.
+
+    Raises:
+        RequestError: If nothing of that name has been imported, or more than one thing has.
+
+    Notes:
+        - Only `Serializable` subclasses are searched. A name that crossed a boundary selects
+          among the model's own types and nothing else, so a string can never name something
+          arbitrary to construct.
+    """
+    from .base.serializable import Serializable
+    from .errors import RequestError
+
+    found, pending = [], [Serializable]
+    while pending:
+        candidate = pending.pop()
+        if candidate.__name__ == name and candidate not in found:
+            found.append(candidate)
+        pending.extend(candidate.__subclasses__())
+
+    if not found:
+        raise RequestError(f"No imported type is called '{name}'")
+    if len(found) > 1:
+        raise RequestError(
+            f"{len(found)} imported types are called '{name}': "
+            f"{', '.join(sorted(one.__module__ for one in found))}")
+    return found[0]

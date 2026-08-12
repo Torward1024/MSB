@@ -330,6 +330,8 @@ class Persistence(_FileOperation):
         if not hasattr(obj, "to_dict"):
             raise RequestError(
                 f"{type(obj).__name__} cannot be written to a file: it has no to_dict")
+        if path.is_dir():
+            raise RequestError(f"'{path}' is a directory, so nothing can be written to it")
         if path.exists() and not attributes.get("overwrite", True):
             raise RequestError(f"'{path}' already exists and overwrite is off")
 
@@ -401,9 +403,13 @@ class Loader(_FileOperation):
         """
         path = Path(self._required(attributes, "path", "load"))
         kind = attributes.get("kind") or type(obj)
-        if not hasattr(kind, "from_dict"):
+        if isinstance(kind, str):
+            from ..model import named_type
+            kind = named_type(kind)          # a plan or a wire carries a name, not a class
+        if not isinstance(kind, type) or not hasattr(kind, "from_dict"):
             raise RequestError(
-                f"{kind.__name__} cannot be read from a file: it has no from_dict")
+                f"{getattr(kind, '__name__', kind)!r} cannot be read from a file: it is not a "
+                "type with from_dict")
         if not path.is_file():
             raise NotFoundError(f"No file at '{path}'")
 

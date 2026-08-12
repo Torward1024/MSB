@@ -431,3 +431,50 @@ def test_a_drafted_plan_is_the_same_plan_written_by_hand(manipulator, thing):
 
     assert draft.plan() == by_hand
     assert draft.run().output == manipulator.pipeline(by_hand).output == 12
+
+
+# --- edges found by probing them ---------------------------------------------------------------
+
+def test_after_given_one_name_rather_than_a_list(manipulator, thing):
+    """A string is a sequence of letters, and iterating it would wait for steps called w, r, i."""
+    outcome = manipulator.pipeline({
+        "written": {"operation": "compute", "obj": thing, "by": 2},
+        "second":  {"operation": "compute", "obj": thing, "by": 3, "after": "written"},
+    })
+
+    assert outcome.failed == []
+    assert list(outcome) == ["written", "second"]
+
+
+def test_a_step_whose_name_contains_a_dot(manipulator, thing):
+    """`@totals.by_month` has to mean the step called that, not the by_month result of a step
+    called totals -- and the wrong reading is the plausible one."""
+    outcome = manipulator.pipeline({
+        "totals.by_month": {"operation": "compute", "obj": thing, "by": 2},
+        "used":            {"operation": "compute", "method": "total", "obj": thing,
+                            "of": ["@totals.by_month"]},
+    })
+
+    assert outcome.of("used") == 12
+
+
+def test_naming_a_method_still_works_where_no_step_is_called_that(manipulator, thing):
+    outcome = manipulator.pipeline({
+        "read": {"operation": "inspect", "obj": thing, "get": "value", "has_attribute": "value"},
+        "used": {"operation": "compute", "method": "total", "obj": thing, "of": ["@read.get"]},
+    })
+
+    assert outcome.of("used") == 6
+
+
+def test_concurrency_inside_a_running_loop_says_what_to_use(manipulator, thing):
+    """A server or a window is already in a loop, and asyncio.run inside one raises something
+    that says nothing about pipelines."""
+    plan = {"a": {"operation": "compute", "obj": thing, "by": 2}}
+
+    async def inside():
+        with pytest.raises(RequestError, match="apipeline"):
+            manipulator.pipeline(plan, concurrent=True)
+        return await manipulator.apipeline(plan)
+
+    assert asyncio.run(inside()).output == 12

@@ -107,3 +107,11 @@ def test_the_generated_source_is_valid_python(source):
     import ast
 
     ast.parse(source)
+
+
+def test_a_name_that_cannot_be_a_method_is_refused(manipulator):
+    """It used to emit `class 2measureHandlers`, which is not Python."""
+    from msb_arch.errors import RequestError
+
+    with pytest.raises(RequestError):
+        manipulator.scaffold("2measure")
