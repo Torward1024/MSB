@@ -183,6 +183,7 @@ class Serializable(ABC, metaclass=EntityMeta):
         super().__setattr__('_use_cache', use_cache)
         super().__setattr__('_cached_to_dict', None)
         super().__setattr__('_parents', None)
+        super().__setattr__('_revision', 0)
         self._validate_type('name', name, str)
         super().__setattr__('name', name)
         self._validate_type('isactive', isactive, bool)
@@ -250,8 +251,30 @@ class Serializable(ABC, metaclass=EntityMeta):
             value = getattr(self, key, None)
             if isinstance(value, Serializable):
                 value._adopt(self, seen)
+    @property
+    def revision(self) -> int:
+        """How many times this object has been written to.
+
+        Returns:
+            int: 0 for an object nobody has changed since it was built, and one more after each
+                write.
+
+        Notes:
+            - **"Did this change" without keeping a copy of what it was.** Two reads of the same
+              number mean nothing was written in between; two different numbers mean something
+              was. That is the cheap half of knowing whether a result is still good, and it costs
+              one increment on a path that was already there to invalidate the cache.
+            - **About this object, not about what it holds.** A container's revision does not
+              move when one of its items is written to, because making it move would mean walking
+              up the ownership graph on every write whether anything cached or not. Ask the item.
+            - Not serialised. A revision counts writes in one process's memory; a number restored
+              from a file would claim to compare with something it never saw.
+        """
+        return self.__dict__.get('_revision', 0)
+
     def _invalidate_cache(self) -> None:
-        """Drop the cached serialization of this entity and of everything that owns it.
+        """Drop the cached serialization of this entity and of everything that owns it, and
+        record that this one was written to.
 
         Notes:
             - A container serializes its items, so a mutated item makes every ancestor
@@ -261,6 +284,11 @@ class Serializable(ABC, metaclass=EntityMeta):
               belongs to each container that holds it, and all of them go stale together.
             - The walk is guarded against a cycle in the ownership graph.
         """
+        try:
+            self.__dict__['_revision'] += 1
+        except KeyError:                        # built by something that skipped __init__
+            self.__dict__['_revision'] = 1
+
         if not _CACHING_OBJECTS:
             # Nothing anywhere caches, so there is no stale mapping for the walk to find.
             # Dead owners are still dropped, because pruning them is the walk's other job and
