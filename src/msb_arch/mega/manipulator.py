@@ -618,7 +618,6 @@ class Manipulator(ABC):
                 pass
             
             request = {"operation": operation, "obj": obj, "attributes": request_attributes}
-            logger.debug("Facade request for %s: %s", operation, request)
             result = self.process_request(request)
             if not raise_on_error:
                 return result

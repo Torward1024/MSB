@@ -11,6 +11,8 @@ from typing import (Dict,
                     Set,
                     get_origin,
                     get_args)
+import json
+import hashlib
 import weakref
 from contextvars import ContextVar
 from threading import RLock
@@ -112,6 +114,10 @@ class EntityMeta(ABCMeta):
             # mutate the set while it is being iterated.
             return sorted(entry, key=lambda c: (c.__module__ or "", c.__qualname__))
 
+#: Attributes the framework sets itself, skipped unless a caller names one.
+_INTERNAL = frozenset(('name', '_use_cache', '_cached_to_dict', '_type_cache', 'isactive'))
+
+
 class Serializable(ABC, metaclass=EntityMeta):
     """Common base for everything MSB validates, serializes and caches.
 
@@ -189,19 +195,19 @@ class Serializable(ABC, metaclass=EntityMeta):
         self._validate_type('isactive', isactive, bool)
         super().__setattr__('isactive', isactive)
         
-        for field in self._fields:
-            if field in ('name', '_use_cache', '_cached_to_dict', '_type_cache', 'isactive') and field not in kwargs:
+        settable, known = self.__class__._init_plan()
+        for field, expected_type in settable:
+            if field in _INTERNAL and field not in kwargs:
                 continue
             value = kwargs.get(field, None)
-            expected_type = self._resolve_type(self._fields[field])
             self._validate_type(field, value, expected_type)
             super().__setattr__(field, value)
             if isinstance(value, Serializable):
                 value._adopt(self)
 
-        unknown_attrs = set(kwargs.keys()) - set(self._fields.keys())
+        unknown_attrs = [key for key in kwargs if key not in known]
         if unknown_attrs:
-            raise UnknownAttributeError(f"Unknown attributes provided for {self.__class__.__name__}: {unknown_attrs}")
+            raise UnknownAttributeError(f"Unknown attributes provided for {self.__class__.__name__}: {set(unknown_attrs)}")
 
         if self.__dict__.get('_use_cache'):
             # Registered so that invalidation can tell, without walking, whether any cache
@@ -387,6 +393,58 @@ class Serializable(ABC, metaclass=EntityMeta):
             return
 
         self._check_type(key, value, expected_type, f"Attribute '{key}'")
+
+    @classmethod
+    def _init_plan(cls):
+        """Return the fields to set when building one of these, and the names it accepts.
+
+        Returns:
+            Tuple[Tuple[Tuple[str, Any], ...], frozenset]: Each field with its annotation
+                resolved, and the set of names a constructor may be given.
+
+        Notes:
+            - Resolving an annotation gives the same answer for every instance of a class, so
+                it is done once per class rather than once per object. Held in the class's own
+                dictionary, so a subclass never reads a parent's.
+            - Rebuilt when the field count changes, because a container writes the resolved
+              type of its items into `_fields` as it is constructed.
+            - An annotation nothing can resolve yet is left unresolved rather than raising
+              here: `_validate_type` resolves what it needs and reports the failure where it
+              can say which value caused it.
+        """
+        plan = cls.__dict__.get('_init_plan_cache')
+        if plan is not None and plan[2] == len(cls._fields):
+            return plan[0], plan[1]
+
+        settable = []
+        for field, hint in cls._fields.items():
+            try:
+                settable.append((field, cls._resolve_type(hint)))
+            except Exception:                       # reported later, against a real value
+                settable.append((field, hint))
+        built = (tuple(settable), frozenset(cls._fields), len(cls._fields))
+        type.__setattr__(cls, '_init_plan_cache', built)
+        return built[0], built[1]
+
+    @classmethod
+    def _written_fields(cls) -> tuple:
+        """Return the fields `to_dict` writes: every annotated one that is not internal.
+
+        Returns:
+            tuple: Field names, in the order they were annotated.
+
+        Notes:
+            - Which fields are public is a fact about the class, so the leading-underscore test
+              belongs here rather than in a loop that runs per object per serialisation.
+            - Rebuilt when the field count changes, as `_init_plan` is and for the same reason.
+        """
+        cached = cls.__dict__.get('_written_fields_cache')
+        if cached is not None and cached[1] == len(cls._fields):
+            return cached[0]
+
+        written = tuple(key for key in cls._fields if not key.startswith('_'))
+        type.__setattr__(cls, '_written_fields_cache', (written, len(cls._fields)))
+        return written
 
     @classmethod
     def _compiled_validator(cls, hint: Any):
@@ -902,9 +960,6 @@ class Serializable(ABC, metaclass=EntityMeta):
             >>> a.fingerprint() == b.fingerprint()
             True
         """
-        import hashlib
-        import json
-
         content = json.dumps(self.to_dict(), sort_keys=True, default=repr, ensure_ascii=False)
         return hashlib.blake2b(content.encode("utf-8"), digest_size=8).hexdigest()
 
@@ -950,9 +1005,7 @@ class Serializable(ABC, metaclass=EntityMeta):
                 # recognise. A class at version 1 therefore serializes exactly as it did
                 # before versioning existed, and data carrying no version reads as 1.
                 data[SCHEMA_FIELD] = self.SCHEMA_VERSION
-            for key in self._fields:
-                if key.startswith('_'):
-                    continue
+            for key in self.__class__._written_fields():
                 if not hasattr(self, key):
                     continue
                 data[key] = self._serialize_value(getattr(self, key), seen)
