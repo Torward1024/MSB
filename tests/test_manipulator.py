@@ -74,7 +74,7 @@ class TestManipulatorSetGetManagingObject:
         obj = {"key": "value"}
         manipulator.set_managing_object(obj)
         assert manipulator._managing_object == obj
-        mock_logger.info.assert_called()
+        mock_logger.debug.assert_called()
 
     def test_get_managing_object(self, manipulator):
         obj = [1, 2]
@@ -116,7 +116,7 @@ class TestManipulatorUpdateRegistry:
     def test_update_registry(self, mock_logger, manipulator):
         manipulator.update_registry(additional_classes=[list])
         assert list in manipulator._base_classes
-        mock_logger.info.assert_called()
+        mock_logger.debug.assert_called()
 
 
 class TestManipulatorRegisterOperation:

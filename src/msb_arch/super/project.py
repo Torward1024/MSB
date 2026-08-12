@@ -48,7 +48,7 @@ class Project(ABC):
         check_non_empty_string(name, "Project name")
         self.name = name
         self._items = self._create_container(items=items, name=f"{name}_items")
-        logger.info("Initialized project '%s' with %s items", name, len(self._items))
+        logger.debug("Initialized project '%s' with %s items", name, len(self._items))
 
     @classmethod
     def _create_container(cls, items: Optional[Dict[str, BaseEntity]] = None, name: str = None) -> BaseContainer:
@@ -209,7 +209,7 @@ class Project(ABC):
             Dict[str, Any]: A dictionary with 'name' and 'items' keys representing the project configuration.
         """
         result = {"name": self.name, "items": self._items.to_dict()["items"]}
-        logger.info("Retrieved project configuration for '%s' with %s items", self.name, len(self._items))
+        logger.debug("Retrieved project configuration for '%s' with %s items", self.name, len(self._items))
         return result
     
     def clear(self):

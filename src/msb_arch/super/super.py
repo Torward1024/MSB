@@ -174,7 +174,7 @@ class Super(ABC):
             nested_attrs = {k: v for k, v in attributes.items() if k != key}
             result = nested_handler(nested_obj, nested_attrs)
             method_name = nested_handler.__name__ if hasattr(nested_handler, '__name__') else None
-            logger.info("Processed nested operation on %s with %s=%s", type(obj).__name__, key, index)
+            logger.debug("Processed nested operation on %s with %s=%s", type(obj).__name__, key, index)
             return self._build_response(nested_obj, True, method_name, result)
         except Exception as e:
             logger.error("Nested operation failed: %s", str(e))
@@ -272,7 +272,7 @@ class Super(ABC):
             self._methods[obj_type] = {}
         self._methods[obj_type][method_name] = method
         self._method_cache.clear()
-        logger.info("Registered method '%s' for %s", method_name, obj_type.__name__)
+        logger.debug("Registered method '%s' for %s", method_name, obj_type.__name__)
 
     def _apply_methods(self, obj: Any, attributes: Dict[str, Any],
                        valid_methods: Optional[Dict[str, Callable]] = None,

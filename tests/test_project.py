@@ -39,7 +39,7 @@ class TestProjectInit:
         project = TestProject(name="test")
         assert project.name == "test"
         assert len(project._items) == 0
-        mock_logger.info.assert_called()
+        mock_logger.debug.assert_called()
 
     def test_init_with_items(self):
         items = {"item1": TestEntity(name="item1", value=1)}
@@ -181,7 +181,7 @@ class TestProjectSetGetProject:
         proj = test_project.get_project()
         assert "name" in proj
         assert "items" in proj
-        mock_logger.info.assert_called()
+        mock_logger.debug.assert_called()
 
 
 class TestProjectClear:

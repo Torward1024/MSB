@@ -127,7 +127,7 @@ class TestSuperRegisterMethod:
         test_super.register_method(str, "test", lambda: None)
         assert str in test_super._methods
         assert "test" in test_super._methods[str]
-        mock_logger.info.assert_called()
+        mock_logger.debug.assert_called()
 
 
 class TestSuperExecute:

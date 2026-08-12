@@ -101,7 +101,7 @@ class Manipulator(ABC):
         if obj is not None and type(obj) not in self._base_classes:
             self._base_classes.append(type(obj))
             self.update_registry()
-        logger.info("Set managing object of type '%s' in Manipulator", type(obj).__name__)
+        logger.debug("Set managing object of type '%s' in Manipulator", type(obj).__name__)
 
     def get_managing_object(self) -> Optional[Any]:
         """Retrieve the central managing object.
@@ -163,7 +163,7 @@ class Manipulator(ABC):
         if additional_classes:
             self._base_classes.extend([cls for cls in additional_classes if cls not in self._base_classes])
         self._registry = self._get_method_registry()
-        logger.info("Registry updated with %s types", len(self._registry))
+        logger.debug("Registry updated with %s types", len(self._registry))
 
     def describe_operations(self, operation: Optional[str] = None,
                             interpret: Optional[Callable] = None,

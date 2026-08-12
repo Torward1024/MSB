@@ -193,3 +193,51 @@ def test_the_changelog_documents_the_current_version():
         encoding="utf-8")
     assert f"## [{msb_arch.__version__}]" in changelog, (
         f"CHANGELOG.md has no section for {msb_arch.__version__}")
+
+
+# --- what a log says at INFO ------------------------------------------------------------
+
+def test_ordinary_work_says_nothing_at_info():
+    """INFO should mean something happened that a person would want to know about.
+
+    Reported from downstream, where opening one project filled the log with identical lines
+    about objects being turned into dictionaries. The count was the caller's fault; the level
+    was not. Building, reading and serialising are the most ordinary things this library does,
+    and a message a user reads for them is noise by construction.
+    """
+    import logging
+
+    from msb_arch.base.basecontainer import BaseContainer
+    from msb_arch.base.baseentity import BaseEntity
+    from msb_arch.mega.manipulator import Manipulator
+    from msb_arch.utils.logging_setup import logger
+
+    class Item(BaseEntity):
+        value: int
+
+    class Items(BaseContainer[Item]):
+        pass
+
+    spoken = []
+
+    class Listener(logging.Handler):
+        def emit(self, record):
+            spoken.append(record.getMessage())
+
+    listener = Listener(level=logging.INFO)
+    previous = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(listener)
+    try:
+        box = Items(name="box", items={f"i{n}": Item(name=f"i{n}", value=n) for n in range(50)})
+        manipulator = Manipulator(box)
+        box.to_dict()
+        manipulator.inspect(box, get_all=None)
+        Items.from_dict(box.to_dict())
+    finally:
+        logger.removeHandler(listener)
+        logger.setLevel(previous)
+
+    assert not spoken, (
+        f"building, reading and serialising 50 items said {len(spoken)} thing(s) at INFO: "
+        f"{spoken[:3]}")
