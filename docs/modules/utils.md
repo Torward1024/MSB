@@ -371,20 +371,11 @@ every way the caller got the data wrong. The full tree is in the
 
 All exceptions include descriptive messages with parameter names and expected values.
 
-## Best Practices
+## Notes
 
-1. **Use Specific Types**: Prefer specific types over generic ones for better validation.
-
-2. **Meaningful Names**: Use descriptive parameter names in validation calls.
-
-3. **Consistent Logging**: All validation errors are automatically logged.
-
-4. **Early Validation**: Validate inputs as early as possible.
-
-5. **Custom Validators**: Extend the validation system for domain-specific rules.
-
-## Performance Considerations
-
-- Validation functions are lightweight and fast
-- Logging can be disabled by setting appropriate log levels
+- Every numeric check refuses NaN. Comparisons with NaN are all false, so `value <= 0` would let
+  it through while `not 0 <= value <= 1` would reject it -- the same value passing or failing
+  depending on how a rule happens to be spelled.
+- A `bool` is not a number for these, though Python says `True == 1`.
+- Validation failures are logged before they are raised.
 - Type checking uses Python's built-in `isinstance()` for efficiency

@@ -1,210 +1,132 @@
-# MSB Framework Architecture
+# Architecture
 
-## Overview
+Three layers and a rule: **a request is data**, and everything reaches the model by sending one
+to a single orchestrator.
 
-The MSB (Mega-Super-Base) Framework is designed with a layered architecture that separates concerns into four main modules: Base, Super, Mega, and Utils. This modular design allows for flexibility, extensibility, and maintainability.
+That rule is what the rest follows from. A call cannot be logged, replayed, queued, sent over a
+wire or scheduled against other calls without inventing a description of it first; a request
+already is that description.
 
-## Architecture Layers
+## The layers
 
-### 1. Base Layer
+| Layer | Depends on | Holds |
+| --- | --- | --- |
+| **Base** | nothing | `Serializable`, `BaseEntity`, `BaseContainer[T]` — validation, serialization, caching, ownership |
+| **Super** | Base, and a `MethodProvider` | `Super` and its handlers, the five built-in operations, `Project` |
+| **Mega** | Base and Super | `Manipulator` — the registry, requests, batches, pipelines, facades |
 
-The foundation layer provides core abstractions for data management:
+The Super layer does not import the Mega layer. It needs one method from whatever drives it —
+`get_methods_for_type` — and says so as a `Protocol`, so a `Super` can be driven by a test stub.
 
-- **BaseEntity**: Abstract base class for all entities with type validation, serialization, and attribute management
-- **BaseContainer**: Generic container class for managing collections of BaseEntity objects
+Around the three:
 
-### 2. Super Layer
+| | |
+| --- | --- |
+| `interceptors.py` | Metrics and a request journal, both ordinary interceptors |
+| `catalogue.py`, `model.py`, `scaffold.py` | What is registered, what holds what, generated stubs |
+| `errors.py` | The exception taxonomy |
+| `utils/` | Logging and the validation helpers |
 
-The operation layer handles business logic and project management:
-
-- **Super**: Abstract base class for operation handlers with method resolution and execution
-- **Project**: Abstract class for managing collections of entities within a project context
-
-### 3. Mega Layer
-
-The orchestration layer coordinates operations and manages object interactions:
-
-- **Manipulator**: Central class for registering operations, managing objects, and processing requests
-
-### 4. Utils Layer
-
-The utility layer provides supporting functionality:
-
-- **logging_setup**: Configurable logging system
-- **validation**: Data validation functions
-
-## Class Hierarchy
-
-```mermaid
-classDiagram
-     ABCMeta <|-- EntityMeta
-     EntityMeta <|-- Serializable
-     Serializable <|-- BaseEntity
-     Serializable <|-- BaseContainer
-     ABC <|-- Super
-     ABC <|-- Project
-     ABC <|-- Manipulator
-
-     class EntityMeta {
-         +_fields: Dict[str, type]
-     }
-
-     class BaseEntity {
-         +name: str
-         +isactive: bool
-         +_fields: Dict[str, type]
-         +use_cache: bool
-         +set(params)
-         +get(key)
-         +to_dict()
-         +from_dict(data)
-         +activate()
-         +deactivate()
-         +has_attribute(key)
-         +clone()
-         +clear()
-         +__getitem__(key)
-         +__setitem__(key, value)
-         +__contains__(key)
-     }
-
-     class BaseContainer {
-         +_items: Dict[str, T]
-         +add(item)
-         +remove(name)
-         +get(name)
-         +get_all()
-         +get_items()
-         +get_active_items()
-         +get_inactive_items()
-         +get_by_value(conditions)
-         +set_items(items)
-         +activate_item(name)
-         +deactivate_item(name)
-         +activate_all()
-         +deactivate_all()
-         +drop_active()
-         +drop_inactive()
-         +has_item(name)
-         +clear()
-         +clone()
-         +__getitem__(key)
-         +__setitem__(key, value)
-         +__contains__(key)
-         +__len__()
-         +__iter__()
-     }
-
-     class Super {
-         +_manipulator: Manipulator
-         +_methods: Dict
-         +execute(obj, attributes, method)
-         +register_method()
-         +clear_cache()
-     }
-
-     class Project {
-         +_items: BaseContainer
-         +add_item(item)
-         +get_item(name)
-         +create_item()*
-         +activate_all()
-         +deactivate_all()
-     }
-
-     class Manipulator {
-         +_operations: Dict
-         +_registry: Dict
-         +register_operation(super_instance)
-         +process_request(request)
-         +get_supported_operations()
-         +clear_cache()
-     }
-```
-
-## Data Flow
-
-```mermaid
-flowchart TD
-    A[Client Request] --> B[Manipulator.process_request]
-    B --> C{Operation Exists?}
-    C -->|Yes| D[Get Super Instance]
-    C -->|No| E[Return Error]
-    D --> F[Super.execute]
-    F --> G{Method Resolution}
-    G --> H[Execute Method on Object]
-    H --> I[Return Result]
-```
-
-## Key Design Patterns
-
-### 1. Template Method Pattern
-- Serializable defines serialization and validation; BaseEntity and BaseContainer specialise them
-- Super classes define operation templates that subclasses implement
-
-### 2. Strategy Pattern
-- Manipulator uses different Super instances as strategies for different operations
-- Method resolution in Super allows pluggable behavior
-
-### 3. Composite Pattern
-- BaseContainer manages collections of BaseEntity objects
-- Project composes multiple entities and containers
-
-### 4. Factory Pattern
-- Project.create_item() is an abstract factory method
-- BaseContainer._create_container() creates typed containers
-
-### 5. Observer Pattern (Implicit)
-- Logging system observes operations and state changes
-- Validation functions observe data changes
-
-### 6. Facade Pattern
-- Manipulator provides simplified facade methods for registered operations
-- Project and Super classes provide high-level interfaces to complex subsystems
-
-## Type System
-
-The framework uses Python's type hints extensively:
-
-- Generic types for BaseContainer[T]
-- Union types for flexible method parameters
-- Forward references for circular dependencies
-- TypeVar for generic constraints
-
-## Serialization Strategy
-
-Entities support bidirectional serialization:
+## What happens to a request
 
 ```mermaid
 flowchart LR
-    A["Python Object"] --> B["to_dict()"]
-    B --> C["Dict with 'type' field"]
+    A["facade or plan"] --> B["process_request"]
+    B --> C["interceptor chain"]
+    C --> D["Super.execute"]
+    D --> E["handler resolution"]
+    E --> F["_apply_methods"]
+    F --> G["response"]
+    G --> C
+```
+
+1. A facade, a batch or a pipeline step produces a request dictionary.
+2. `process_request` validates its shape and finds the `Super` registered for the operation.
+3. The interceptor chain wraps the dispatch, outermost first. Each may observe, time, refuse or
+   rewrite.
+4. `Super.execute` resolves a handler: the requested name, then `_<operation>_<name>`, then
+   `_<operation>_<type>`, then `_<operation>_basecontainer`, then `_<operation>`.
+5. The handler usually calls `_apply_methods`, which applies each method the request named.
+6. A response comes back in one shape, whatever happened.
+
+A pipeline is the same path once per step, plus the edges: substitution happens before the chain,
+so an interceptor never sees an unresolved reference.
+
+## Why a container is not an entity
+
+`BaseEntity` and `BaseContainer` are siblings, both deriving from `Serializable`.
+
+They spell different things with the same words. `entity.get("field")` reads an attribute;
+`container.get("name")` returns an item. `entity.clear()` nulls attributes; `container.clear()`
+removes items. While the container inherited from the entity, each of those names carried two
+incompatible meanings inside one hierarchy.
+
+`Serializable` holds what they genuinely share: annotated fields and their validation, `name` and
+`isactive`, `to_dict`, the cache, ownership, `revision` and `fingerprint`. It is also the type to
+use in an `isinstance` check that should accept either.
+
+## Derivation instead of declaration
+
+An application otherwise says what it can do twice — once in the handlers, once in the menu that
+offers them — and the second copy goes stale.
+
+| Question | Answered from | Through |
+| --- | --- | --- |
+| What operations exist, with what handlers | The registry and the handler names | `describe_operations()` |
+| Which handler needs which | Calls between handlers, read from the source | `order_handlers()`, `requirements_of()` |
+| Which type holds which, and what a change reaches | The annotations | `describe_model()`, `dependents_of()` |
+| What handlers a new operation would need | The model graph | `scaffold()` |
+
+Two limits. Reading source means a handler attached to a class after import is invisible. And
+what a handler touches *outside* its operation is an upper bound, because a shared helper is
+followed for every handler that calls it — good for checking a declaration, not for replacing
+one.
+
+## Serialization
+
+```mermaid
+flowchart LR
+    A["object"] --> B["to_dict()"]
+    B --> C["plain data, with 'type'"]
     C --> D["from_dict()"]
     D --> A
 ```
 
-- Handles cyclic references with "mark", "ignore", or "raise" options
-- Preserves type information for deserialization
-- Supports nested entity serialization
+The annotation is the schema. JSON has no set, no tuple and no entity, so what comes back is a
+list or a mapping and only the declared type says which it was. A mapping carrying `type` is
+restored through the class it names, so a subclass stored in a field typed as its base comes back
+as the subclass.
 
-## Error Handling
+Cycles are marked rather than followed. A class that has versioned itself writes
+`schema_version` and migrates old data forward; one that never has writes exactly what it always
+wrote.
 
-- Validation errors use TypeError and ValueError with descriptive messages
-- Operation errors return structured response dictionaries
-- Logging captures all operations and errors for debugging
+## Errors
 
-## Extensibility
+Every exception derives from `MSBError`, and also from the built-in it replaces, so `except
+TypeError` keeps working while `except DuplicateNameError` becomes possible.
 
-The framework is designed for extension:
+A response carries `error_type` — a name, not an exception, because a response is data — so a
+facade re-raises the kind of failure that happened rather than flattening everything into one.
+The traceback does not survive that boundary.
 
-- Abstract base classes allow custom implementations
-- Method registration enables adding new operations
-- Type validation supports custom validators
-- Modular structure allows selective usage
+## Extension points
 
-## Performance Considerations
+| To | Do |
+| --- | --- |
+| Add a type | Write a `BaseEntity` or `BaseContainer` subclass. Nothing else changes |
+| Add an operation | Write a `Super`, register it. A facade appears |
+| Change one type's behaviour in an existing operation | Add `_<operation>_<type>` to a subclass of the built-in and register it |
+| Change the file format | Register your own `save` and `load` |
+| Watch, refuse or rewrite requests | Add an interceptor |
+| Drive it from somewhere else | Send requests. A plan is data too |
 
-- Caching in to_dict() and method resolution
-- Lazy loading of type information
-- Optimized container operations with dictionary-based storage
-- Configurable logging levels to reduce overhead
+## Performance
+
+Anything decided per class is worked out once per class: resolved annotations, compiled
+validators, which fields are written, what a method takes, the parsed source behind the
+catalogue, the model graph. Measured effects of doing that are in the changelog for 1.3.0.
+
+A single object is not thread-safe, exactly as a plain Python object is not. What MSB shares
+between objects — the class tables, handler resolution, the traversal marks used by `to_dict` —
+is guarded.

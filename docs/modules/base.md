@@ -46,22 +46,10 @@ are `Serializable`.
 - `isactive` (bool): Indicates whether the entity is active or inactive.
 - `_fields` (Dict[str, type]): Class-level mapping of attribute names to their expected types (from annotations).
 
-**Notes:**
+Abstract: subclass it. Attributes are validated against the annotations, and `to_dict` and
+`from_dict` cover every annotated attribute, nested entities included.
 
-- Logging is integrated via `utils.logging_setup.logger` to track initialization and state changes.
-- This is an abstract base class and cannot be instantiated directly; it must be subclassed.
-- Attributes are validated against type annotations defined in `__annotations__`.
-- Serialization methods `to_dict` and `from_dict` automatically handle all annotated attributes, including nested entities.
-
-### Key Features
-
-- **Type Validation**: Automatic validation of attributes against type annotations
-- **Serialization**: Bidirectional conversion to/from dictionaries
-- **Activation State**: Built-in active/inactive state management
-- **Caching**: Optional caching for performance optimization
-- **Logging**: Integrated logging for all operations
-
-### Basic Usage
+### A worked example
 
 ```python
 from msb_arch.base import BaseEntity
@@ -89,9 +77,7 @@ print(data)
 new_entity = MyEntity.from_dict(data)
 ```
 
-### Advanced Features
-
-#### Nested Entities
+### Nested entities
 
 ```python
 class Address(BaseEntity):
@@ -113,7 +99,7 @@ data = person.to_dict()
 #  'type': 'Person'}
 ```
 
-#### Type Validation
+### What a wrong type does
 
 ```python
 # This will raise TypeError
@@ -123,7 +109,7 @@ except TypeError as e:
     print(e)  # "Attribute 'value' must be of type <class 'int'>, got <class 'str'>"
 ```
 
-#### Initialization (__init__)
+### Construction
 
 The `__init__` method initializes a new `BaseEntity` instance with a required name, optional activation status, and additional attributes.
 
@@ -152,7 +138,7 @@ except ValueError as e:
     print(e)  # "Unknown attributes provided for MyEntity: {'unknown_attr'}"
 ```
 
-#### Type Validation (_validate_type)
+### Checking a value yourself
 
 The `_validate_type` method validates that a given value matches the expected type from annotations.
 
@@ -207,15 +193,10 @@ Parameterized hints are checked structurally and nested to any depth, so
 
 `BaseContainer` is a generic container class for managing collections of `BaseEntity` objects. It provides dictionary-like access with additional functionality.
 
-### Key Features
+Typed by its parameter, addressed by item name, and supporting `[]`, `in`, `len()` and
+iteration.
 
-- **Generic Typing**: Type-safe container for specific entity types
-- **Dictionary Interface**: Supports `[]`, `in`, `len()`, iteration
-- **Bulk Operations**: Add/remove multiple items, activate/deactivate all
-- **Query Methods**: Find items by attributes or conditions
-- **Serialization**: Container-level serialization with nested entities
-
-### Basic Usage
+### A worked example
 
 ```python
 from msb_arch.base import BaseEntity, BaseContainer
@@ -251,9 +232,7 @@ expensive = inventory.get_by_value({"price": 25.50})
 print(len(expensive))  # 1
 ```
 
-### Advanced Operations
-
-#### Bulk Operations
+### In bulk
 
 ```python
 # Add from another container
@@ -270,7 +249,7 @@ inventory.activate_all()
 active_items = inventory.get_active_items()  # All items
 ```
 
-#### Serialization
+### Serializing a container
 
 ```python
 # Serialize entire container
@@ -445,21 +424,46 @@ Use it for objects serialized repeatedly and written rarely -- a model rendered 
 every redraw. Avoid it for write-heavy objects, where every write pays for the walk and
 throws the mapping away, and for one-shot serialization, where nothing reads the cache twice.
 
-## Best Practices
+## Has this changed?
 
-1. **Define Clear Type Annotations**: Use specific types in your entity classes for better validation.
+Two answers, with different costs and different reach.
 
-2. **Use Meaningful Names**: Entity names should be unique within containers.
+```python
+from msb_arch import BaseContainer, BaseEntity
 
-3. **Handle Serialization Carefully**: Cycles of any length are detected and marked with
-   `CYCLIC_REFERENCE`, but a payload carrying that marker cannot be restored by `from_dict`.
-   Break the cycle before a round trip.
+class Part(BaseEntity):
+    price: float
 
-4. **Leverage Container Queries**: Use `get_by_value()` for complex filtering instead of manual loops.
+class Parts(BaseContainer[Part]):
+    pass
 
-5. **Enable Caching Deliberately**: `use_cache=True` pays for objects serialized often and
-   written rarely. See [Caching and memory](#caching-and-memory) for what it costs and why
-   caching a container and its items both is usually waste.
+bolt = Part(name="bolt", price=4.5)
+assert bolt.revision == 0
+
+bolt.price = 4.5                      # the same value it already held
+assert bolt.revision == 1             # it was written to
+```
+
+| | `revision` | `fingerprint()` |
+| --- | --- | --- |
+| Answers | Was this written to | Is the content the same |
+| Costs | An increment, on the path that already invalidates the cache | One serialisation |
+| Covers | This object | This object and everything below it |
+| Survives a restart | No | Yes |
+
+```python
+box = Parts(name="box", items={"bolt": bolt})
+before = box.revision, box.fingerprint()
+
+bolt.price = 9.0
+
+assert box.revision == before[0]              # the container was not written to
+assert box.fingerprint() != before[1]         # but its contents changed
+assert Part(name="bolt", price=9.0).fingerprint() == bolt.fingerprint()
+```
+
+`revision` counts writes rather than differences, deliberately: comparing values means keeping
+the old ones. It is not serialised, since it counts writes in one process's memory.
 
 ## Error Handling
 

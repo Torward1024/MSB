@@ -1,479 +1,280 @@
-# MSB Framework Diagrams
+# Diagrams
 
-This document contains detailed Mermaid diagrams illustrating the architecture, data flows, and relationships within the MSB Framework.
+The mechanisms, drawn. Prose for each is in [architecture.md](architecture.md).
 
-## Architecture Overview
+## The layers
 
 ```mermaid
 graph TB
-    subgraph "Client Layer"
-        A[Application Code]
-        B[API Calls]
+    subgraph Caller
+        A["script, window, CLI, server"]
     end
 
-    subgraph "Mega Layer"
-        C[Manipulator]
-        D[Operation Registry]
-        E[Request Processor]
+    subgraph Mega
+        M["Manipulator"]
+        R["operation registry"]
+        P["pipeline"]
+        I["interceptor chain"]
     end
 
-    subgraph "Super Layer"
-        F[Super Classes]
-        G[Project Classes]
-        H[Operation Handlers]
+    subgraph Super
+        S["Super"]
+        B["built-ins: inspect, configure,<br/>catalogue, save, load"]
+        J["Project"]
     end
 
-    subgraph "Base Layer"
-        I[BaseEntity]
-        J[BaseContainer]
-        K[Type Validation]
+    subgraph Base
+        E["BaseEntity"]
+        C["BaseContainer[T]"]
+        Z["Serializable"]
     end
 
-    subgraph "Utils Layer"
-        L[Logging Setup]
-        M[Validation Functions]
-    end
-
-    A --> C
-    B --> C
-    C --> D
-    C --> E
-    E --> F
-    E --> G
-    F --> H
-    G --> H
-    H --> I
-    H --> J
-    I --> K
-    J --> K
-    F --> L
-    G --> L
-    I --> L
-    J --> L
-    K --> M
+    A -->|request as data| M
+    M --> R
+    M --> P
+    P -->|one request per step| M
+    M --> I
+    I --> S
+    S --- B
+    S -->|applies methods to| E
+    S -->|applies methods to| C
+    J --> C
+    E --> Z
+    C --> Z
 ```
 
-## Class Hierarchy
+The Super layer never points upward: it needs one method from whatever drives it, declared as the
+`MethodProvider` protocol.
+
+## Class hierarchy
 
 ```mermaid
 classDiagram
     direction TB
 
-    %% Abstract Base Classes
-     ABCMeta <|-- EntityMeta : inherits
-     EntityMeta <|-- BaseEntity : metaclass
-     ABC <|-- BaseContainer : inherits
-     ABC <|-- Super : inherits
-     ABC <|-- Project : inherits
-     ABC <|-- Manipulator : inherits
-
-    %% Base Layer
-    Serializable <|-- BaseEntity
-    Serializable <|-- BaseContainer
-
-    class BaseEntity {
+    class Serializable {
         +name: str
         +isactive: bool
-        +_fields: Dict[str, type]
-        +set(params: Dict)
-        +get(key: str)
+        +revision: int
         +to_dict()
         +from_dict(data)
-        +activate()
-        +deactivate()
+        +fingerprint()
+        +clone()
+    }
+
+    class BaseEntity {
+        +get(key)
+        +set(params)
         +has_attribute(key)
-        +clone()
         +clear()
-        +__getitem__(key)
-        +__setitem__(key, value)
-        +__contains__(key)
     }
 
-    class BaseContainer {
-        +_items: Dict[str, T]
-        +add(item: T)
-        +remove(name: str)
-        +get(name: str)
+    class BaseContainer~T~ {
+        +add(item)
+        +remove(name)
+        +get(name)
         +get_all()
-        +get_items()
-        +get_active_items()
-        +get_inactive_items()
-        +get_by_value(conditions)
-        +set_items(items)
-        +activate_item(name)
-        +deactivate_item(name)
-        +activate_all()
-        +deactivate_all()
-        +drop_active()
-        +drop_inactive()
-        +has_item(name)
-        +clear()
-        +clone()
-        +__getitem__(key)
-        +__setitem__(key, value)
-        +__contains__(key)
-        +__len__()
-        +__iter__()
+        +get_by_value(criteria)
     }
 
-    %% Super Layer
     class Super {
-        +_manipulator: Manipulator
-        +_methods: Dict
-        +execute(obj, attributes)
-        +register_method()
+        +OPERATION: str
+        +execute(obj, attributes, method)
+        #_apply_methods(obj, attributes)
+        #_build_response(...)
+    }
+
+    class Manipulator {
+        +process_request(request)
+        +batch(requests)
+        +pipeline(plan)
+        +register_operation(super)
+        +describe_operations()
+        +describe_model()
     }
 
     class Project {
-        +_items: BaseContainer
+        +create_item()
         +add_item(item)
-        +get_item(name)
-        +create_item()*
-        +activate_all()
-        +deactivate_all()
+        +get_items()
     }
 
-    %% Mega Layer
-    class Manipulator {
-        +_operations: Dict
-        +_registry: Dict
-        +register_operation()
-        +process_request()
-        +get_methods_for_type()
-    }
-
-    %% Relationships
-    Super --> Manipulator : uses
-    Project --> BaseContainer : uses
-    Manipulator --> Super : manages
-    BaseContainer o-- BaseEntity : contains
+    Serializable <|-- BaseEntity
+    Serializable <|-- BaseContainer
+    Super <|-- Inspector
+    Super <|-- Configurator
+    Super <|-- Catalogue
+    Super <|-- Persistence
+    Super <|-- Loader
+    Manipulator o-- Super : registers
+    Project o-- BaseContainer : holds
 ```
 
-## Data Flow: Request Processing
+`BaseEntity` and `BaseContainer` are siblings: `get`, `set` and `clear` mean different things to
+each.
 
-```mermaid
-flowchart TD
-    A[Client] --> B{Request Type}
-    B -->|Single| C[process_single_request]
-    B -->|Batch| D[process_batch_request]
-
-    C --> E[Validate Request]
-    D --> F[Split into Singles]
-
-    F --> E
-    E --> G{Operation Exists?}
-    G -->|No| H[Return Error]
-    G -->|Yes| I[Get Super Instance]
-
-    I --> J[Validate Object]
-    J --> K{Object Valid?}
-    K -->|No| L[Return Error]
-    K -->|Yes| M[Execute Operation]
-
-    M --> N[Format Response]
-    N --> O[Return Result]
-
-    H --> O
-    L --> O
-```
-
-## Method Resolution Flow
-
-```mermaid
-flowchart TD
-    A[execute called] --> B{Method specified?}
-    B -->|Yes| C[Try explicit method]
-    B -->|No| D[Try prefixed method]
-
-    C --> E{Method exists?}
-    E -->|Yes| F[Execute method]
-    E -->|No| D
-
-    D --> G{Method exists?}
-    G -->|Yes| F
-    G -->|No| H[Try type-specific method]
-
-    H --> I{Method exists?}
-    I -->|Yes| F
-    I -->|No| J[Try container method]
-
-    J --> K{Method exists?}
-    K -->|Yes| F
-    K -->|No| L[Try default method]
-
-    L --> M{Method exists?}
-    M -->|Yes| F
-    M -->|No| N[Raise ValueError]
-
-    F --> O[Return result]
-    N --> P[Return error]
-```
-
-## Serialization Flow
-
-```mermaid
-flowchart TD
-    A[to_dict called] --> B{Use cache?}
-    B -->|Yes| C{Cache valid?}
-    B -->|No| D[Build dict]
-
-    C -->|Yes| E[Return cached]
-    C -->|No| D
-
-    D --> F[Add type field]
-    F --> G[Add name & isactive]
-    G --> H[Process each field]
-
-    H --> I{Field is entity?}
-    I -->|Yes| J{Cyclic reference?}
-    I -->|No| K[Add field value]
-
-    J -->|Yes| L[Add '<cyclic reference>']
-    J -->|No| M[Recurse to_dict]
-
-    K --> H
-    L --> H
-    M --> H
-
-    H --> N{More fields?}
-    N -->|Yes| H
-    N -->|No| O{Cache enabled?}
-    O -->|Yes| P[Store in cache]
-    O -->|No| Q[Return dict]
-
-    P --> Q
-    E --> Q
-```
-
-## Type Validation Flow
-
-```mermaid
-flowchart TD
-    A[validate_type called] --> B{Value is None?}
-    B -->|Yes| C[Allow None]
-    B -->|No| D[Resolve expected type]
-
-    D --> E{Is Union?}
-    E -->|Yes| F[Test each union type]
-    E -->|No| G{Is Dict?}
-
-    F --> H{Type matches?}
-    H -->|Yes| I[Validation passed]
-    H -->|No| J{Next union type?}
-    J -->|Yes| F
-    J -->|No| K[Raise TypeError]
-
-    G -->|Yes| L[Validate dict structure]
-    G -->|No| M{Is List?}
-
-    L --> N[Check keys & values]
-    N --> O{Valid?}
-    O -->|Yes| I
-    O -->|No| K
-
-    M -->|Yes| P[Validate list elements]
-    M -->|No| Q[Check direct type]
-
-    P --> R{All elements valid?}
-    R -->|Yes| I
-    R -->|No| K
-
-    Q --> S{Type matches?}
-    S -->|Yes| I
-    S -->|No| K
-
-    C --> I
-    I --> T[Return]
-    K --> U[Log error & raise]
-```
-
-## Container Operations
-
-```mermaid
-stateDiagram-v2
-    [*] --> Empty
-    Empty --> HasItems : add()
-    HasItems --> HasItems : add()
-    HasItems --> Empty : clear()
-    HasItems --> HasItems : remove()
-    HasItems --> HasItems : get()
-    HasItems --> HasItems : set_item()
-
-    note right of HasItems
-        - Query operations
-        - Bulk operations
-        - Serialization
-    end note
-
-    note right of Empty
-        - Ready for items
-        - Can deserialize
-    end note
-```
-
-## Project Lifecycle
-
-```mermaid
-stateDiagram-v2
-    [*] --> Created : __init__()
-    Created --> ItemsAdded : add_item()
-    ItemsAdded --> ItemsAdded : create_item()
-    ItemsAdded --> ItemsModified : activate_item()
-    ItemsModified --> ItemsModified : deactivate_item()
-    ItemsModified --> Serialized : to_dict()
-    Serialized --> Deserialized : from_dict()
-    Deserialized --> ItemsAdded
-
-    ItemsAdded --> Cleared : clear()
-    ItemsModified --> Cleared : clear()
-    Cleared --> [*]
-
-    note right of Created
-        - Name set
-        - Container initialized
-    end note
-
-    note right of ItemsAdded
-        - Items managed
-        - Type validation
-    end note
-
-    note right of ItemsModified
-        - State changes
-        - Bulk operations
-    end note
-```
-
-## Manipulator Workflow
+## One request
 
 ```mermaid
 sequenceDiagram
-    participant C as Client
+    participant Caller
     participant M as Manipulator
+    participant I as Interceptors
     participant S as Super
     participant O as Object
 
-    C->>M: process_request(request)
-    M->>M: validate request
-    M->>M: get operation handler
-    M->>S: execute(obj, attributes)
-    S->>S: resolve method
-    S->>O: call method on object
-    O-->>S: return result
-    S-->>M: return response
-    M-->>C: return formatted result
+    Caller->>M: inspect(obj, get_price=None)
+    M->>M: build the request
+    M->>I: process_request
+    I->>I: outermost first
+    I->>S: execute(obj, attributes)
+    S->>S: resolve a handler
+    S->>O: apply each method named
+    O-->>S: values
+    S-->>I: response
+    I-->>M: response
+    M-->>Caller: unwrapped result
 ```
 
-## Error Handling Flow
+An interceptor may return a response without calling the next one, which is what refusing looks
+like.
+
+## Choosing a handler
 
 ```mermaid
 flowchart TD
-    A[Operation] --> B{Exception raised?}
-    B -->|No| C[Return success]
-    B -->|Yes| D{Exception type}
-
-    D -->|ValidationError| E[Log validation error]
-    D -->|TypeError| F[Log type error]
-    D -->|ValueError| G[Log value error]
-    D -->|KeyError| H[Log key error]
-    D -->|Other| I[Log unexpected error]
-
-    E --> J[Format error response]
-    F --> J
-    G --> J
-    H --> J
-    I --> J
-
-    J --> K[Return error dict]
-    C --> L[Return success dict]
-
-    K --> M[Response]
-    L --> M
+    A["request names a method"] --> B{"is it already<br/>a handler?"}
+    B -->|yes| Z["run it"]
+    B -->|no| C{"_operation_name<br/>exists?"}
+    C -->|yes| Z
+    C -->|no| D{"_operation_type<br/>exists?"}
+    D -->|yes| Z
+    D -->|no| E{"container, and<br/>_operation_basecontainer?"}
+    E -->|yes| Z
+    E -->|no| F{"_operation<br/>exists?"}
+    F -->|yes| Z
+    F -->|no| G["DispatchError"]
 ```
 
-## Caching Strategy
+Only handlers of the operation are reachable. A name outside it falls through to a more general
+handler rather than being called.
+
+## A pipeline
 
 ```mermaid
 flowchart TD
-    A[Method called] --> B{Cache enabled?}
-    B -->|No| C[Execute method]
-    B -->|Yes| D{Cache hit?}
-
-    D -->|Yes| E[Return cached result]
-    D -->|No| C
-
-    C --> F{Should cache?}
-    F -->|Yes| G[Store in cache]
-    F -->|No| H[Return result]
-
-    G --> H
-    E --> H
-
-    H --> I[Check cache size]
-    I --> J{Cache full?}
-    J -->|Yes| K[Evict oldest]
-    J -->|No| L[End]
-
-    K --> L
-```
-
-## Module Dependencies
-
-```mermaid
-graph TD
-    subgraph "msb_arch"
-        subgraph "base"
-            BE[baseentity.py]
-            BC[basecontainer.py]
-            BI[__init__.py]
-        end
-
-        subgraph "super"
-            S[super.py]
-            P[project.py]
-            SI[__init__.py]
-        end
-
-        subgraph "mega"
-            M[manipulator.py]
-            MI[__init__.py]
-        end
-
-        subgraph "utils"
-            L[logging_setup.py]
-            V[validation.py]
-            UI[__init__.py]
-        end
-
-        MAIN[__init__.py]
+    subgraph Plan["plan, as data"]
+        P1["written: save"]
+        P2["read: load, after written"]
+        P3["left: stats"]
+        P4["right: audit"]
+        P5["report: combine, obj @left, of @right"]
     end
 
-    BE --> L
-    BC --> BE
-    BC --> L
+    P1 --> S1
+    P2 --> S2
+    P3 --> S2
+    P4 --> S2
+    P5 --> S3
 
-    S --> L
-    S --> BE
-    S --> BC
-    P --> BC
-    P --> BE
-    P --> V
-    P --> L
+    subgraph Stages["stages, derived from the edges"]
+        S1["stage 1: written"]
+        S2["stage 2: read, left, right"]
+        S3["stage 3: report"]
+    end
 
-    M --> L
+    S1 --> S2 --> S3
+```
 
-    V --> L
+Steps in one stage wait for nothing outside the stages before it, so they may run together.
+Every step is still one `process_request`.
 
-    BI --> BE
-    BI --> BC
-    SI --> S
-    SI --> P
-    MI --> M
-    UI --> L
-    UI --> V
+When a step fails, the branch below it is skipped and the rest still runs:
 
-    MAIN --> BI
-    MAIN --> SI
-    MAIN --> MI
-    MAIN --> UI
+```mermaid
+flowchart LR
+    A["load: fails"] -->|skipped| B["inspect @load"]
+    A -.->|unaffected| C["stats: runs"]
+```
+
+## Serialization
+
+```mermaid
+flowchart TD
+    A["object"] --> B{"caching on and<br/>cache valid?"}
+    B -->|yes| C["the cached mapping"]
+    B -->|no| D["walk the written fields"]
+    D --> E{"value is..."}
+    E -->|"number, string, bool, None"| F["as it is"]
+    E -->|"Serializable"| G{"already seen?"}
+    G -->|yes| H["CYCLIC_REFERENCE"]
+    G -->|no| I["to_dict, recursively"]
+    E -->|"list, dict, set, tuple"| J["walk it"]
+    F --> K["plain data with 'type'"]
+    H --> K
+    I --> K
+    J --> K
+```
+
+Restoring reverses it, guided by the annotation: the declared type is what says a list was a
+tuple or a set.
+
+## Validating a value
+
+```mermaid
+flowchart TD
+    A["value assigned"] --> B{"None?"}
+    B -->|yes, and not 'name'| Z["accepted"]
+    B -->|no| C{"a compiled check<br/>for this annotation?"}
+    C -->|"yes, and it says yes"| Z
+    C -->|"no, or it says no"| D["structural walk"]
+    D --> E{"matches?"}
+    E -->|yes| F["constraints on the annotation"]
+    E -->|no| G["TypeValidationError,<br/>naming the element"]
+    F -->|pass| Z
+    F -->|fail| H["ConstraintError"]
+```
+
+The compiled check is a fast path for the shapes most models are made of. A refusal always goes
+through the walk, so the message names what failed.
+
+## Invalidating a cache
+
+```mermaid
+flowchart BT
+    A["item.price = 9.0"] --> B["item's cache dropped"]
+    B --> C["every owner's cache dropped"]
+    C --> D["their owners, and so on"]
+```
+
+Invalidation walks up the ownership graph, because a container serialises its items. Ownership is
+recorded when an object is assigned to a field or added to a container, and owners are held
+weakly.
+
+## What the orchestrator derives
+
+```mermaid
+flowchart LR
+    A["registered Supers"] -->|"read source"| B["handlers, and the calls between them"]
+    B --> C["describe_operations()"]
+    B --> D["order_handlers()"]
+    E["annotations"] -->|"read hints"| F["which type holds which"]
+    F --> G["describe_model()"]
+    F --> H["dependents_of()"]
+    F --> I["scaffold()"]
+```
+
+Nothing here is written down twice, so a menu or a diagram built from it cannot go stale.
+
+## A project
+
+```mermaid
+stateDiagram-v2
+    [*] --> Empty: Project(name=...)
+    Empty --> Holding: create_item() / add_item()
+    Holding --> Holding: activate, deactivate, remove
+    Holding --> Empty: clear()
+    Holding --> Stored: to_dict()
+    Stored --> Holding: from_dict()
+    Holding --> [*]
 ```

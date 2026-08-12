@@ -1,29 +1,29 @@
-# MSB (Mega-Super-Base) Framework Documentation
+# MSB documentation
 
-## Overview
+MSB (Mega-Super-Base) is an architecture for Python applications built around a single entry
+point: you describe your data as typed entities, you describe what may be done to them as
+operations, and everything reaches both through one orchestrator by sending a request that is
+data rather than a call.
 
-The MSB Framework is a flexible and extensible architecture for building Python applications, based on a modular structure with four main components: **Base**, **Super**, **Mega**, and **Utils**. The framework provides tools for managing entities, containers, operations, and projects with built-in validation, serialization, caching, and logging.
+**New here? Start with the [guide](guide.md).** It builds a working application from nothing,
+and every block in it runs.
 
-## Architecture
+## The pages
 
-The framework consists of the following modules:
-
-- [**Base**](modules/base.md) - Core classes for entities and containers with type validation and serialization
-- [**Super**](modules/super.md) - Classes for operation handling, method resolution, and project management
-- [**Mega**](modules/mega.md) - Classes for object manipulation, request processing, and orchestration
-- [**Utils**](modules/utils.md) - Utilities for logging setup and data validation
-
-## Key Features
-
-- **Typed entities** with automatic attribute validation and type checking
-- **Generic containers** for managing collections of entities with bulk operations
-- **Operation handlers** with flexible method resolution and caching
-- **Projects** for organizing complex data structures with abstract factory patterns
-- **Manipulator orchestration** for processing requests and managing operations
-- **Bidirectional serialization** with support for nested objects and cyclic references
-- **Configurable logging** through a dedicated `msb_arch` logger, silent until the application opts in
-- **Comprehensive validation** with detailed error messages and logging
-- **Performance optimization** through caching and lazy loading
+| | |
+| --- | --- |
+| [Guide](guide.md) | A working application, built from nothing |
+| [Base module](modules/base.md) | Entities, containers, type hints, serialization, caching |
+| [Super module](modules/super.md) | Writing an operation; the five built-ins; projects |
+| [Mega module](modules/mega.md) | Requests, batches, pipelines, interceptors, the async surface |
+| [Utils module](modules/utils.md) | Logging and the validation helpers |
+| [Examples](examples.md) | Worked examples, longer than the guide's |
+| [Architecture](architecture.md) | How the layers fit, and why |
+| [Diagrams](diagrams.md) | The same, drawn |
+| [API reference](api.md) | Every public class and method |
+| [Compatibility](COMPATIBILITY.md) | What will not break, and how anything changes |
+| [Roadmap](ROADMAP.md) | What comes after 1.0 |
+| [Changelog](../CHANGELOG.md) | Release history and upgrade notes |
 
 ## Installation
 
@@ -31,71 +31,49 @@ The framework consists of the following modules:
 pip install msb-arch
 ```
 
-## Requirements
+Python 3.12 or later. No external dependencies.
 
-- Python 3.12+
-- No external dependencies (uses only standard library)
-
-## Quick Start
+## The shortest possible example
 
 ```python
-from msb_arch.base import BaseEntity, BaseContainer
-from msb_arch.super import Super
-from msb_arch.mega import Manipulator
+from msb_arch import BaseContainer, BaseEntity, Manipulator
 
-# Define an entity
-class MyEntity(BaseEntity):
-    name: str
-    value: int
-    description: str = "Default"
+class Part(BaseEntity):
+    price: float
 
-class MyContainer(BaseContainer[MyEntity]):
+class Parts(BaseContainer[Part]):
     pass
 
-# Create instances
-entity = MyEntity(name="test", value=42)
+class Workshop(Manipulator):
+    pass
 
-# Create a container
-container = MyContainer(name="my_container")
-container.add(entity)
+workshop = Workshop(base_classes=[Part, Parts])
+box = Parts(name="box")
+box.add(Part(name="bolt", price=4.5))
 
-# Define an operation handler
-class Calculator(Super):
-    OPERATION = "calculate"
-
-    def _calculate_add(self, obj, attributes):
-        return obj.value  + attributes.get("a", 0)
-
-# Create manipulator and register operations
-manipulator = Manipulator(entity)
-manipulator.register_operation(Calculator())
-
-# Process requests
-result = manipulator.process_request({
-    "operation": "calculate",
-    "object": entity,
-    "attributes": {"method": "add", "a": 5}
-})
-print(result["result"])  # 8
-
-# Use facade methods
-result = manipulator.calculate(entity, a=10, method="add")
-print(result)  # 14
+assert workshop.inspect(box, name="bolt", get="price") == 4.5
+workshop.configure(box.get("bolt"), set={"params": {"price": 5.0}})
+assert box.get("bolt").price == 5.0
 ```
 
-## Documentation
+Nothing was written to make that work: `inspect` and `configure` follow from the request model,
+so the framework supplies them, along with `save`, `load` and `catalogue`.
 
-- [Architecture](architecture.md) - Detailed architecture description and design patterns
-- [Diagrams](diagrams.md) - Mermaid diagrams of classes and interactions
-- [Examples](examples.md) - Comprehensive usage examples
-- [API Reference](api.md) - Complete API reference with parameters and types
-- [Roadmap](ROADMAP.md) - Known issues from the code review, ordered by criticality
-- [Changelog](../CHANGELOG.md) - Release history and upgrade notes
+## What the layers are
+
+| Layer | Holds |
+| --- | --- |
+| **Base** | The data: `Serializable`, `BaseEntity`, `BaseContainer[T]` |
+| **Super** | The operations: `Super` and its handlers, the built-ins, `Project` |
+| **Mega** | The entry point: `Manipulator` -- registry, requests, batches, pipelines |
+
+Around them: interceptors, the derivation of what is registered and what the model holds, the
+error taxonomy, logging and the validation helpers.
 
 ## Version
 
-Current version: 1.1.1
+1.3.0
 
 ## License
 
-The project is distributed under the license described in the [LICENSE](../LICENSE) file.
+MSB Software License. See [LICENSE](../LICENSE).

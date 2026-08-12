@@ -273,14 +273,6 @@ result = processor.execute(container, {"item": "item1", "operation": "get_value"
 
 `Project` is an abstract class for managing collections of `BaseEntity` objects within a structured project context. It provides high-level operations for project management.
 
-### Key Features
-
-- **Entity Management**: Add, remove, and query project items
-- **Bulk Operations**: Activate/deactivate all items, clear project
-- **Serialization**: Project-level serialization with all items
-- **Validation**: Name validation and type checking
-- **Extensible**: Abstract `create_item()` method for custom entity creation
-
 ### A worked example
 
 ```python
