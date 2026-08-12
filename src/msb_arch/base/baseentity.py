@@ -2,7 +2,8 @@
 from abc import ABC
 from typing import Any, Dict, List, Union
 
-from .serializable import CYCLIC_REFERENCE, EntityMeta, SCHEMA_FIELD, Serializable
+from .serializable import (CYCLIC_REFERENCE, EntityMeta, SCHEMA_FIELD,
+                           Serializable, _INTERNAL)
 from ..errors import (NotFoundError,
                       ResolutionError,
                       TypeValidationError,
@@ -49,11 +50,13 @@ class BaseEntity(Serializable):
         """
 
         for key, value in params.items():
-            if key in self._fields:
-                self._validate_type(key, value, self._fields.get(key))
-                setattr(self, key, value)
-            else:
+            if key not in self._fields:
                 raise UnknownAttributeError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
+            if key in _INTERNAL:
+                # `__setattr__` sets these without checking, since the framework writes them
+                # itself; a caller naming one through `set` still has to mean it.
+                self._validate_type(key, value, self._fields.get(key))
+            setattr(self, key, value)          # which validates everything else
         self._invalidate_cache()
         logger.debug("Updated attributes of %s: %s", self.__class__.__name__, list(params.keys()))
     def get(self, key: Union[str, List[str], None] = None) -> Union[Any, Dict[str, Any]]:
