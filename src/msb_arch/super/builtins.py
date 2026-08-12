@@ -373,7 +373,7 @@ class Loader(_FileOperation):
         - Separate from `Persistence` only because a `Super` binds to one operation name.
 
     Examples:
-        >>> manipulator.load(entity, path="entity.json")["object"]
+        >>> manipulator.load(entity, path="entity.json")
         Entity(name='entity', ...)
     """
 
@@ -390,7 +390,9 @@ class Loader(_FileOperation):
                 to build, for reading something that does not exist yet.
 
         Returns:
-            Dict[str, Any]: `{"object": ...}`.
+            Any: The object, rather than a mapping holding it. What a step produces is what the
+                next step is given, so a `load` that answered `{"object": ...}` would make every
+                chain through it start by unpacking a dictionary of one.
 
         Raises:
             RequestError: If no path was given or the type cannot rebuild itself.
@@ -412,4 +414,4 @@ class Loader(_FileOperation):
 
         restored = kind.from_dict(data)
         logger.info("Read %s from '%s'", kind.__name__, path)
-        return {"object": restored}
+        return restored

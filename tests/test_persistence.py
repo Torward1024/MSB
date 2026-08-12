@@ -43,7 +43,7 @@ def test_an_object_survives_a_round_trip(manipulator, item, tmp_path):
     path = tmp_path / "item.json"
     assert result_of(manipulator.save(item, path=str(path)))["path"] == str(path)
 
-    restored = result_of(manipulator.load(item, path=str(path)))["object"]
+    restored = result_of(manipulator.load(item, path=str(path)))
     assert isinstance(restored, Item)
     assert restored.name == "one" and restored.value == 7
 
@@ -53,7 +53,7 @@ def test_a_container_does_too(manipulator, tmp_path):
     path = tmp_path / "box.json"
 
     manipulator.save(box, path=str(path))
-    restored = result_of(manipulator.load(box, path=str(path)))["object"]
+    restored = result_of(manipulator.load(box, path=str(path)))
 
     assert isinstance(restored, Items)
     assert sorted(restored.get_all()) == ["a", "b"]
@@ -152,7 +152,7 @@ def test_a_kind_can_be_named_for_something_that_does_not_exist_yet(manipulator, 
     path = tmp_path / "item.json"
     manipulator.save(item, path=str(path))
 
-    restored = result_of(manipulator.load(None, path=str(path), kind=Item))["object"]
+    restored = result_of(manipulator.load(None, path=str(path), kind=Item))
     assert isinstance(restored, Item) and restored.value == 7
 
 

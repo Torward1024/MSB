@@ -278,6 +278,47 @@ class Manipulator(ABC):
                 roots.append(type(self._managing_object))
         return derive_model(roots)
 
+    def pipeline(self, plan: Optional[Dict[str, Any]] = None, name: Optional[str] = None,
+                 raise_on_error: bool = True, concurrent: bool = False) -> Any:
+        """Build a pipeline, or run one that arrived as data.
+
+        Args:
+            plan (Optional[Dict[str, Any]]): A stored plan, as `Pipeline.to_dict` produces. Left
+                out, a new empty pipeline comes back to be built.
+            name (Optional[str]): What to call a new pipeline.
+            raise_on_error (bool): When running a plan, whether the first failure raises.
+            concurrent (bool): When running a plan, whether each stage's independent steps run
+                at the same time.
+
+        Returns:
+            Any: A `Pipeline` to build, or the response of every step when a plan was given.
+
+        Notes:
+            - Both jobs are here because both are the manipulator's. Building a pipeline needs
+              to know what operations exist, and running one is a request like any other -- so
+              neither is something a caller should have to reach past the orchestrator for.
+            - The two are the same thing from either end: what this builds, `to_dict` turns into
+              what this runs.
+
+        Examples:
+            >>> pipe = manipulator.pipeline()
+            >>> loaded = pipe.load(path="in.json")
+            >>> pipe.save(loaded, path="out.json")
+            Step('save', on 'load')
+            >>> pipe.run().output
+            {'path': 'out.json'}
+        """
+        from ..pipeline import Pipeline
+
+        if plan is None:
+            return Pipeline(self, name)
+
+        rebuilt = Pipeline.from_dict(self, plan)
+        if concurrent:
+            import asyncio
+            return asyncio.run(rebuilt.arun(raise_on_error=raise_on_error))
+        return rebuilt.run(raise_on_error=raise_on_error)
+
     def dependents_of(self, name: str, roots: Optional[List[type]] = None) -> List[str]:
         """Return every type that would feel a change to this one.
 
