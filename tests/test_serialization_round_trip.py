@@ -298,7 +298,7 @@ def test_a_discriminator_reaches_inside_a_collection():
 # --- mapping keys -------------------------------------------------------------------------
 
 class Dish(BaseEntity):
-    """`Dict[float, float]` is how a real instrument table is spelled: frequency to value."""
+    """`Dict[float, float]` is how a real instrument table is spelled: rating to value."""
     sefd: Dict[float, float]
     counts: Dict[int, str]
     flags: Dict[bool, str]
@@ -340,9 +340,8 @@ def test_a_key_that_cannot_be_converted_is_left_alone():
 # --- versioning reaches the classes that get saved ----------------------------------------
 
 def test_a_container_checks_the_schema_version():
-    """The version check lived only on `BaseEntity` for a while, so the classes an
-    application actually writes to a file -- a container, a project -- could not be versioned
-    at all. Found by pAstroCORE trying to version its project."""
+    """The version check lived only on `BaseEntity` for a while, so the classes an application
+    actually writes to a file -- a container, a project -- could not be versioned at all."""
     class Box(BaseContainer[Part]):
         SCHEMA_VERSION = 2
 

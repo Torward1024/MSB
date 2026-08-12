@@ -16,7 +16,7 @@ from msb_arch import (BaseEntity,
                       errors)
 
 
-class Telescope(BaseEntity):
+class Widget(BaseEntity):
     diameter: float
 
     def get_diameter(self) -> float:
@@ -36,12 +36,12 @@ class Observatory(Manipulator):
 
 @pytest.fixture
 def bench():
-    return Observatory(base_classes=[Telescope])
+    return Observatory(base_classes=[Widget])
 
 
 @pytest.fixture
 def dish():
-    return Telescope(name="DSS14", diameter=70.0)
+    return Widget(name="DSS14", diameter=70.0)
 
 
 # --- the chain ----------------------------------------------------------------------------
@@ -205,8 +205,8 @@ def test_a_result_can_be_traced_back_to_the_object_that_produced_it(bench):
     journal = RequestJournal()
     bench.add_interceptor(journal)
 
-    first = Telescope(name="A", diameter=1.0)
-    second = Telescope(name="B", diameter=2.0)
+    first = Widget(name="A", diameter=1.0)
+    second = Widget(name="B", diameter=2.0)
     bench.configure(first, set_diameter=10.0)
     bench.configure(second, set_diameter=20.0)
     bench.configure(first, set_diameter=30.0)

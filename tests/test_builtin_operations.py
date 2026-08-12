@@ -17,7 +17,7 @@ from msb_arch import BaseContainer, BaseEntity, Manipulator, Super, errors
 from msb_arch.super.builtins import Configurator, Inspector
 
 
-class Telescope(BaseEntity):
+class Widget(BaseEntity):
     diameter: float
 
     def get_diameter(self) -> float:
@@ -31,7 +31,7 @@ class Telescope(BaseEntity):
         raise RuntimeError("boom")
 
 
-class Telescopes(BaseContainer[Telescope]):
+class Widgets(BaseContainer[Widget]):
     pass
 
 
@@ -42,13 +42,13 @@ class Observatory(Manipulator):
 @pytest.fixture
 def bare():
     """An orchestrator with no operation written by hand. This is the point of the item."""
-    return Observatory(base_classes=[Telescope, Telescopes])
+    return Observatory(base_classes=[Widget, Widgets])
 
 
 # --- what you get for free ----------------------------------------------------------------
 
 def test_an_orchestrator_reads_and_writes_with_no_super_written(bare):
-    dish = Telescope(name="DSS14", diameter=70.0)
+    dish = Widget(name="DSS14", diameter=70.0)
 
     assert bare.inspect(dish, get_diameter=None) == 70.0
     bare.configure(dish, set_diameter=64.0)
@@ -58,8 +58,8 @@ def test_an_orchestrator_reads_and_writes_with_no_super_written(bare):
 def test_the_builtins_serve_containers_too(bare):
     """A container answers `get` with an item, where an entity answers with an attribute.
     The built-ins hold no opinion about that: they apply whatever the request names."""
-    dishes = Telescopes(name="array")
-    dishes.add(Telescope(name="DSS14", diameter=70.0))
+    dishes = Widgets(name="array")
+    dishes.add(Widget(name="DSS14", diameter=70.0))
 
     assert bare.inspect(dishes, has_item="DSS14") is True
     assert bare.inspect(dishes, get="DSS14").diameter == 70.0
@@ -68,7 +68,7 @@ def test_the_builtins_serve_containers_too(bare):
 
 def test_reading_reports_every_method_even_when_one_fails(bare):
     """`strict=False` for inspect: a caller reading several things wants the whole picture."""
-    dish = Telescope(name="d", diameter=1.0)
+    dish = Widget(name="d", diameter=1.0)
     results = bare.inspect(dish, get_diameter=None, explode=None, raise_on_error=False)
 
     assert results["result"]["get_diameter"]["status"] is True
@@ -77,7 +77,7 @@ def test_reading_reports_every_method_even_when_one_fails(bare):
 
 def test_writing_stops_at_the_first_failure(bare):
     """`strict=True` for configure: a half-applied configuration is worse than a rejected one."""
-    dish = Telescope(name="d", diameter=1.0)
+    dish = Widget(name="d", diameter=1.0)
     response = bare.configure(dish, explode=None, set_diameter=99.0, raise_on_error=False)
 
     assert response["status"] is False
@@ -94,10 +94,10 @@ def test_registering_your_own_replaces_the_builtin_silently():
         def _inspect(self, obj, attributes):
             return "mine"
 
-    bench = Observatory(base_classes=[Telescope])
+    bench = Observatory(base_classes=[Widget])
     bench.register_operation(MyInspector(bench))
 
-    assert bench.inspect(Telescope(name="d", diameter=1.0), get_diameter=None) == "mine"
+    assert bench.inspect(Widget(name="d", diameter=1.0), get_diameter=None) == "mine"
     assert "inspect" not in bench._builtin_operations
 
 
@@ -109,7 +109,7 @@ def test_two_registrations_of_your_own_still_raise():
         def _measure(self, obj, attributes):
             return self._apply_methods(obj, attributes)
 
-    bench = Observatory(base_classes=[Telescope])
+    bench = Observatory(base_classes=[Widget])
     bench.register_operation(MyOperation(bench))
     with pytest.raises(errors.RegistrationError, match="already registered"):
         bench.register_operation(MyOperation(bench))
@@ -123,7 +123,7 @@ def test_replacing_a_builtin_twice_raises_the_second_time():
         def _inspect(self, obj, attributes):
             return "mine"
 
-    bench = Observatory(base_classes=[Telescope])
+    bench = Observatory(base_classes=[Widget])
     bench.register_operation(MyInspector(bench))
     with pytest.raises(errors.RegistrationError, match="already registered"):
         bench.register_operation(MyInspector(bench))
@@ -132,32 +132,32 @@ def test_replacing_a_builtin_twice_raises_the_second_time():
 # --- opting out ---------------------------------------------------------------------------
 
 def test_builtins_can_be_declined():
-    bench = Observatory(base_classes=[Telescope], builtins=False)
+    bench = Observatory(base_classes=[Widget], builtins=False)
     assert bench._operations == {}
     assert not hasattr(bench, "inspect")
 
 
 def test_the_builtins_are_importable_and_registerable_by_hand():
     """Declining them and registering one explicitly is a legitimate middle ground."""
-    bench = Observatory(base_classes=[Telescope], builtins=False)
+    bench = Observatory(base_classes=[Widget], builtins=False)
     bench.register_operation(Inspector(bench))
 
-    assert bench.inspect(Telescope(name="d", diameter=5.0), get_diameter=None) == 5.0
+    assert bench.inspect(Widget(name="d", diameter=5.0), get_diameter=None) == 5.0
     assert Configurator.OPERATION == "configure"
 
 
 def test_a_builtin_is_thin_enough_to_subclass():
     """One call to `_apply_methods`, so overriding one type keeps the rest working."""
     class Careful(Configurator):
-        def _configure_telescope(self, obj, attributes):
+        def _configure_widget(self, obj, attributes):
             if attributes.get("set_diameter", 0) > 100:
                 return self._build_response(obj, False, "set_diameter", None, "too large")
             return self._apply_methods(obj, attributes, strict=True)
 
-    bench = Observatory(base_classes=[Telescope], builtins=False)
+    bench = Observatory(base_classes=[Widget], builtins=False)
     bench.register_operation(Careful(bench))
 
-    dish = Telescope(name="d", diameter=1.0)
+    dish = Widget(name="d", diameter=1.0)
     bench.configure(dish, set_diameter=50.0)
     assert dish.diameter == 50.0
     bench.configure(dish, set_diameter=500.0, raise_on_error=False)
@@ -167,13 +167,13 @@ def test_a_builtin_is_thin_enough_to_subclass():
 # --- descending into a named member -------------------------------------------------------
 
 class Band(BaseEntity):
-    frequency: float
+    rating: float
 
-    def get_frequency(self) -> float:
-        return self.frequency
+    def get_rating(self) -> float:
+        return self.rating
 
-    def set_frequency(self, value: float) -> bool:
-        self.frequency = value
+    def set_rating(self, value: float) -> bool:
+        self.rating = value
         return True
 
 
@@ -185,26 +185,26 @@ class Bands(BaseContainer[Band]):
 def bands(bare):
     bare.update_registry(additional_classes=[Band, Bands])
     collection = Bands(name="bands")
-    collection.add(Band(name="X", frequency=8400.0))
-    collection.add(Band(name="L", frequency=1420.0))
+    collection.add(Band(name="X", rating=8400.0))
+    collection.add(Band(name="L", rating=1420.0))
     return collection
 
 
 def test_a_request_can_ask_the_collection_or_one_member(bare, bands):
     """Only the request can say which is meant, so the presence of the key decides."""
     assert set(bare.inspect(bands, get_all=None)) == {"X", "L"}
-    assert bare.inspect(bands, name="X", get_frequency=None) == 8400.0
+    assert bare.inspect(bands, name="X", get_rating=None) == 8400.0
 
 
 def test_configuring_reaches_one_member(bare, bands):
-    bare.configure(bands, name="L", set_frequency=1600.0)
-    assert bands.get("L").frequency == 1600.0
-    assert bands.get("X").frequency == 8400.0
+    bare.configure(bands, name="L", set_rating=1600.0)
+    assert bands.get("L").rating == 1600.0
+    assert bands.get("X").rating == 8400.0
 
 
 def test_naming_a_member_that_is_not_there_says_so(bare, bands):
     with pytest.raises(Exception, match="not found"):
-        bare.inspect(bands, name="nope", get_frequency=None)
+        bare.inspect(bands, name="nope", get_rating=None)
 
 
 def test_the_getter_is_a_hook_because_the_descent_is_not_uniform():
@@ -232,10 +232,10 @@ def test_the_getter_is_a_hook_because_the_descent_is_not_uniform():
 
     bench = Observatory(base_classes=[Registry, Band], builtins=False)
     bench.register_operation(RegistryInspector(bench))
-    registry = Registry(name="r", entries={"X": Band(name="X", frequency=8400.0)})
+    registry = Registry(name="r", entries={"X": Band(name="X", rating=8400.0)})
 
     assert bench.inspect(registry, count=None) == 1
-    assert bench.inspect(registry, entry="X", get_frequency=None) == 8400.0
+    assert bench.inspect(registry, entry="X", get_rating=None) == 8400.0
 
 
 def test_an_operation_with_no_collection_is_unaffected(bare):
@@ -245,7 +245,7 @@ def test_an_operation_with_no_collection_is_unaffected(bare):
     `Inspector` is `strict=False`, so that one failure is reported beside the successes rather
     than failing the request, which is the behaviour the descent must not have changed.
     """
-    dish = Telescope(name="d", diameter=70.0)
+    dish = Widget(name="d", diameter=70.0)
     assert bare.inspect(dish, get_diameter=None) == 70.0
 
     results = bare.inspect(dish, name="anything", get_diameter=None, raise_on_error=False)

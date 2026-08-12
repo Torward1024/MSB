@@ -47,7 +47,7 @@ class TestBindingByShape:
 
     def test_no_parameters_means_the_object_is_passed_anyway(self, binder):
         # A method declaring nothing beyond self is still called with the object, which is
-        # how a plain getter such as Telescope.get_code() is reached.
+        # how a plain getter such as Widget.get_code() is reached.
         seen = []
         methods = {"m": lambda self: seen.append(self) or "ok"}
         assert bound(binder, "target", "m", None, methods)["result"] == "ok"

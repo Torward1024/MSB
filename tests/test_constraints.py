@@ -1,6 +1,6 @@
 """Value constraints declared on annotations.
 
-`BaseEntity` checked types and nothing else, so a telescope accepted a diameter of -5.0 and a
+`BaseEntity` checked types and nothing else, so a widget accepted a diameter of -5.0 and a
 product an empty name. The helpers to reject both had been in `utils/validation.py` since the
 beginning with nothing connecting them to the model, so every project wrote the same
 `__init__` to call them by hand.

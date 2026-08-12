@@ -812,7 +812,7 @@ class NumericEntity(BaseEntity):
 def test_an_int_is_accepted_where_a_float_is_declared():
     """PEP 484's numeric tower, which every type checker follows.
 
-    This came from a real report: adding a space telescope failed with "Item 0 in tuple
+    This came from a real report: adding a nested widget failed with "Item 0 in tuple
     'pitch_range' must be of type <class 'float'>, got <class 'int'>" because the range was
     written `(0, 90)`. That is how anyone writes a range of degrees.
     """
