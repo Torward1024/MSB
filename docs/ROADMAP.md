@@ -19,47 +19,47 @@ because guessing those answers is how two of the worst defects in this project's
 
 | # | Item | Blocked on |
 | --- | --- | --- |
-| P1 | **Pipelines**, then a dependency-graph scheduler: topological order, parallel branches on the executor 0.8.0 introduced, incremental recomputation | One real dependent pipeline to design against, and a rule for which of a step's method results is its output **P20 supplies the graph**: the edges between handlers are already derived and exact, so what P1 adds is the scheduling rather than the discovery |
-| P10 | **Persistence** beyond `to_dict`/`from_dict` | Nothing technical. It is a product of its own, and 1.0 deliberately does not carry it |
-| P18 | **`save` and `load` as built-in operations**, beside `Inspector` and `Configurator` | Nothing technical -- both mechanisms it needs already exist. Written out in pAstroCORE and measured there: the generic half is **57 lines with nothing domain-specific in them**, which every MSB application will otherwise write word for word, against 73 lines of genuinely application-specific overrides. `register_operation` already treats a built-in as a default an application may replace, and `_{operation}_{type}` resolution already lets one type take over without the generic method knowing. **Not worth a release of its own; it ships with P1.** Two things it must get right or it is worse than each application doing it itself: the file format stays a *default* (JSON over `to_dict`) that an application overrides rather than a law, and the write is atomic -- temporary file then rename -- which the pAstroCORE version deliberately does not do, because an interrupted write leaving a maimed file is tolerable in one application and not in a framework. The reason it matters is not code reuse: without it the request surface has a hole at the last step of every pipeline, so a journal replays every calculation of a session and not the save that ended it |
-| P19 | **Routine serialization logs at INFO** | Reported from downstream, where opening one project filled the log with twenty identical lines: `Converted scan '...' to dictionary`, at INFO, once per scan per conversion. The count was a caller's fault and was fixed there, but the level is ours -- converting an object to a dictionary is the most ordinary thing this library does, and a message a user sees for it is noise by construction. INFO should mean something happened that a person would want to know about. Worth a sweep rather than one line: the same pattern is likely in every container | No routine `to_dict` or `from_dict` logs above DEBUG; a check counts INFO records emitted while serialising a container of a thousand items and expects none |
-| P14 | **A derived model-graph API**: "what depends on `Telescope`" | Nothing. Cheap: a read over `_fields`, `_item_type_hint()` and `_parents`, all of which already hold the answer |
-| P20 | Derive the operation graph instead of asking for it | **Done, 1.2.0.** `Manipulator.describe_operations()` reports every registered operation, its handlers, the handlers each calls and a label for each; `order_handlers()` sorts by prerequisite; the built-in `Catalogue` makes both requests. The registry is the manipulator's own state so it assembles the answer, and the built-in only exposes it -- the same split as `Inspector`. Edges between handlers are **exact**: all fourteen recovered from a 2 700-line calculator downstream with nothing declared. What a handler touches beyond the operation is an **upper bound** and says so, for checking a declaration rather than replacing one. Nothing in the module knows what an application is about: names are reported as written and `interpret` is where a caller says what they mean. Three faults in the first cut, all found by review rather than by tests -- one application's accessor table in the framework, helpers followed by that application's prefixes, and a free function reading `_operations` from outside Two limits found by using it downstream and both now tested: inherited handlers were invisible until the derivation walked the inheritance chain, and a handler attached to a class after import cannot be seen at all, since the derivation reads source |
-| P4 | **Generating an application from the data model** | P10 and P14. Aim at the GUI wiring: measured downstream, 74.5% is already Qt Designer output and the handler stubs a generator would emit are 81 lines |
-| P15 | **Lineage**: revision counters, then provenance derived from the request journal, then content hashing for memoisation | A decision about identity for mutable objects, which is the same decision incremental recomputation needs |
-| P16 | **Performance**, as a story of its own and taken together with P1 | P1. Entity construction is 17x a plain object after P5, against roughly an order of magnitude better for a Rust-backed validator. Worth attacking, but not before pipelines: a scheduler changes what fast means |
+| P10 | **Persistence** beyond `to_dict`/`from_dict` | Nothing technical. It is a product of its own -- a storage format, migrations, partial reads -- and no release so far has needed to carry it. `save` and `load` (P18) cover the case every application actually has |
+| P15 | **Lineage**: provenance derived from the request journal, then content hashing for memoisation | A decision about identity for mutable objects, which is the same decision incremental recomputation needs. **Revision counters shipped in 1.3.0** -- the one step that needed no such decision |
+| P4 | **Generating an application from the data model** | P10. P14 is done. Aim at the GUI wiring: measured downstream, 74.5% is already Qt Designer output and the handler stubs a generator would emit are 81 lines |
+| P16 | **Performance**, as a story of its own | Now unblocked: P1 has shipped, so what "fast" means is settled. Entity construction is 17x a plain object after P5, against roughly an order of magnitude better for a Rust-backed validator. Wants a real workload to measure against rather than a microbenchmark -- and the measurement discipline this project learned the hard way, twice |
 
-### Pipelines, and the shape reserved for them
+### Pipelines: what was reserved, and what it became
 
-Settled on 2026-08-04 and worth not re-deciding:
+Settled on 2026-08-04, shipped in 1.3.0, and all three held without amendment:
 
-- **A step names its input explicitly**, so a chain is the one-edge case of a dependency graph
-  rather than a rival syntax to it.
-- **Adaptation between two steps is itself a step**, written as an ordinary `Super`, never a
-  callable between steps -- a callable would stop a request being data, and with it go
-  serialization, history and replay.
-- **Substitution happens before the interceptor chain**, so an interceptor always sees a
-  concrete request and a recorded session stays replayable.
+- **A step names its input**, so a chain is the one-edge case of a dependency graph rather than a
+  rival syntax to it. Written as a value, since passing the step where the value goes says both
+  *when* and *what*; `once()` is for the edges that are only about when.
+- **Adaptation between two steps is itself a step**, written as an ordinary `Super`. There is
+  deliberately no way to put a callable between two steps: a function is not data, and a pipeline
+  holding one could not be stored, sent, journalled or replayed.
+- **Substitution happens before the interceptor chain**, so an interceptor always sees a concrete
+  request and a recorded session stays replayable. Checked by reading what an interceptor saw.
 
-1.0 forecloses none of it: attribute values reach handlers unexamined, so a reference object
-travels through `process_request` untouched today.
+Four things the design earned while being built, none of them foreseen:
 
-### Performance, and why it waits for pipelines
+| Found | Answer |
+| --- | --- |
+| Writing a file and reading it back looked independent | `once()`: wait for a step without taking anything from it |
+| A step after `configure` silently ran on the managing object | An operation that applies methods reports what they returned rather than handing the object on, so that is refused and says why |
+| A step that ran four methods has no obvious output | One method, its value; several, `step["method"]` says which |
+| A plan naming a live object could not be stored | An object travels as its own data under its type's name |
+
+What is deliberately not there: recomputing only what changed. It needs to know whether an input
+is the same input as last time, which is P15.
+
+### Performance, now unblocked
 
 Where it stands: entity construction is 17x a plain object with the same four attributes, down
-from 44x, and introspection per instance is gone. That is a reasonable place to stop for 1.0
-and a poor place to stop forever -- a Rust-backed validator is roughly an order of magnitude
-ahead, and pretending otherwise helps nobody.
+from 44x, and introspection per instance is gone. A Rust-backed validator is roughly an order of
+magnitude ahead of that, and pretending otherwise helps nobody.
 
-It is deliberately coupled to P1 rather than pursued on its own, because a scheduler changes
-what the word means. Shaving microseconds off constructing an object is worth little beside not
-recomputing a branch at all, and the two answers compete for the same design: memoisation needs
-content hashing, hashing needs identity for mutable objects, and identity is what P15 is about.
-Optimising the single-object path first would be optimising the part a dependency graph makes
-least important.
-
-So the order is P1, then P15, then this -- and only then the question of whether the validation
-path itself needs rewriting, measured against a real workload rather than a microbenchmark.
+It waited for P1 because a scheduler changes what the word means -- shaving microseconds off
+constructing an object is worth little beside not recomputing a branch at all. P1 has shipped, so
+the question is open again, with one condition attached: measure against a real workload rather
+than a microbenchmark. This project has twice been wrong about where its own time went, and both
+times the guess was reasonable.
 
 ### Lineage, and the one hard problem
 
@@ -68,11 +68,12 @@ journal shipped in 0.7.0 already records what each request consumed and produced
 unsolved is identity. Entities are mutable and addressed by `name`, so once an object changes,
 the state that produced an earlier result has nothing to point at.
 
-Four ways out, composing rather than competing:
+Four ways out, composing rather than competing. **The first shipped in 1.3.0**, being the one
+that needs no answer about identity:
 
 | Approach | Cost | What it gives |
 | --- | --- | --- |
-| A revision counter, bumped on write | one `int` | "did this change", and an ordering. Nearly free: the place that invalidates the cache is the place that would bump it |
+| ~~A revision counter, bumped on write~~ | one `int` | **Done, 1.3.0.** "Did this change", without keeping a copy of what it was. Bumped where the cache is invalidated, as predicted: 114 ns against a 2 900 ns write. It counts writes rather than differences, is about one object rather than what it holds, and is not serialised |
 | The request journal | O(operations) | provenance itself, and any past state by replay from a checkpoint |
 | A content hash, cached and invalidated like `to_dict` | a traversal | "is this the same input as last time", which memoisation needs |
 | Snapshots through `to_dict` | O(model size) | exact past states, affordable as checkpoints rather than per step |
@@ -85,6 +86,11 @@ the clock, a file or a random seed cannot be reconstructed from its request alon
 
 | # | Item | Release |
 | --- | --- | --- |
+| P1 | **Pipelines**, and the scheduler over them | 1.3.0. A tree of requests: every step is an ordinary `process_request`, and what a pipeline adds is which step needs which, what one takes from another, and what to do with the rest when one fails. Every operation is a method on the pipeline with the facade's own signature, so a pipeline is written by writing the calls you would have made -- and the reference each call hands back is the edge. Topological stages fall out of the edges; two independent 0.3 s steps take 0.31 s through `arun` against 0.61 s in sequence. Built and run through the manipulator, and a plan is data, so what one end builds the other end replays. The three shapes reserved in 1.0 all held |
+| P14 | **A derived model-graph API** | 1.3.0. `holds` is what a class declares; `held_by` is the same edges reversed, which is the direction nothing in the code answers and every caller asks in. `describe_model` on the manipulator, `catalogue` with `method="model"` as a request |
+| P18 | **`save` and `load` as built-in operations** | 1.3.0. JSON over `to_dict` as a default an application replaces by registering its own, and an atomic write, which were the two conditions for it being better than each application doing it itself |
+| P19 | **Routine work says nothing at INFO** | 1.3.0. Six messages moved to DEBUG; a check counts what is said while building, serialising and reading a container of a thousand items and expects nothing |
+| P15a | **Revision counters** | 1.3.0. The first of P15's four steps, and the one needing no decision about identity |
 | P17 | A nested-descent hook on the built-in `Inspector` and `Configurator` | 1.1.0. Predicted under P3 before the built-ins existed, confirmed by pAstroCORE, whose ten container handlers exist for exactly this |
 | -- | Mapping keys restored from the annotation | 1.0.1. Also found by pAstroCORE: a `Dict[float, float]` could not round-trip through JSON at all |
 
@@ -133,6 +139,9 @@ proposed again.
 - **Putting a field in everybody's data for a feature most never use breaks people.**
   `schema_version` was written unconditionally in 0.6.0 and broke every hand-written `from_dict`
   override downstream. It is now written only by a class that has actually versioned itself.
+- **A machine's noise can be larger than the change being measured.** The revision counter
+  looked like a 7.8% cost on the write path; three runs of the *same* code then gave 5.6, 4.1 and
+  3.4 us. Sampling both sides in one pass said 114 ns.
 - **Profile before optimising, even when the plan already says what to do.** Entity construction
   cost was 42 `isinstance` calls and ten introspection calls per object, all re-deriving the
   same answer about the same annotation -- not allocation, which is what pooling would have
