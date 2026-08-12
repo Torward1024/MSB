@@ -342,3 +342,65 @@ def test_a_plan_naming_a_type_that_is_not_here_is_refused(manipulator):
 def test_something_that_is_not_a_plan_is_refused(manipulator):
     with pytest.raises(RequestError):
         manipulator.pipeline(plan={"nothing": "useful"})
+
+
+# --- one way in ------------------------------------------------------------------------------
+
+def test_a_pipeline_is_only_reachable_through_a_manipulator():
+    """The class is not part of the package surface: there is one door, and it is the
+    orchestrator."""
+    import msb_arch
+
+    assert "Pipeline" not in msb_arch.__all__
+    assert not hasattr(msb_arch, "Pipeline")
+
+
+def test_a_pipeline_has_no_operations_of_its_own(manipulator, thing):
+    """Its methods are the manipulator's registry, read at the moment of the call. Registering
+    an operation makes it appear; nothing is copied, so nothing can drift."""
+    pipe = manipulator.pipeline()
+    assert not hasattr(pipe, "polish")
+
+    class Polish(Super):
+        OPERATION = "polish"
+
+        def _polish(self, obj, attributes):
+            return "shiny"
+
+    manipulator.register_operation(Polish(manipulator))
+    assert pipe.polish(thing).operation == "polish"
+    assert pipe.run().output == "shiny"
+
+
+def test_every_step_is_run_by_the_manipulator(manipulator, thing):
+    """A pipeline runs nothing itself. Each step goes through process_request, which is what
+    puts every step through the interceptors, the journal and the metrics like any other
+    request."""
+    went_through = []
+    original = manipulator.process_request
+
+    def counting(request):
+        went_through.append(request["operation"])
+        return original(request)
+
+    manipulator.process_request = counting
+    pipe = manipulator.pipeline()
+    doubled = pipe.compute(thing, by=2)
+    pipe.compute(thing, method="total", of=[doubled])
+    pipe.run()
+
+    assert went_through == ["compute", "compute"]
+
+
+def test_the_pipeline_never_reaches_past_the_manipulator():
+    """A ratchet. The module may ask the orchestrator and nothing else: calling a Super's
+    execute, or reading _operations, would be the hierarchy quietly going flat."""
+    import pathlib
+    import re
+
+    source = (pathlib.Path(__file__).resolve().parent.parent
+              / "src" / "msb_arch" / "pipeline.py").read_text(encoding="utf-8")
+    for forbidden in (r"\.execute\(", r"\._operations\b", r"\._registry\b", r"\._interceptors\b"):
+        assert not re.search(forbidden, source), (
+            f"pipeline.py reaches past the manipulator: {forbidden}. Asking it -- "
+            "get_supported_operations, process_request -- is the whole of what it may do.")

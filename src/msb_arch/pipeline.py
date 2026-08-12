@@ -300,7 +300,8 @@ class Pipeline:
         return len(self._steps)
 
     def __repr__(self) -> str:
-        return f"Pipeline('{self.name}', {len(self._steps)} step(s))"
+        return (f"Pipeline('{self.name}', {len(self._steps)} step(s), "
+                f"of {type(self._manipulator).__name__})")
 
     def steps(self) -> List[Step]:
         """Return the steps in the order they were written."""
