@@ -877,6 +877,37 @@ class Serializable(ABC, metaclass=EntityMeta):
                 return sorted(items, key=repr)
         return value
 
+    def fingerprint(self) -> str:
+        """Return a hash of everything this object holds, itself and below.
+
+        Returns:
+            str: 16 hexadecimal characters. Two objects with the same contents give the same
+                string, whatever order their fields were written in and whether or not they are
+                the same object.
+
+        Notes:
+            - The other half of `revision`, and the half that answers across processes and
+              across time. `revision` says "was this written to" and costs nothing; this says
+              "is this the same content as before" and costs one serialisation.
+            - Computed over `to_dict` with the keys sorted, so it depends on what the object
+              *is* rather than on the order anything was assigned. `name` is part of the
+              content, since two differently named objects are not the same input.
+            - Truncated to 64 bits. This identifies content, it does not authenticate it: a
+                collision means a wrong cache hit, not a forged one, and 64 bits is 1 in 2**32
+                after four billion distinct objects.
+            - Reflects the cached mapping when caching is on, so it is invalidated with it.
+
+        Examples:
+            >>> a, b = Item(name="i", value=1), Item(name="i", value=1)
+            >>> a.fingerprint() == b.fingerprint()
+            True
+        """
+        import hashlib
+        import json
+
+        content = json.dumps(self.to_dict(), sort_keys=True, default=repr, ensure_ascii=False)
+        return hashlib.blake2b(content.encode("utf-8"), digest_size=8).hexdigest()
+
     def to_dict(self) -> dict:
         """Convert the entity to a dictionary for serialization.
 

@@ -333,6 +333,91 @@ class Manipulator(ABC):
             return asyncio.run(prepared.arun(raise_on_error=raise_on_error))
         return prepared.run(raise_on_error=raise_on_error)
 
+    def journal(self) -> Optional[Any]:
+        """Return the request journal registered with this orchestrator, if there is one.
+
+        Returns:
+            Optional[RequestJournal]: The first one added, or None.
+
+        Notes:
+            - A journal is an interceptor, so the orchestrator already holds it. Finding it here
+              means a caller asks the manipulator about the session rather than having to keep
+              its own reference to the recorder.
+        """
+        from ..interceptors import RequestJournal
+
+        for interceptor in self._interceptors:
+            if isinstance(interceptor, RequestJournal):
+                return interceptor
+        return None
+
+    def history(self, name: Optional[str] = None, changed_only: bool = False) -> List[Dict[str, Any]]:
+        """Return what has been requested in this session.
+
+        Args:
+            name (Optional[str]): Narrow it to requests that named one object.
+            changed_only (bool): Only the requests that left their object different, which needs
+                a journal built with `fingerprints=True`.
+
+        Returns:
+            List[Dict[str, Any]]: The entries, oldest first.
+
+        Raises:
+            NotFoundError: If no journal is registered, since there is nothing to answer from.
+
+        Examples:
+            >>> manipulator.add_interceptor(RequestJournal())
+            >>> manipulator.configure(thing, set={"params": {"value": 2}})
+            >>> [entry["operation"] for entry in manipulator.history("thing")]
+            ['configure']
+        """
+        journal = self.journal()
+        if journal is None:
+            raise NotFoundError(
+                "No RequestJournal is registered, so there is no history to report")
+
+        entries = journal.changed() if changed_only else journal.entries
+        if name is not None:
+            entries = [entry for entry in entries if entry.get("object") == name]
+        return entries
+
+    def replay(self, journal: Optional[Any] = None, skip_failures: bool = True,
+               concurrent: bool = False) -> Any:
+        """Run a recorded session again.
+
+        Args:
+            journal (Optional[RequestJournal]): The session to replay. Defaults to the one
+                registered here.
+            skip_failures (bool): Leave out requests that failed the first time.
+            concurrent (bool): Ignored for a session, which is ordered by construction. Present
+                so the signature matches `pipeline`.
+
+        Returns:
+            PipelineRun: The response of every replayed request.
+
+        Raises:
+            NotFoundError: If no journal was given and none is registered.
+
+        Notes:
+            - A session is a plan whose steps happen to have no edges between them except order,
+              so this is `pipeline` with the plan the journal produced. There is one thing that
+              runs requests and this is not a second one.
+            - Replaying against the orchestrator that holds the journal records the replay as it
+              runs. Remove the journal first, or replay against another orchestrator.
+            - Replay assumes the handlers are deterministic. One that reads the clock, a file or
+              a random seed cannot be reconstructed from its request alone.
+        """
+        journal = journal if journal is not None else self.journal()
+        if journal is None:
+            raise NotFoundError("No RequestJournal was given and none is registered")
+
+        from ..pipeline import PipelineRun
+
+        plan = journal.as_plan(skip_failures=skip_failures)
+        if not plan:
+            return PipelineRun({}, {}, None)
+        return self.pipeline(plan, raise_on_error=False, concurrent=concurrent)
+
     def dependents_of(self, name: str, roots: Optional[List[type]] = None) -> List[str]:
         """Return every type that would feel a change to this one.
 

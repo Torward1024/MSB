@@ -123,24 +123,32 @@ class RequestJournal:
           random seed cannot be reconstructed from its request alone.
     """
 
-    def __init__(self, limit: Optional[int] = None):
+    def __init__(self, limit: Optional[int] = None, fingerprints: bool = False):
         """Initialize an empty journal.
 
         Args:
             limit (Optional[int]): Keep at most this many entries, dropping the oldest.
                 Defaults to None, meaning keep everything.
+            fingerprints (bool): Record a hash of the object before and after each request, so
+                the journal says which requests actually changed something rather than only
+                which ran. Off by default: it costs one serialisation of the object per request,
+                each way.
         """
         self._entries: List[Dict[str, Any]] = []
         self._limit = limit
+        self._fingerprints = fingerprints
 
     def __call__(self, request: Dict[str, Any], call_next: Callable) -> Any:
         started = time.perf_counter()
+        obj = request.get("obj")
         entry = {
             "operation": request.get("operation"),
-            "object": getattr(request.get("obj"), "name", request.get("obj")),
+            "object": getattr(obj, "name", obj),
             "attributes": dict(request.get("attributes") or {}),
             "request": request,
         }
+        if self._fingerprints:
+            entry["before"] = self._fingerprint(obj)
         try:
             response = call_next(request)
         except Exception as error:
@@ -151,8 +159,18 @@ class RequestJournal:
         entry.update(seconds=time.perf_counter() - started,
                      status=response.get("status") if isinstance(response, dict) else True,
                      response=response)
+        if self._fingerprints:
+            entry["after"] = self._fingerprint(obj)
         self._append(entry)
         return response
+
+    @staticmethod
+    def _fingerprint(obj: Any) -> Optional[str]:
+        """Return a hash of an object's contents, or None for something that has none."""
+        try:
+            return obj.fingerprint()
+        except AttributeError:
+            return None
 
     def _append(self, entry: Dict[str, Any]) -> None:
         self._entries.append(entry)
@@ -188,29 +206,70 @@ class RequestJournal:
         """
         return [entry for entry in self._entries if entry.get("object") == name]
 
-    def replay(self, manipulator, skip_failures: bool = True) -> List[Any]:
-        """Run every recorded request again, in order.
+    def changed(self) -> List[Dict[str, Any]]:
+        """Only the entries whose request left the object different from how it found it.
+
+        Returns:
+            List[Dict[str, Any]]: The entries where the recorded fingerprints differ. Empty
+                when the journal was built without `fingerprints=True`, since without them
+                nothing here knows what changed.
+        """
+        return [entry for entry in self._entries
+                if entry.get("before") is not None and entry.get("before") != entry.get("after")]
+
+    def as_plan(self, skip_failures: bool = True) -> Dict[str, Dict[str, Any]]:
+        """Return the recorded session as a pipeline plan.
 
         Args:
-            manipulator (Manipulator): The orchestrator to replay against. It may be the one
-                that recorded the session or another configured the same way.
             skip_failures (bool): Leave out requests that failed the first time. Defaults to
                 True, since replaying a known failure rarely says anything new.
+
+        Returns:
+            Dict[str, Dict[str, Any]]: Steps keyed by name, each waiting for the one before, so
+                the order it ran in is the order it runs in again.
+
+        Notes:
+            - A session is a plan of steps that happened to have no edges between them, so
+              replaying is running a plan and needs no second mechanism. `Manipulator.replay`
+              is what runs it.
+        """
+        plan: Dict[str, Dict[str, Any]] = {}
+        previous = None
+        for position, entry in enumerate(self._entries, start=1):
+            if skip_failures and not entry.get("status"):
+                continue
+            request = entry["request"]
+            name = f"{request.get('operation')}_{position}"
+            step = {"operation": request.get("operation"),
+                    "obj": request.get("obj"),
+                    "attributes": dict(request.get("attributes") or {})}
+            if request.get("method"):
+                step["method"] = request["method"]
+            if previous:
+                step["after"] = [previous]
+            plan[name] = step
+            previous = name
+        return plan
+
+    def replay(self, manipulator, skip_failures: bool = True) -> List[Any]:
+        """Deprecated. Use `manipulator.replay(journal)`.
+
+        Args:
+            manipulator (Manipulator): The orchestrator to replay against.
+            skip_failures (bool): Leave out requests that failed the first time.
 
         Returns:
             List[Any]: The responses, in order.
 
         Notes:
-            - Replaying against the orchestrator that holds the journal would record the
-              replay as it runs. Remove the journal first, or replay against another.
+            - The orchestrator is what runs requests, so replaying belongs on it rather than on
+              a record of them. This still works and will keep working until 2.0.
         """
-        responses = []
-        for entry in list(self._entries):
-            if skip_failures and not entry.get("status"):
-                continue
-            responses.append(manipulator.process_request(entry["request"]))
-        logger.info("Replayed %s request(s)", len(responses))
-        return responses
+        import warnings
+
+        warnings.warn("RequestJournal.replay is deprecated; use manipulator.replay(journal)",
+                      DeprecationWarning, stacklevel=2)
+        return list(manipulator.replay(self, skip_failures=skip_failures).values())
 
     def clear(self) -> None:
         """Discard every entry."""

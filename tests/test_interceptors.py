@@ -227,7 +227,7 @@ def test_a_session_can_be_replayed(bench, dish):
 
     bench.remove_interceptor(journal)       # or the replay records itself
     dish.set_diameter(70.0)
-    journal.replay(bench)
+    bench.replay(journal)
     assert dish.diameter == 12.0            # the session ended where it ended
 
 
@@ -240,7 +240,7 @@ def test_a_failed_request_is_recorded_and_skipped_on_replay(bench, dish):
 
     assert len(journal.failures()) == 1
     bench.remove_interceptor(journal)
-    assert len(journal.replay(bench)) == 1
+    assert len(bench.replay(journal)) == 1
 
 
 def test_a_journal_can_be_bounded(bench, dish):
