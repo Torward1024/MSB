@@ -1,15 +1,13 @@
 # scaffold.py
-"""Generate the handler stubs a model implies, so the boilerplate is written once.
+"""Generate the handler stubs a model implies.
 
-Adding an operation over a model means one handler per type it applies to, each named
-`_<operation>_<type>` so dispatch finds it. The names, the signatures and the descent into
-containers all follow from the model graph, which is already derived. What does not follow is
-what the handlers *do*, and that is the only part left to write.
+Adding an operation over a model means one handler per type, each named `_<operation>_<type>` or
+dispatch will not find it. The names, the signatures and the descent into containers follow from
+the model graph. What the handlers do does not, and is the part left to write.
 
-This emits text rather than classes. A generated stub is meant to be read, edited and committed;
-a class conjured at runtime would be neither.
+Emits text rather than classes, so a stub can be read, edited and committed.
 
-Reached through the manipulator, like everything else: `manipulator.scaffold("measure")`.
+Reached through `manipulator.scaffold("measure")`.
 """
 from typing import Any, Dict, List, Optional
 
@@ -69,15 +67,16 @@ def stubs(graph: Dict[str, Dict[str, Any]], operation: str,
     Returns:
         str: Python source, ready to be written to a file and edited.
 
+    Raises:
+        RequestError: If `operation` is not a valid identifier, since a handler is a method.
+
     Notes:
-        - A container gets a handler that walks its items and calls the handler for what it
-          holds, since that descent is the same every time and is what the graph knows.
-        - An entity gets a stub that raises `NotImplementedError`, listing what it holds in the
-          docstring. A stub that returned None would be a handler that silently did nothing.
-          Through a facade the failure arrives as `HandlerError` naming the handler, as any
-          exception the framework did not define does.
-        - Types are emitted deepest first, so a container's handler appears after the one it
-          calls and the file reads in the order the work happens.
+        - A container gets a working handler that walks its items and calls the handler for what
+          it holds.
+        - An entity gets a stub that raises `NotImplementedError`; a stub returning None would
+          be a handler that silently did nothing. Through a facade that arrives as
+          `HandlerError` naming the handler.
+        - Types are emitted deepest first, so a container's handler follows the one it calls.
 
     Examples:
         >>> print(stubs(graph, "measure"))
@@ -114,8 +113,7 @@ def _deepest_first(graph: Dict[str, Dict[str, Any]]) -> List[str]:
     """Return the type names with the ones nothing holds last.
 
     Notes:
-        - So a container's handler is emitted after the handler it calls. A cycle stops the
-          ordering rather than the generation: the remainder is appended in the order it came.
+        - A cycle stops the ordering, not the generation: the remainder is appended as it came.
     """
     remaining = list(graph)
     placed: List[str] = []

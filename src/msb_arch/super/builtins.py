@@ -1,23 +1,22 @@
-"""The two operations that fall out of the request model itself.
+"""The operations a `Manipulator` registers for you.
 
-A request names methods to apply, and `_apply_methods` applies them. For reading an object and
-for changing it, that is the entire handler: measured on the project this framework was written
-for, 20 of its 21 handlers held no domain logic at all, and six were literally a type check and
-one call -- with the type check redundant, since dispatch had already selected the handler by
-type.
+| Operation | What it does |
+| --- | --- |
+| `inspect` | Applies every method a request names and reports each outcome |
+| `configure` | The same, stopping at the first failure |
+| `catalogue` | Reports what is registered, and the shape of the model |
+| `save` | Writes an object to a file |
+| `load` | Reads one back |
 
-`inspect` and `configure` are the two that generalise, because they follow from the request
-model rather than from any domain: an attribute names a method, and the method either reads or
-writes. Operations like `calculate` or `visualize` are domain work and stay yours to write.
+`inspect` and `configure` follow from the request model rather than from any domain: an attribute
+names a method, and the method either reads or writes. Operations like `calculate` are domain work
+and stay yours to write.
 
-Both are registered by a `Manipulator` unless it is told not to, so an application that only
-reads and writes its model needs no `Super` of its own. Registering an operation of the same
-name replaces the built-in silently -- it is a default being overridden, not a collision -- so
-nothing written before these existed behaves differently.
+All are registered unless a `Manipulator` is built with `builtins=False`. Registering an operation
+of the same name replaces one silently: it is a default being overridden, not a collision.
 
-They are deliberately thin. Each is one call to `_apply_methods`, which is what makes them
-worth subclassing: override the handler for a type that needs domain logic and the rest keeps
-working.
+Each is thin -- usually one call to `_apply_methods` -- so overriding the handler for one type
+leaves the rest working.
 """
 from typing import Any, Callable, Dict, List, Optional
 
@@ -42,17 +41,17 @@ def _descend(operation: Super, obj: Any, attributes: Dict[str, Any]) -> Optional
         attributes (Dict[str, Any]): The request's attributes.
 
     Returns:
-        Optional[Any]: What the operation produced for the item, or None when the request
-            names no item -- which is the signal to apply the methods to `obj` itself.
+        Optional[Any]: What the operation produced for the item, or None when the request names
+            no item, which means the methods apply to `obj` itself.
 
     Raises:
         DispatchError: If the request names an item the collection does not hold.
 
     Notes:
-        - A request against a collection means one of two things, and only the request can
-          say which: `inspect(frequencies, get_all=None)` asks the collection, while
-          `inspect(frequencies, name="IF1", get_frequency=None)` asks one member of it. The
-          key is removed before descending, so the item sees only the methods meant for it.
+        - A request against a collection means one of two things and only the request says
+          which: `inspect(box, get_all=None)` asks the collection, `inspect(box, name="bolt",
+          get="length")` asks one member. The key is removed before descending, so the item
+          sees only the methods meant for it.
     """
     key = operation.NESTED_KEY
     if key not in attributes:
@@ -76,14 +75,12 @@ class Inspector(Super):
 
     Example:
         ```python
-        manipulator.inspect(telescope, get_diameter=None, get=["name", "isactive"])
+        manipulator.inspect(part, get="price", has_attribute="price")
         ```
 
     Notes:
-        - Registered automatically, so `inspect` is available without writing anything.
-        - `strict=False`, so a request naming several methods reports every outcome rather
-          than stopping at the first failure. Reading is the case where a caller most often
-          wants the whole picture.
+        - `strict=False`: a request naming several methods reports every outcome rather than
+          stopping at the first failure, since a reader usually wants the whole picture.
     """
 
     OPERATION = "inspect"
@@ -102,10 +99,9 @@ class Inspector(Super):
             Optional[Callable]: A callable taking a name and returning the member.
 
         Notes:
-            - **This is the hook, and it exists because the descent is not uniform.** A
-              container answers `get(name)`; a `Project` answers `get_observation(name)`;
-              something else will answer differently again. Override this and both built-ins
-              descend correctly into it.
+            - The hook for descent, which is not uniform: a container answers `get(name)`, a
+              `Project` answers something else. Override it and both built-ins descend into
+              your type correctly.
         """
         return obj.get if isinstance(obj, BaseContainer) else None
 
@@ -130,16 +126,13 @@ class Configurator(Super):
 
     Example:
         ```python
-        manipulator.configure(telescope, set_diameter=64.0)
+        manipulator.configure(part, set={"params": {"price": 4.5}})
         ```
 
     Notes:
-        - Registered automatically, so `configure` is available without writing anything.
-        - `strict=True`, so the first failure stops the rest. A half-applied configuration is
-          worse than a rejected one, which is the opposite of what reading wants.
-        - Returns `MethodResults` rather than the bespoke value a hand-written configure
-          handler tends to invent. A configure result is rarely read, and a uniform one is
-          what makes a request history replayable.
+        - `strict=True`: the first failure stops the rest, since a half-applied configuration is
+          worse than a rejected one.
+        - Returns `MethodResults`, uniformly, which is what makes a request history replayable.
     """
 
     OPERATION = "configure"
@@ -175,12 +168,9 @@ class Catalogue(Super):
         manipulator (Manipulator): The orchestrator whose registry is being reported.
 
     Notes:
-        - A built-in operation rather than a function a caller may run over a manipulator,
-          because reaching into an orchestrator from outside to read its registry is exactly
-          what the request model exists to avoid. A dialog, a command line and a server each
-          ask the same question the same way: `manipulator.catalogue()`.
-        - Replaceable like any other built-in: register an operation named `catalogue` and it
-          takes over.
+        - An operation rather than a function over a manipulator, so a dialog, a command line
+          and a server all ask the same way.
+        - Replaceable like any built-in: register an operation named `catalogue`.
 
     Examples:
         >>> manipulator.catalogue()
@@ -205,9 +195,8 @@ class Catalogue(Super):
                 "touches": [...], "label": str}}}`.
 
         Notes:
-            - The registry is the manipulator's own state, so it assembles the answer; this
-              only makes it reachable as a request, the way `Inspector` makes an object's own
-              attributes reachable as one.
+            - The manipulator assembles the answer, since the registry is its own state. This
+              makes it reachable as a request.
         """
         assembled = self._manipulator.describe_operations(
             operation=attributes.get("operation"),
@@ -247,8 +236,8 @@ class Catalogue(Super):
                 named one type.
 
         Notes:
-            - The other half of what a catalogue is for. `_catalogue` says what can be done;
-              this says what it can be done to, and both are read back rather than declared.
+            - `_catalogue` says what can be done; this says what it can be done to. Both are
+              derived rather than declared.
         """
         graph = self._manipulator.describe_model(attributes.get("roots"))
         wanted = attributes.get("of")
@@ -263,7 +252,7 @@ class Catalogue(Super):
 
 
 class _FileOperation(Super):
-    """Shared by the two halves of persistence: the attribute check they both need."""
+    """Shared by `Persistence` and `Loader`: the attribute check both need."""
 
     @staticmethod
     def _required(attributes: Dict[str, Any], name: str, verb: str) -> Any:
@@ -278,8 +267,7 @@ class _FileOperation(Super):
             Any: The value.
 
         Raises:
-            RequestError: If it was not given. There is no sensible default for where a
-                caller's files live.
+            RequestError: If it was not given. There is no sensible default for a path.
         """
         value = attributes.get(name)
         if not value:
@@ -294,14 +282,10 @@ class Persistence(_FileOperation):
         manipulator (Manipulator): The orchestrator this is reached through.
 
     Notes:
-        - **The format is a default, not a law.** JSON over `to_dict` suits most models and
-          none perfectly; an application wanting otherwise registers its own `save`, and this
-          steps aside as any built-in does.
-        - **The write is atomic**: a temporary file beside the target, then a rename. An
-          interrupted write leaves the previous file intact rather than a truncated one, and a
-          truncated file is worse than an old one because it still looks like data. A framework
-          taking on file I/O owes its callers at least this much, or they were better off
-          writing it themselves.
+        - The format is a default, not a law: JSON over `to_dict`. An application wanting
+          otherwise registers its own `save`.
+        - The write is atomic -- a temporary file beside the target, then a rename -- so an
+          interrupted write leaves the previous file rather than a truncated one.
 
     Examples:
         >>> manipulator.save(entity, path="entity.json")
@@ -355,8 +339,8 @@ class Persistence(_FileOperation):
             text (str): What to write.
 
         Notes:
-            - Written beside the target and renamed, because a rename within one directory is
-              atomic on every platform this runs on.
+            - Written beside the target and renamed: a rename within one directory is atomic on
+              every supported platform.
         """
         path.parent.mkdir(parents=True, exist_ok=True)
         staging = path.with_name(path.name + ".writing")
@@ -371,8 +355,7 @@ class Persistence(_FileOperation):
 class Loader(_FileOperation):
     """Reads a file back into an object.
 
-    Notes:
-        - Separate from `Persistence` only because a `Super` binds to one operation name.
+    Separate from `Persistence` because a `Super` binds to one operation name.
 
     Examples:
         >>> manipulator.load(entity, path="entity.json")
@@ -386,15 +369,13 @@ class Loader(_FileOperation):
 
         Args:
             obj (Serializable): An object of the type to rebuild. A request runs on something,
-                and here that something says what to build -- the one place this fits the
-                request model awkwardly rather than naturally.
+                and here that something says what to build.
             attributes (Dict[str, Any]): `path`, the file to read; optionally `kind`, the class
-                to build, for reading something that does not exist yet.
+                to build or its name, for reading something no instance exists of.
 
         Returns:
-            Any: The object, rather than a mapping holding it. What a step produces is what the
-                next step is given, so a `load` that answered `{"object": ...}` would make every
-                chain through it start by unpacking a dictionary of one.
+            Any: The object itself, not a mapping holding it, so a pipeline step reading a file
+                hands the object straight to the next step.
 
         Raises:
             RequestError: If no path was given or the type cannot rebuild itself.
@@ -405,7 +386,7 @@ class Loader(_FileOperation):
         kind = attributes.get("kind") or type(obj)
         if isinstance(kind, str):
             from ..model import named_type
-            kind = named_type(kind)          # a plan or a wire carries a name, not a class
+            kind = named_type(kind)          # a plan or a wire carries a name
         if not isinstance(kind, type) or not hasattr(kind, "from_dict"):
             raise RequestError(
                 f"{getattr(kind, '__name__', kind)!r} cannot be read from a file: it is not a "

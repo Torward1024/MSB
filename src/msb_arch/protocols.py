@@ -1,15 +1,11 @@
-"""What the layers of MSB require of each other, stated as interfaces.
+"""What the layers of MSB require of each other, as interfaces.
 
-A contract that names a class says more than it means. `Super` took a `Manipulator`, which
-reads as though an operation needs the orchestrator -- registry, facades, batching and all --
-when it needs one method from it. That is worth stating precisely for three reasons: an
-extension contract should name an interface rather than an implementation, a `Super` should be
-testable without building the layer above it, and the operation layer should not import from
-the entry-point layer above it to say what it accepts.
+A `Super` needs one method from whatever drives it, not the whole orchestrator, so the contract
+names an interface. That keeps a `Super` testable without the layer above it, and keeps the
+operation layer from importing the entry-point layer.
 
-These are `typing.Protocol`, so nothing has to declare that it implements one: `Manipulator`
-satisfies `MethodProvider` by having the method, and so does a stub of three lines. They are
-runtime-checkable, so `isinstance` works where a check is genuinely wanted.
+These are `typing.Protocol`: nothing declares that it implements one, and `isinstance` works
+where a check is wanted.
 """
 from typing import Any, Callable, Dict, Protocol, Type, runtime_checkable
 
@@ -20,13 +16,11 @@ __all__ = ["Interceptor", "MethodProvider"]
 class MethodProvider(Protocol):
     """Answers which methods may be applied to an object of a given type.
 
-    The whole of what a `Super` needs from whatever drives it. A `Super` resolves a handler
-    itself and applies methods itself; what it cannot know alone is which methods a request is
-    permitted to name for a given type, because that is registered with the orchestrator.
+    The whole of what a `Super` needs from whatever drives it: it resolves handlers and applies
+    methods itself, but which methods a request may name for a type is registered with the
+    orchestrator.
 
-    `Manipulator` implements this. So does anything else that answers the question, which is
-    the point: an operation can be driven by a test stub, by a narrower registry, or by
-    something that has not been written yet.
+    `Manipulator` implements this, and so does a three-line test stub.
     """
 
     def get_methods_for_type(self, obj_type: Type) -> Dict[str, Callable]:
@@ -48,10 +42,8 @@ class MethodProvider(Protocol):
 class Interceptor(Protocol):
     """Sees a request before it runs and its response after, and decides what happens between.
 
-    Metrics, auditing, rate limiting and authorisation are not four features; they are four
-    users of this one hook, which is why MSB provides the hook and none of the four. A library
-    that chose a metrics backend would end the promise of no dependencies, and a library that
-    chose an authorisation model would be wrong about somebody's.
+    Metrics, auditing, rate limiting and authorisation are four users of this one hook, which is
+    why MSB provides the hook and none of the four.
 
     An interceptor is called with the request and with `call_next`, and returns a response. It
     may:
@@ -79,11 +71,10 @@ class Interceptor(Protocol):
         ```
 
     Notes:
-        - The first added is the outermost, so it sees the request first and the response last.
-        - The request is passed as it is, not copied. That is deliberate: an interceptor is
-          meant to be able to rewrite it, and a recorded request has to be the one that ran or
-          a session cannot be replayed from the record.
-        - An asynchronous surface wraps the same way, since `call_next` is only a callable.
+        - The first added is the outermost: it sees the request first and the response last.
+        - The request is passed as it is, not copied, so an interceptor can rewrite it and a
+          recorded request is the one that ran.
+        - The asynchronous surface wraps the same way, since `call_next` is only a callable.
     """
 
     def __call__(self, request: Dict[str, Any], call_next: Callable[[Dict[str, Any]], Any]) -> Any:

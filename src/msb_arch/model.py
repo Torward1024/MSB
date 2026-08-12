@@ -1,29 +1,26 @@
 # model.py
-"""What holds what, read back from the annotations that already say so.
+"""Derive which type holds which, from the annotations.
 
-A model is a graph whether anybody drew it or not: a container declares what it holds, an entity
-declares the types of its fields, and between them those two statements are the whole edge set.
-The question people actually ask of it is the reverse one -- *what depends on this type* -- and
-that is the one nothing in the code answers, because every declaration points the other way.
+A container declares what it holds and an entity declares the types of its fields. Those two
+statements are the whole edge set of the model, so the graph needs no separate description and
+cannot go stale: adding a field changes the answer.
 
-This walks the declarations and turns them round. Nothing is written down twice: a field added to
-a class changes the graph, and a diagram derived from this cannot go stale the way a drawn one
-does.
+The useful direction is the reverse one, `held_by` -- what depends on this type -- because every
+declaration points the other way and nothing in the code answers it.
 
-**Nothing here knows what an application is about.** Types are reported by name, in the shape the
-code declares them, and what any of them mean is the caller's business.
+Reached through `manipulator.describe_model()`.
 
-The one limit worth stating up front: this is a graph over **types**, not over objects. It says
-that changing `Wheel` may affect a `Car`, because a `Car` has wheels. It cannot say *which* car,
-because that is a fact about a particular object rather than about the class -- `_parents` on a
-live object answers that, and answers it exactly.
+Limits:
+
+- A graph over types, not objects. Changing `Wheel` may affect a `Car`; which car is a fact about
+  an object, and `_parents` on a live one answers that.
+- Types are reported by name. What they mean is the caller's business.
 """
 from typing import Any, Dict, List, Optional, Set, get_args
 
 from .utils.logging_setup import logger
 
-#: The derivation only. Callers ask the manipulator -- `manipulator.describe_model()` --
-#: rather than running these over one from outside.
+#: The derivation only. Callers go through `manipulator.describe_model()`.
 __all__ = ["derive_model", "dependents_of", "holdings_of", "named_type"]
 
 
@@ -31,24 +28,21 @@ def _serializable_types(hint: Any, owner: Optional[type] = None) -> List[type]:
     """Return every modelled type mentioned by one annotation.
 
     Args:
-        hint (Any): An annotation, as simple as `Wheel` or as involved as
-            `Optional[Dict[str, List[Wheel]]]`.
-        owner (Optional[type]): The class the annotation was written on, used to make sense of
-            a name that referred forward to a class that did not exist yet.
+        hint (Any): An annotation, from `Wheel` to `Optional[Dict[str, List[Wheel]]]`.
+        owner (Optional[type]): The class the annotation was written on, used to resolve a
+            forward reference.
 
     Returns:
         List[type]: The `Serializable` subclasses inside it, in the order they appear. Plain
-            types are not modelled types and are left out: a graph of everything that mentions
-            `str` is a graph of everything.
+            types are left out, since a graph of everything mentioning `str` is a graph of
+            everything.
 
     Notes:
-        - Recursive over the type arguments rather than matching particular containers, so a
-          shape nobody anticipated still gives up what it holds.
-        - A forward reference is looked up where it was written. A type that holds its own kind
-          -- a tree, a chain, anything recursive -- can only be annotated by name, so a graph
-          that gave up at a name would miss exactly the models whose shape is worth asking
-          about. One that names a class defined somewhere unreachable is skipped rather than
-          guessed at.
+        - Recursive over type arguments rather than matching particular containers, so an
+          unanticipated shape still gives up what it holds.
+        - A forward reference is looked up in the module the annotation was written in, since a
+          recursive type can only be annotated by name. One that names an unreachable class is
+          skipped.
     """
     import sys
     import typing
@@ -81,9 +75,8 @@ def _held_by(owner: type) -> Dict[str, List[type]]:
         owner (type): A `Serializable` subclass.
 
     Returns:
-        Dict[str, List[type]]: Field name mapped to the modelled types that field can hold. A
-            container's items appear under `items`, since that is what the annotation is called
-            everywhere it is serialised.
+        Dict[str, List[type]]: Field name mapped to the modelled types it can hold. A
+            container's items appear under `items`, matching what serialisation calls them.
     """
     from .base.basecontainer import BaseContainer
 
@@ -122,15 +115,12 @@ def derive_model(roots: List[type]) -> Dict[str, Dict[str, Any]]:
     Returns:
         Dict[str, Dict[str, Any]]: `{type name: {"holds": {field: [type name]},
             "held_by": {type name: [field]}, "container": bool}}`. `holds` is what the class
-            declares; `held_by` is the same edges reversed, which is the direction nothing in
-            the code answers and every caller asks in.
+            declares; `held_by` is those edges reversed.
 
     Notes:
-        - A type is reached through any annotation, however deeply nested, so a model does not
-          have to be a tree and a cycle -- a type that can hold its own kind -- is fine.
-        - Unmodelled types are left out. A class that has a `str` and an `int` and holds nothing
-          appears with empty edges rather than not at all, because "this depends on nothing" is
-          an answer.
+        - A type is reached through any annotation, however deeply nested, so the model need not
+          be a tree and a type may hold its own kind.
+        - A type that holds nothing appears with empty edges rather than being left out.
     """
     from .base.basecontainer import BaseContainer
     from .base.serializable import Serializable
@@ -171,12 +161,11 @@ def dependents_of(graph: Dict[str, Dict[str, Any]], name: str) -> List[str]:
         name (str): The type to ask about.
 
     Returns:
-        List[str]: Sorted, transitive, and excluding the type itself. Empty for a type nothing
-            holds.
+        List[str]: Sorted, transitive, excluding the type itself. Empty for a type nothing holds.
 
     Notes:
-        - Transitive, unlike the edges themselves, because the question is "what breaks" and a
-          change reaches as far as the holding does. A cycle is followed once and left.
+        - Transitive, unlike the stored edges: a change reaches as far as the holding does. A
+          cycle is followed once.
     """
     found: Set[str] = set()
     pending = list(graph.get(name, {}).get("held_by", {}))
@@ -197,11 +186,11 @@ def holdings_of(graph: Dict[str, Dict[str, Any]], name: str) -> List[str]:
         name (str): The type to ask about.
 
     Returns:
-        List[str]: Sorted, transitive, and excluding the type itself.
+        List[str]: Sorted, transitive, excluding the type itself.
 
     Notes:
-        - The other direction of the same walk. What a type reaches is what serialising it will
-          touch, which is the question asked when a model is written, sent or copied.
+        - The same walk in the other direction: what a type reaches is what serialising it
+          touches.
     """
     found: Set[str] = set()
     pending = [held for names in graph.get(name, {}).get("holds", {}).values()
@@ -229,9 +218,8 @@ def named_type(name: str) -> type:
         RequestError: If nothing of that name has been imported, or more than one thing has.
 
     Notes:
-        - Only `Serializable` subclasses are searched. A name that crossed a boundary selects
-          among the model's own types and nothing else, so a string can never name something
-          arbitrary to construct.
+        - Only `Serializable` subclasses are searched, so a name that crossed a boundary can
+          only select among the model's own types.
     """
     from .base.serializable import Serializable
     from .errors import RequestError

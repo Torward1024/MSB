@@ -1,13 +1,13 @@
-"""Interceptors the framework ships, because they are the ones everybody writes.
+"""Two interceptors the framework ships: metrics and a request journal.
 
-Both are ordinary `Interceptor` implementations with no privileged access: anything here could
-have been written by an application, and reading them is the shortest explanation of what the
-hook is for.
+Both are ordinary `Interceptor` implementations with no privileged access, so reading them is
+also the shortest explanation of the hook.
 
 Neither is registered by default. An orchestrator with no interceptors pays one check per
-request, so measurement and recording cost nothing until they are asked for -- which is the
-only honest way to ship them in a framework whose other selling point is that it has no
-dependencies.
+request, so they cost nothing until asked for.
+
+    manipulator.add_interceptor(RequestMetrics())
+    manipulator.metrics()["inspect"]["calls"]
 """
 import time
 from collections import defaultdict
@@ -21,23 +21,19 @@ __all__ = ["RequestJournal", "RequestMetrics"]
 class RequestMetrics:
     """Counts and times requests, per operation.
 
-    What a metrics backend needs, without MSB choosing one. Read `snapshot()` and export it to
-    Prometheus, statsd, a log line or a dictionary on a status page; the framework holds the
-    numbers and no opinion about where they go.
+    Holds the numbers and no opinion about where they go: read `snapshot()` and export it
+    wherever you like. `manipulator.metrics()` returns the same thing.
 
     Example:
         ```python
-        metrics = RequestMetrics()
-        manipulator.add_interceptor(metrics)
-        ...
-        metrics.snapshot()["inspect"]["calls"]
+        manipulator.add_interceptor(RequestMetrics())
+        manipulator.metrics()["inspect"]["calls"]
         ```
 
     Notes:
-        - A failed request is counted as a call and as a failure, and its time still counts:
-          how long failures take is usually the interesting part.
-        - An exception propagates, and is counted, because swallowing it here would change
-          what the orchestrator does.
+        - A failed request counts as a call and as a failure, and its time still counts.
+        - An exception propagates and is counted; swallowing it would change what the
+          orchestrator does.
     """
 
     def __init__(self):
@@ -95,32 +91,26 @@ class RequestMetrics:
 class RequestJournal:
     """Records what each request was and what it produced.
 
-    This is the audit trail, and the beginning of provenance. It costs almost nothing to write
-    because the framework was already built for it: a request is data rather than a call, and a
-    response already reports every method that ran. In a scheduler whose steps are functions,
-    an invocation cannot be recorded at all without inventing a parallel description of it.
-
-    From a journal you can answer *what produced this* by reading backwards, and *do that
-    again* by replaying forwards.
+    An audit trail, and the basis of provenance. Read backwards it answers what produced a
+    result; replayed forwards it runs the session again.
 
     Example:
         ```python
-        journal = RequestJournal()
-        manipulator.add_interceptor(journal)
+        manipulator.add_interceptor(RequestJournal())
         ...
-        journal.replay(manipulator)          # run the same session again
+        manipulator.history("part")          # what happened to one object
+        manipulator.replay()                 # run the session again
         ```
 
     Notes:
-        - **Entries hold the request as it ran**, including the live object it named. That is
-          what makes in-process replay exact, and what stops a journal from being written to a
-          file as it stands: serializing one is the persistence question, which 1.0 leaves to
-          the application.
-        - `limit` keeps the most recent entries and discards the rest, so a long-running
-          process does not accumulate a session without end. Unlimited by default, because
-          silently losing an audit trail is worse than growing one.
-        - Replay assumes the handlers are deterministic. One that reads the clock, a file or a
-          random seed cannot be reconstructed from its request alone.
+        - Entries hold the request as it ran, including the live object it named. That makes
+          in-process replay exact and means a journal cannot be written to a file as it stands.
+        - `limit` keeps the most recent entries. Unlimited by default.
+        - `fingerprints=True` records a hash of the object either side of each request, so
+          `changed()` can say which requests altered anything. It costs a serialisation each
+          way, so it is off by default.
+        - Replay assumes deterministic handlers. One that reads the clock, a file or a random
+          seed cannot be reconstructed from its request.
     """
 
     def __init__(self, limit: Optional[int] = None, fingerprints: bool = False):
@@ -129,10 +119,9 @@ class RequestJournal:
         Args:
             limit (Optional[int]): Keep at most this many entries, dropping the oldest.
                 Defaults to None, meaning keep everything.
-            fingerprints (bool): Record a hash of the object before and after each request, so
-                the journal says which requests actually changed something rather than only
-                which ran. Off by default: it costs one serialisation of the object per request,
-                each way.
+            fingerprints (bool): Record a hash of the object either side of each request, so
+                `changed()` can report which requests altered anything. Off by default: it costs
+                one serialisation of the object each way.
         """
         self._entries: List[Dict[str, Any]] = []
         self._limit = limit
@@ -210,9 +199,8 @@ class RequestJournal:
         """Only the entries whose request left the object different from how it found it.
 
         Returns:
-            List[Dict[str, Any]]: The entries where the recorded fingerprints differ. Empty
-                when the journal was built without `fingerprints=True`, since without them
-                nothing here knows what changed.
+            List[Dict[str, Any]]: The entries whose recorded fingerprints differ. Empty without
+                `fingerprints=True`.
         """
         return [entry for entry in self._entries
                 if entry.get("before") is not None and entry.get("before") != entry.get("after")]
@@ -229,9 +217,8 @@ class RequestJournal:
                 the order it ran in is the order it runs in again.
 
         Notes:
-            - A session is a plan of steps that happened to have no edges between them, so
-              replaying is running a plan and needs no second mechanism. `Manipulator.replay`
-              is what runs it.
+            - A session is a plan whose steps have no edges except order, so replaying it is
+              running a plan. `Manipulator.replay` does that.
         """
         plan: Dict[str, Dict[str, Any]] = {}
         previous = None
@@ -262,8 +249,8 @@ class RequestJournal:
             List[Any]: The responses, in order.
 
         Notes:
-            - The orchestrator is what runs requests, so replaying belongs on it rather than on
-              a record of them. This still works and will keep working until 2.0.
+            - Deprecated in 1.3.0, removed in 2.0. The orchestrator runs requests, so replaying
+              belongs on it rather than on a record of them.
         """
         import warnings
 
