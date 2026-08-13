@@ -1,4 +1,6 @@
 """Working out what a Super offers from the code that does it."""
+from typing import Any, Dict
+
 import pytest
 
 from msb_arch.catalogue import derive, label_for, order
@@ -206,3 +208,88 @@ def test_inherited_handlers_are_found():
     assert "extra" in found, "the handler it defines"
     assert {"root", "middle", "leaf"} <= set(found), "and the ones it inherited"
     assert found["extra"]["requires"] == ["leaf"]
+
+
+# --- what a handler accepts -----------------------------------------------------------------
+
+class Filtered(Super):
+    """A Super whose handlers read attributes the way real ones do.
+
+    Between them these are every shape found in a real application: read in the handler's own
+    body, read by a helper the mapping was handed to, read by a closure that names it something
+    else, and read under a name only known at run time.
+    """
+
+    OPERATION = "draw"
+
+    def _draw_plain(self, obj, attributes):
+        return attributes.get("colour"), attributes["width"]
+
+    def _draw_delegating(self, obj, attributes):
+        return self._render(obj, attributes)
+
+    def _draw_by_keyword(self, obj, attributes):
+        return self._render(obj, options=attributes)
+
+    def _draw_in_a_closure(self, obj, attributes):
+        def build(item, attrs: Dict[str, Any]):
+            return attrs.get("in_the_closure")
+
+        return self._apply(obj, attributes, build)
+
+    def _draw_computed(self, obj, attributes):
+        wanted = obj.name
+        return attributes.get(wanted)
+
+    def _render(self, obj, options):
+        return options.get("dpi"), options.get("output_file")
+
+    def _apply(self, obj, attributes, build):
+        return build(obj, attributes)
+
+
+def test_what_a_handler_accepts_is_derived_rather_than_declared():
+    """The third thing already in the code and written down again elsewhere: a menu builds a
+    control per filter, a command line builds a flag, a server validates a request -- each from
+    its own copy of a list the handler already states by reading it."""
+    found = derive(Filtered(None))
+    assert found["plain"]["accepts"] == ["colour", "width"], "both shapes of read"
+
+
+def test_a_helper_contributes_what_it_was_handed():
+    """`calls` is an upper bound because a shared helper is followed for every caller. This
+    is not: the helper is followed at the parameter the mapping actually landed on."""
+    found = derive(Filtered(None))
+    assert found["delegating"]["accepts"] == ["dpi", "output_file"]
+    assert found["by_keyword"]["accepts"] == ["dpi", "output_file"], "by name as well"
+
+
+def test_a_closure_that_renames_the_mapping_is_followed():
+    """A handler that builds its result in an inner function hands the mapping on, and the
+    closure calls it whatever it likes."""
+    found = derive(Filtered(None))
+    assert found["in_a_closure"]["accepts"] == ["in_the_closure"]
+
+
+def test_a_key_named_at_run_time_is_invisible_and_says_so():
+    """The one shape this cannot see, asserted so it is known rather than discovered. A caller
+    using `accepts` to reject unknown attributes would refuse a valid request."""
+    found = derive(Filtered(None))
+    assert found["computed"]["accepts"] == []
+
+
+def test_what_a_handler_accepts_reaches_the_manipulator():
+    from msb_arch.base.baseentity import BaseEntity
+
+    class Thing(BaseEntity):
+        value: int
+
+    thing = Thing(name="t", value=1)
+    manipulator = Manipulator(thing, operations={"draw": Filtered(None)})
+
+    described = manipulator.describe_operations(operation="draw")
+    assert described["draw"]["plain"]["accepts"] == ["colour", "width"]
+
+    response = manipulator.catalogue(thing, operation="draw", raise_on_error=False)
+    result = response["result"] if isinstance(response, dict) and "status" in response else response
+    assert result["draw"]["delegating"]["accepts"] == ["dpi", "output_file"]

@@ -74,13 +74,15 @@ offers them — and the second copy goes stale.
 | --- | --- | --- |
 | What operations exist, with what handlers | The registry and the handler names | `describe_operations()` |
 | Which handler needs which | Calls between handlers, read from the source | `order_handlers()`, `requirements_of()` |
+| What attributes a handler takes | The keys it reads out of them | `describe_operations()`, as `accepts` |
 | Which type holds which, and what a change reaches | The annotations | `describe_model()`, `dependents_of()` |
 | What handlers a new operation would need | The model graph | `scaffold()` |
 
-Two limits. Reading source means a handler attached to a class after import is invisible. And
-what a handler touches *outside* its operation is an upper bound, because a shared helper is
-followed for every handler that calls it — good for checking a declaration, not for replacing
-one.
+Three limits. Reading source means a handler attached to a class after import is invisible. What
+a handler touches *outside* its operation is an upper bound, because a shared helper is followed
+for every handler that calls it — good for checking a declaration, not for replacing one. And
+`accepts` errs the other way: a key read under a name computed at run time is not seen, so it
+says what to offer rather than what to refuse.
 
 ## Serialization
 

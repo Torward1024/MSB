@@ -288,7 +288,23 @@ built-in ones: a class defined inside a documentation example has no source file
 | `requires` | Other handlers of the same operation that this one calls. Exact, direct |
 | `calls` | Every name it reaches. An upper bound: a shared helper is followed for each caller |
 | `touches` | What the `interpret` callback made of those names. Empty without one |
+| `accepts` | The attribute keys it reads. Exact where it can be; a key named at run time is invisible |
 | `label` | A display name, with `acronyms` for words that keep their capitals |
+
+`accepts` is what a caller needs to offer the handler's parameters without listing them again:
+a dialog builds a control per key, a command line builds a flag, a caller with values in hand
+passes the ones this handler takes and no others.
+
+```python
+described = bench.describe_operations("catalogue")
+assert described["catalogue"]["order"]["accepts"] == ["names", "operation"]
+```
+
+Unlike `calls`, it is not an upper bound. A helper is followed only when the mapping was handed
+to it, at the parameter it landed on -- positionally or by name -- and a closure that renames it
+is followed through its annotation. What it cannot see is a key read under a name computed at
+run time, which makes it a lower bound in that one shape: use it to offer parameters, not to
+reject a request naming one it does not list.
 
 `order_handlers(operation, names)` sorts handlers so each follows what it needs;
 `requirements_of(operation, name)` is the transitive walk.

@@ -4,7 +4,8 @@
 scheduler over them, the derived model graph, built-in `save` and `load`, scaffolding from the
 model, lineage, and the performance work that waited on the scheduler. 1.4.0 added deferred
 registration, which came from an application paying 2.3 s of import on every start for two
-operations most sessions never used.
+operations most sessions never used. 1.5.0 added `accepts`, from the same application keeping
+five hand-written lists of which arguments each of its plots takes.
 
 What each release changed is in [`CHANGELOG.md`](../CHANGELOG.md). What will not change is in
 [`COMPATIBILITY.md`](COMPATIBILITY.md). This page is what is *not* decided.

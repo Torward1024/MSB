@@ -13,6 +13,47 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.5.0] - 2026-08-13
+
+### Added
+
+- **`accepts`: the attribute keys a handler reads, derived rather than declared.** The catalogue
+  already saves an application from writing down what operations exist and which handler needs
+  which. The third copy is the parameters: a dialog builds a control per filter, a command line
+  builds a flag, a caller with values in hand decides which to pass — each from its own list of
+  what a handler takes.
+
+  ```python
+  described = manipulator.describe_operations("visualize")
+  accepted = described["visualize"]["uv_coverage"]["accepts"]
+  # ['baselines', 'frequencies', 'scans', 'source_name', 'store_key', 'units']
+  ```
+
+  It appears on every entry `describe_operations()` and the built-in `catalogue` operation
+  return, beside `requires`, `calls`, `touches` and `label`.
+
+  Measured on a fourteen-handler application: it reproduced by derivation five hand-written lists
+  that decided which arguments each plot was given, and found one plot that had been left out of
+  two of them.
+
+### Notes
+
+- Unlike `calls`, `accepts` is **not** an upper bound. A helper contributes only what it reads
+  from the mapping it was actually handed, at the parameter it landed on — positionally or by
+  keyword — and a closure that renames the mapping is followed through its annotation. A handler
+  that hands its attributes to nothing reports exactly what its own body reads.
+- It is a lower bound in one shape: a key read under a name computed at run time is invisible.
+  So it says what a caller may offer, not what a caller may refuse. Asserted in the suite, so
+  the limit is known rather than discovered.
+- The derivation is cached with the rest of the handler table, per class and operation, so this
+  costs nothing on the path that already asked.
+
+### Upgrading from 1.4.0
+
+Nothing to do. `accepts` is a new key on a returned dictionary; code reading the others is
+unaffected. A caller that compares a whole entry against a literal dictionary would see the new
+key — the entries are described by their keys, and were never promised to have only those.
+
 ## [1.4.0] - 2026-08-12
 
 ### Added

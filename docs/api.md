@@ -625,7 +625,9 @@ The same from inside an event loop. Always concurrent within a stage.
 
 ##### `describe_operations(operation=None, interpret=None, acronyms=None) -> Dict[str, Any]`
 
-What is registered: per operation, each handler with `requires`, `calls`, `touches` and `label`.
+What is registered: per operation, each handler with `requires`, `calls`, `touches`, `accepts`
+and `label`. `accepts` is the attribute keys the handler reads, for a caller building a menu, a
+set of flags or a request without listing them a second time.
 
 ##### `order_handlers(operation: str, names: List[str]) -> List[str]`
 
