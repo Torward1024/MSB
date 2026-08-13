@@ -149,7 +149,10 @@ class RequestJournal:
           freed nothing.
         - Which is also what makes a session portable: it can be written to a file, and it
           replays against whatever model it is replayed on, by name.
-        - `limit` keeps the most recent entries. Unlimited by default.
+        - `limit` keeps the most recent entries, dropping the oldest: a sliding window, not a
+          stack. That is right for diagnosis -- what just happened is what a bug report needs --
+          and it means **an overflowed journal is no longer a complete session**. Replaying one
+          replays a suffix. Leave it unlimited, which is the default, where replay matters.
         - `fingerprints=True` records a hash of the object either side of each request, so
           `changed()` can say which requests altered anything. It costs a serialisation each
           way, so it is off by default.
