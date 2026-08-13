@@ -13,6 +13,53 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.6.0] - 2026-08-13
+
+### Changed
+
+- **A journal is a record, not a retainer.** An entry used to hold the request as it ran --
+  including the live object it named -- and the response it produced. So a bounded journal of
+  500 entries pinned up to 500 objects *and* whatever each request computed.
+
+  Found downstream in an application whose entire storage design exists to keep results out of
+  memory (407 MB to 71 MB across sixty observations): its journal held a reference to every
+  result frame it had recorded, so evicting one freed nothing. Measured there: eight entries
+  from one run, seven pinning a live model object and seven pinning a result.
+
+  An entry is now plain data and nothing else:
+
+  ```python
+  {"operation": "calculate", "object": "obs_5fb2", "method": "uv_coverage",
+   "attributes": {"time_step": 600.0}, "status": True, "error": None, "seconds": 0.31}
+  ```
+
+  Objects inside the attributes are named too -- a batch carries requests, and each of those
+  names an object, which is the same leak one level down. Anything neither plain nor named, a
+  callable passed in to report progress say, is recorded as what it was rather than kept.
+
+- **Which is what makes a session portable.** `json.dumps(journal.entries)` works, so a session
+  can be written to a file, and it replays against whatever model it is replayed on rather than
+  only against the objects it recorded.
+
+### Added
+
+- **`Manipulator.find(name)`** -- the object called `name` in whatever the orchestrator manages,
+  found by walking what it holds. This is what `replay` resolves a recorded step with.
+
+- **Replay resolves names.** A step names its object; `replay` looks it up in the model in hand.
+  Where the object is still alive in the process that recorded it, replay reaches it directly:
+  the journal keeps a **weak** reference beside each entry, so an orchestrator that manages
+  nothing -- a request made straight on an object -- replays exactly as before while the
+  journal still pins nothing.
+
+### Upgrading from 1.5.0
+
+| Symptom | Why | What to do |
+| --- | --- | --- |
+| `entry["request"]` or `entry["response"]` raises `KeyError` | Neither is retained | Read `operation`, `object`, `method`, `attributes`, `status`, `error`, `seconds`. Neither key was documented |
+| A replayed step fails with no object | Its name is not in the model being replayed against | `Manipulator.find(name)` says whether it is there. A session records the names it ran on |
+| `changed()` returns nothing | Unchanged: it still needs `fingerprints=True` | -- |
+
 ## [1.5.0] - 2026-08-13
 
 ### Added

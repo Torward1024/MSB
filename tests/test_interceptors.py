@@ -10,6 +10,7 @@ ones everybody writes.
 import pytest
 
 from msb_arch import (BaseEntity,
+                      Inspector,
                       Manipulator,
                       RequestJournal,
                       RequestMetrics,
@@ -264,3 +265,114 @@ def test_metrics_and_the_journal_compose(bench, dish):
     bench.inspect(dish, get_diameter=None)
     assert metrics.snapshot()["inspect"]["calls"] == 1
     assert len(journal) == 1
+
+
+# --- a journal is a record, not a retainer ----------------------------------------------------
+
+def recorded():
+    """A manipulator with a journal on it. Not a fixture: `bench` is taken in this file."""
+    thing = Widget(name="held", diameter=70.0)
+    manipulator = Observatory(base_classes=[Widget])
+    journal = RequestJournal()
+    manipulator.add_interceptor(journal)
+    return thing, manipulator, journal
+
+
+def test_a_journal_holds_nothing_alive():
+    """An audit trail that pins what it audited is a leak.
+
+    Found downstream: an application whose whole storage design is about *not* keeping results
+    in memory -- 407 MB to 71 MB -- found its journal holding a reference to every result frame
+    it had ever computed, so evicting one freed nothing.
+    """
+    import gc
+    import weakref
+
+    thing, manipulator, journal = recorded()
+    manipulator.inspect(thing, get="diameter", raise_on_error=False)
+    watch = weakref.ref(thing)
+
+    assert len(journal) == 1, "the request was not recorded at all"
+    del thing, manipulator
+    gc.collect()
+
+    assert watch() is None, "the journal is keeping the object it recorded alive"
+
+
+def test_an_entry_is_the_request_and_whether_it_worked():
+    """A record of what was asked and how it went. Not the request as it ran, and not what it
+    produced -- a response holds whatever was computed, which for a calculation is the result."""
+    thing, manipulator, journal = recorded()
+    manipulator.inspect(thing, get="diameter", raise_on_error=False)
+    entry = journal.entries[0]
+
+    assert entry["operation"] == "inspect"
+    assert entry["object"] == "held"
+    assert entry["attributes"] == {"get": "diameter"}
+    assert entry["status"] is True
+    assert entry["error"] is None
+    assert entry["seconds"] >= 0.0
+    assert "request" not in entry and "response" not in entry, (
+        "the live request and its response are retained")
+
+
+def test_a_failure_records_what_went_wrong():
+    thing, manipulator, journal = recorded()
+    manipulator.configure(thing, explode=None, raise_on_error=False)
+    entry = journal.entries[-1]
+
+    assert entry["status"] is False
+    assert entry["error"], "a failure that records no reason is not worth recording"
+
+
+def test_an_entry_is_plain_data():
+    """Which is what lets an application write a session to a file."""
+    import json
+
+    thing, manipulator, journal = recorded()
+    manipulator.inspect(thing, get="diameter", raise_on_error=False)
+
+    json.dumps(journal.entries)
+
+
+def test_an_object_in_the_attributes_is_named_rather_than_held():
+    """A batch carries requests in its attributes, and a request names an object. Holding those
+    is the same leak one level down."""
+    import gc
+    import weakref
+
+    thing, manipulator, journal = recorded()
+    other = Widget(name="other", diameter=12.0)
+    manipulator.inspect(thing, get="diameter", targets=[other], raise_on_error=False)
+
+    entry = journal.entries[-1]
+    assert entry["attributes"]["targets"] == ["other"], (
+        f"the object is still in there: {entry['attributes']!r}")
+
+    watch = weakref.ref(other)
+    del other
+    gc.collect()
+    assert watch() is None, "an object in the attributes is kept alive by the journal"
+
+
+def test_the_session_replays_by_naming_what_it_ran_on():
+    """A plan of names rather than of objects: the same session runs against whatever project
+    it is replayed on, which is what makes it a reproduction rather than a souvenir."""
+    thing, manipulator, journal = recorded()
+    manipulator.inspect(thing, get="diameter", raise_on_error=False)
+
+    assert journal.entries[0]["object"] == "held", "the record names it"
+
+    # While the object is alive the plan reaches it, so replaying in the process that recorded
+    # the session is exactly what it was.
+    plan = journal.as_plan()
+    assert next(iter(plan.values()))["obj"] is thing
+
+    # Once it is gone the plan carries the name, and whoever replays resolves it against the
+    # model in hand. That is what makes a session portable rather than a souvenir.
+    import gc
+
+    del thing, plan               # the plan reaches it too, which is the point of the first half
+    gc.collect()
+    plan = journal.as_plan()
+    assert next(iter(plan.values()))["obj"] == "held"

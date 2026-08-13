@@ -653,10 +653,18 @@ Python source: a `Super` with one handler per type in the model.
 
 The journal registered as an interceptor, if there is one.
 
+##### `find(name: str) -> Optional[Any]`
+
+The object called `name` in whatever this orchestrator manages, found by walking what it holds.
+What `replay` resolves a recorded step with.
+
 ##### `history(name=None, changed_only=False) -> List[Dict[str, Any]]`
 
 What has been requested in this session, optionally about one object, optionally only the
-requests that changed something.
+requests that changed something. Each row is plain data — `operation`, the `object` it named,
+`method`, `attributes`, `status`, `error`, `seconds` — so a session can be written to a file.
+A journal records what was asked, not the request as it ran: holding the live object and the
+response pins everything it audited.
 
 **Raises:** `NotFoundError` if no journal is registered
 

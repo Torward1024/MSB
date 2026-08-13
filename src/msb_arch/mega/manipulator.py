@@ -465,9 +465,49 @@ class Manipulator(ABC):
             entries = [entry for entry in entries if entry.get("object") == name]
         return entries
 
+    def find(self, name: str) -> Optional[Any]:
+        """Return the object called `name` in whatever this orchestrator manages.
+
+        Args:
+            name (str): The `name` of the object to look for.
+
+        Returns:
+            Optional[Any]: The object, or None when nothing here is called that.
+
+        Notes:
+            - A breadth-first walk of the managed object and what it holds, so a name resolves
+              wherever it lives rather than only at the top.
+            - This is what makes a recorded session portable. A journal names the object a
+              request was made on rather than holding it, and replaying resolves the name
+              against the model in hand -- which is why the same session can run against
+              another project.
+        """
+        root = self.get_managing_object()
+        if root is None or not name:
+            return None
+
+        seen, pending = set(), [root]
+        while pending:
+            candidate = pending.pop(0)
+            if id(candidate) in seen:
+                continue
+            seen.add(id(candidate))
+            if getattr(candidate, "name", None) == name:
+                return candidate
+            held = getattr(candidate, "get_items", None)
+            if held is None:
+                continue
+            try:
+                items = held()
+            except Exception as e:                      # noqa: BLE001 - a container that will not say
+                logger.debug("Cannot read the items of %s: %s", type(candidate).__name__, str(e))
+                continue
+            pending.extend(items.values() if isinstance(items, dict) else items)
+        return None
+
     def replay(self, journal: Optional[Any] = None, skip_failures: bool = True,
                concurrent: bool = False) -> Any:
-        """Run a recorded session again.
+        """Run a recorded session again, against whatever this orchestrator manages.
 
         Args:
             journal (Optional[RequestJournal]): The session to replay. Defaults to the one
@@ -498,6 +538,16 @@ class Manipulator(ABC):
         plan = journal.as_plan(skip_failures=skip_failures)
         if not plan:
             return PipelineRun({}, {}, None)
+
+        # A step names its object. Resolved here rather than recorded as a reference, which is
+        # what lets a session recorded against one model run against another.
+        for step in plan.values():
+            named = step.get("obj")
+            if isinstance(named, str) and not named.startswith("@"):
+                found = self.find(named)
+                if found is None:
+                    logger.warning("Replaying a step that names '%s', which is not here", named)
+                step["obj"] = found
         return self.pipeline(plan, raise_on_error=False, concurrent=concurrent)
 
     def dependents_of(self, name: str, roots: Optional[List[type]] = None) -> List[str]:

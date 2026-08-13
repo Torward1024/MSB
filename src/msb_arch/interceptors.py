@@ -10,6 +10,7 @@ request, so they cost nothing until asked for.
     manipulator.metrics()["inspect"]["calls"]
 """
 import time
+import weakref
 from collections import defaultdict
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
@@ -88,6 +89,43 @@ class RequestMetrics:
         self._slowest.clear()
 
 
+def _weakly(value: Any) -> Any:
+    """Return a weak reference to `value`, or None when it cannot have one."""
+    if value is None:
+        return None
+    try:
+        return weakref.ref(value)
+    except TypeError:
+        return None
+
+
+def _named(value: Any) -> Any:
+    """Return what an object is called, or the value itself when it is plain data."""
+    name = getattr(value, "name", None)
+    return name if isinstance(name, str) else value
+
+
+def _plain(value: Any) -> Any:
+    """Return a copy of `value` with every model object replaced by its name.
+
+    Notes:
+        - Recursive, because a batch carries requests in its attributes and each of those
+          names an object: holding those is the same leak one level down.
+        - Anything neither plain nor named -- a callable passed in to report progress, say --
+          is recorded as what it is rather than kept. It could not be replayed anyway.
+    """
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    named = getattr(value, "name", None)
+    if isinstance(named, str):
+        return named
+    return f"<{type(value).__name__}>"
+
+
 class RequestJournal:
     """Records what each request was and what it produced.
 
@@ -103,8 +141,14 @@ class RequestJournal:
         ```
 
     Notes:
-        - Entries hold the request as it ran, including the live object it named. That makes
-          in-process replay exact and means a journal cannot be written to a file as it stands.
+        - **An entry is plain data**: what was asked, of which object *by name*, and whether it
+          worked. Not the request as it ran and not what it produced. A journal that holds the
+          live object and the response pins everything it audited -- found downstream in an
+          application whose storage design exists to keep results *out* of memory, where the
+          journal held a reference to every result frame it had ever recorded, so evicting one
+          freed nothing.
+        - Which is also what makes a session portable: it can be written to a file, and it
+          replays against whatever model it is replayed on, by name.
         - `limit` keeps the most recent entries. Unlimited by default.
         - `fingerprints=True` records a hash of the object either side of each request, so
           `changed()` can say which requests altered anything. It costs a serialisation each
@@ -124,6 +168,11 @@ class RequestJournal:
                 one serialisation of the object each way.
         """
         self._entries: List[Dict[str, Any]] = []
+        # The object each entry named, held **weakly** and beside the entry rather than in it.
+        # An entry stays plain data, nothing is kept alive, and replaying in the process that
+        # recorded the session still reaches the object it ran on -- which a manipulator
+        # managing nothing has no other way to find.
+        self._referents: List[Any] = []
         self._limit = limit
         self._fingerprints = fingerprints
 
@@ -132,9 +181,10 @@ class RequestJournal:
         obj = request.get("obj")
         entry = {
             "operation": request.get("operation"),
-            "object": getattr(obj, "name", obj),
-            "attributes": dict(request.get("attributes") or {}),
-            "request": request,
+            "object": _named(obj),
+            "method": request.get("method"),
+            "attributes": _plain(request.get("attributes") or {}),
+            "error": None,
         }
         if self._fingerprints:
             entry["before"] = self._fingerprint(obj)
@@ -142,15 +192,16 @@ class RequestJournal:
             response = call_next(request)
         except Exception as error:
             entry.update(seconds=time.perf_counter() - started, status=False,
-                         error=f"{type(error).__name__}: {error}", response=None)
-            self._append(entry)
+                         error=f"{type(error).__name__}: {error}")
+            self._append(entry, obj)
             raise
-        entry.update(seconds=time.perf_counter() - started,
-                     status=response.get("status") if isinstance(response, dict) else True,
-                     response=response)
+        status = response.get("status") if isinstance(response, dict) else True
+        entry.update(seconds=time.perf_counter() - started, status=status,
+                     error=response.get("error") if isinstance(response, dict) and not status
+                     else None)
         if self._fingerprints:
             entry["after"] = self._fingerprint(obj)
-        self._append(entry)
+        self._append(entry, obj)
         return response
 
     @staticmethod
@@ -161,10 +212,17 @@ class RequestJournal:
         except AttributeError:
             return None
 
-    def _append(self, entry: Dict[str, Any]) -> None:
+    def _append(self, entry: Dict[str, Any], obj: Any = None) -> None:
         self._entries.append(entry)
+        self._referents.append(_weakly(obj))
         if self._limit is not None and len(self._entries) > self._limit:
             del self._entries[:-self._limit]
+            del self._referents[:-self._limit]
+
+    def _referent(self, position: int) -> Any:
+        """Return the object an entry named, if it is still alive."""
+        reference = self._referents[position] if position < len(self._referents) else None
+        return reference() if reference is not None else None
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -225,13 +283,17 @@ class RequestJournal:
         for position, entry in enumerate(self._entries, start=1):
             if skip_failures and not entry.get("status"):
                 continue
-            request = entry["request"]
-            name = f"{request.get('operation')}_{position}"
-            step = {"operation": request.get("operation"),
-                    "obj": request.get("obj"),
-                    "attributes": dict(request.get("attributes") or {})}
-            if request.get("method"):
-                step["method"] = request["method"]
+            name = f"{entry.get('operation')}_{position}"
+            # The object is named, not held. `Manipulator.replay` resolves the name against
+            # whatever it is managing, which is what lets a session run somewhere else.
+            # The object it ran on when that is still alive, and its name otherwise --
+            # which `Manipulator.replay` resolves against whatever it is managing.
+            alive = self._referent(position - 1)
+            step = {"operation": entry.get("operation"),
+                    "obj": alive if alive is not None else entry.get("object"),
+                    "attributes": dict(entry.get("attributes") or {})}
+            if entry.get("method"):
+                step["method"] = entry["method"]
             if previous:
                 step["after"] = [previous]
             plan[name] = step
