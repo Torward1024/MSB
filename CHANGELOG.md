@@ -13,6 +13,30 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.7.0] - 2026-08-13
+
+### Added
+
+- **`Manipulator.plan_for(operation, wanted)`** -- the handlers to run so that everything
+  `wanted` can be, each after what it needs.
+
+  ```python
+  manipulator.plan_for("calculate", ["uv_coverage"])
+  # ['time_arrays', 'telescope_positions', 'source_visibility', 'uv_coverage']
+  ```
+
+  The parts were both here already -- `requirements_of` and `order_handlers` -- and joining
+  them was left to whoever needed it, which meant the same six lines in every application that
+  orchestrates an operation.
+
+  It deliberately stops there. What a step is *called*, what it is passed, and whether a result
+  already exists are an application's decisions, and a plan of names is what a framework can
+  know without borrowing an application's vocabulary.
+
+### Upgrading from 1.6.0
+
+Nothing to do. `plan_for` is new.
+
 ## [1.6.0] - 2026-08-13
 
 ### Changed

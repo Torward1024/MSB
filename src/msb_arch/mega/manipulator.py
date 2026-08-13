@@ -465,6 +465,39 @@ class Manipulator(ABC):
             entries = [entry for entry in entries if entry.get("object") == name]
         return entries
 
+    def plan_for(self, operation: str, wanted: List[str]) -> List[str]:
+        """Return the handlers to run so that everything `wanted` can be, in a workable order.
+
+        Args:
+            operation (str): The operation whose handlers are being planned.
+            wanted (List[str]): The handlers asked for, in any order.
+
+        Returns:
+            List[str]: Those handlers plus every prerequisite they need, each after what it
+                needs. Empty when nothing was wanted.
+
+        Raises:
+            DispatchError: If no such operation is registered, as `requirements_of` and
+                `order_handlers` do -- a caller planning for an operation that does not exist
+                has made a mistake, and a softer answer here would hide it.
+
+        Notes:
+            - The join of `requirements_of` and `order_handlers`, which every application
+              orchestrating an operation was writing for itself in the same six lines.
+            - What a step is *called*, what it is passed, and whether a result already exists
+              are not decided here. Those are an application's, and this deliberately stops
+              short of them: a plan of names is what the framework can know.
+        """
+        if not wanted:
+            return []
+
+        needed = list(dict.fromkeys(wanted))
+        for name in list(needed):
+            for prerequisite in self.requirements_of(operation, name):
+                if prerequisite not in needed:
+                    needed.append(prerequisite)
+        return self.order_handlers(operation, needed)
+
     def find(self, name: str) -> Optional[Any]:
         """Return the object called `name` in whatever this orchestrator manages.
 

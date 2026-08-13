@@ -653,6 +653,14 @@ Python source: a `Super` with one handler per type in the model.
 
 The journal registered as an interceptor, if there is one.
 
+##### `plan_for(operation: str, wanted: List[str]) -> List[str]`
+
+The handlers to run so that everything `wanted` can be, each after what it needs. The join of
+`requirements_of` and `order_handlers`, which every application orchestrating an operation was
+writing for itself.
+
+**Raises:** `DispatchError` for an unregistered operation
+
 ##### `find(name: str) -> Optional[Any]`
 
 The object called `name` in whatever this orchestrator manages, found by walking what it holds.

@@ -47,4 +47,4 @@ __all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "M
            "derive", "label_for", "order", "derive_model", "dependents_of", "holdings_of",
            "RequestMetrics", "RequestJournal", "cache_statistics"]
 
-__version__ = "1.6.0"
+__version__ = "1.7.0"

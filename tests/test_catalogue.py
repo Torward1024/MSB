@@ -293,3 +293,53 @@ def test_what_a_handler_accepts_reaches_the_manipulator():
     response = manipulator.catalogue(thing, operation="draw", raise_on_error=False)
     result = response["result"] if isinstance(response, dict) and "status" in response else response
     assert result["draw"]["delegating"]["accepts"] == ["dpi", "output_file"]
+
+
+# --- planning a set of handlers ---------------------------------------------------------------
+
+def test_asking_for_one_handler_plans_what_it_needs():
+    """Every application orchestrating an operation writes the same six lines: take what was
+    asked for, add what those need, put them in an order that satisfies them.
+
+    The parts were all here -- `requirements_of` and `order` -- and joining them was left to
+    whoever needed it. This is that join, and nothing more: what to run and in what order, with
+    no opinion about what a step is called or what it is passed.
+    """
+    from msb_arch.base.baseentity import BaseEntity
+
+    class Thing(BaseEntity):
+        value: int
+
+    manipulator = Manipulator(Thing(name="t", value=1), operations={"compute": Chain(None)})
+
+    assert manipulator.plan_for("compute", ["leaf"]) == ["root", "middle", "leaf"]
+    assert manipulator.plan_for("compute", ["middle"]) == ["root", "middle"]
+    assert manipulator.plan_for("compute", ["root"]) == ["root"]
+
+
+def test_planning_keeps_what_was_asked_for_even_when_it_needs_nothing():
+    from msb_arch.base.baseentity import BaseEntity
+
+    class Thing(BaseEntity):
+        value: int
+
+    manipulator = Manipulator(Thing(name="t", value=1), operations={"compute": Chain(None)})
+
+    assert manipulator.plan_for("compute", []) == []
+    assert manipulator.plan_for("compute", ["leaf", "root"]) == ["root", "middle", "leaf"], (
+        "asking for one of the prerequisites as well must not duplicate it")
+
+
+def test_planning_an_operation_that_is_not_registered_is_refused():
+    """As `requirements_of` and `order_handlers` refuse it. A caller planning for an operation
+    that does not exist has made a mistake, and a softer answer here than from its neighbours
+    would only hide it."""
+    from msb_arch.base.baseentity import BaseEntity
+    from msb_arch.errors import DispatchError
+
+    class Thing(BaseEntity):
+        value: int
+
+    manipulator = Manipulator(Thing(name="t", value=1))
+    with pytest.raises(DispatchError):
+        manipulator.plan_for("nothing_like_this", ["leaf"])
