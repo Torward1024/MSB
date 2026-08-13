@@ -36,6 +36,7 @@ import asyncio
 from typing import Any, Dict, List, Optional, Sequence, Set, Union
 
 from .errors import AttributeNotFoundError, DispatchError, NotFoundError, RequestError
+from .results import Response
 from .utils.logging_setup import logger
 
 __all__ = ["PipelineRun"]
@@ -256,9 +257,10 @@ class _Plan:
         blocking = [waited for waited in self._requires[name] if waited in skipped] if skipped             else []
         if blocking:
             logger.debug("Skipped step '%s': %s produced nothing", name, blocking)
-            responses[name] = {
+            responses[name] = Response({
                 "status": False, "object": None, "method": None, "result": None, "skipped": True,
-                "error": f"Skipped: {', '.join(blocking)} did not produce a value"}
+                "error": f"Skipped: {', '.join(blocking)} did not produce a value",
+                "error_type": "RequestError"})
             skipped.add(name)
             return None
 
@@ -278,8 +280,9 @@ class _Plan:
                 request["method"] = step.method
             return request
         except RequestError as e:
-            responses[name] = {"status": False, "object": None, "method": None, "result": None,
-                               "error": str(e), "error_type": type(e).__name__}
+            responses[name] = Response({"status": False, "object": None, "method": None,
+                                        "result": None, "error": str(e),
+                                        "error_type": type(e).__name__})
             self._accept(name, responses[name], produced, skipped, raise_on_error)
             return None
 

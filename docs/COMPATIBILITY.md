@@ -26,7 +26,7 @@ short:
 | | |
 | --- | --- |
 | **Data** | `Serializable`, `BaseEntity`, `BaseContainer`, `Project` |
-| **Operations** | `Super`, `MethodResults` |
+| **Operations** | `Super`, `MethodResults`, `Response` |
 | **Built-in operations** | `Inspector`, `Configurator`, `Catalogue`, `Persistence`, `Loader` |
 | **Entry point** | `Manipulator` |
 | **Protocols** | `MethodProvider`, `Interceptor` |

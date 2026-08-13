@@ -376,6 +376,19 @@ with the object itself.
 `Inspector` and `Configurator` both take `NESTED_KEY` (`"name"`) to address one member of a
 collection, and both have a `_nested_getter(obj)` hook returning how to fetch a member.
 
+### Response
+
+What every request produces: a `dict` with `status`, `object`, `method`, `result`, and `error`
+and `error_type` when it failed.
+
+| | |
+| --- | --- |
+| `ok` -> bool | Whether it succeeded |
+| `value` -> Any | What it produced, unwrapped as a facade unwraps it. None for a failure |
+| `error` -> Optional[str] | The message |
+| `error_type` -> Optional[str] | The name of the exception class |
+| `raise_if_failed()` -> Response | Raises the kind that failed, or returns this response |
+
 ### PipelineRun
 
 What `pipeline` and `replay` return. A `dict` of responses keyed as the plan keyed its steps.

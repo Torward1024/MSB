@@ -5,7 +5,7 @@ from ..errors import DispatchError, HandlerError, RegistrationError, RequestErro
 from ..utils.logging_setup import logger
 from ..protocols import MethodProvider
 from ..base.basecontainer import BaseContainer
-from ..results import MethodResults
+from ..results import MethodResults, Response
 from collections import OrderedDict
 from threading import Lock
 import inspect
@@ -149,12 +149,12 @@ class Super(ABC):
         if obj_name is None:
             obj_name = obj
         
-        response = {
+        response = Response({
             "status": status,
             "object": obj_name,
             "method": method,
             "result": result
-        }
+        })
         if not status and error:
             response["error"] = error
             if error_type:

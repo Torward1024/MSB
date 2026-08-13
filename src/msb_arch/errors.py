@@ -120,6 +120,11 @@ class NotFoundError(MSBError, KeyError):
 
     An attribute of an entity, or an item of a container: both are addressed by name, and
     both report a miss the same way.
+
+    Notes:
+        - Being a `KeyError`, `str(error)` gives the message **in quotes** -- `"'no such
+          file'"` -- because that is what `KeyError.__str__` does. Read `error.args[0]` when
+          matching on the text; `except NotFoundError` is unaffected.
     """
 
 

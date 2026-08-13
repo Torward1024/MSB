@@ -28,7 +28,7 @@ from .protocols import Interceptor, MethodProvider
 from .super import Super, Project
 from .super.builtins import Catalogue, Configurator, Inspector, Loader, Persistence
 from .mega import Manipulator
-from .results import MethodResults
+from .results import MethodResults, Response
 from .utils import logger, setup_logging
 from .utils.validation import (Constraint,
                                NonEmpty,
@@ -38,7 +38,7 @@ from .utils.validation import (Constraint,
                                Predicate,
                                Range)
 
-__all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "Manipulator", "MethodResults", "logger", "setup_logging",
+__all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "Manipulator", "MethodResults", "Response", "logger", "setup_logging",
            "MSBError", "ValidationError", "TypeValidationError", "ConstraintError", "UnknownAttributeError", "ItemNameError",
            "DuplicateNameError", "ResolutionError", "NotFoundError", "AttributeNotFoundError", "SerializationError",
            "OperationError", "RegistrationError", "DispatchError", "RequestError", "HandlerError",
@@ -47,4 +47,4 @@ __all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "M
            "derive", "label_for", "order", "derive_model", "dependents_of", "holdings_of",
            "RequestMetrics", "RequestJournal", "cache_statistics"]
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"

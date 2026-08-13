@@ -78,8 +78,41 @@ assert bench.inspect(reading, get_value=None) == 19.0
 | --- | --- |
 | `obj` | What to run it on. Omitted or None means the managing object |
 | `method` | A specific handler |
-| `raise_on_error` | True by default. False returns the whole response instead of raising |
+| `raise_on_error` | True by default: the failure raises. False: the `Response` comes back |
 | `**attributes` | The rest of the request |
+
+### Reading a response
+
+Every response -- from a facade, from `process_request`, from a batch entry, from a pipeline
+step -- is a `Response`: a `dict` with the protocol's keys, plus four properties so that reading
+one takes no unwrapping by hand.
+
+```python
+answer = bench.inspect(reading, get_value=None, raise_on_error=False)
+
+assert answer.ok is True
+assert answer.value == 19.0          # what the facade would have returned
+assert answer.error is None
+```
+
+| | |
+| --- | --- |
+| `ok` | Whether it succeeded |
+| `value` | What it produced, unwrapped exactly as a facade unwraps it. None for a failure |
+| `error`, `error_type` | The message and the name of the exception class, or None |
+| `raise_if_failed()` | Raise the kind that failed, or return the response for chaining |
+
+`value` matters because the raw `result` is not the same thing: a request naming one method
+holds `{"get_value": {"status": True, "result": 19.0}}` there, and the facade unwraps it. Reading
+`response["result"]` gives the mapping; reading `response.value` gives 19.0.
+
+```python
+failed = bench.configure(reading, no_such_method=None, raise_on_error=False)
+
+assert failed.ok is False
+assert failed.value is None
+assert failed.error_type == "HandlerError"
+```
 
 ### The managing object
 

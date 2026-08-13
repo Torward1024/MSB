@@ -8,7 +8,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from ..utils.logging_setup import logger
-from ..results import MethodResults
+from ..results import MethodResults, Response, unwrap
 import inspect
 import types
 
@@ -808,14 +808,17 @@ class Manipulator(ABC):
             Args:
                 obj (Optional[Any]): The object to operate on. Defaults to managing_object.
                 method (Optional[str]): Specific method to call.
-                raise_on_error (bool): If True, raise Exception on error; if False, return dict with {{status: bool, result: Any, error: str}}.
+                raise_on_error (bool): True raises the failure; False returns the `Response`.
 
             Returns:
-                Any: If raise_on_error=True, the result, or the value itself when the
-                    request named exactly one method. If False, the whole response.
+                Any: With `raise_on_error` (the default), the value -- unwrapped when the
+                    request named exactly one method. Without it, a `Response`, whose `.value`
+                    is that same value and whose `.ok`, `.error` and `.error_type` say what
+                    happened. A caller wanting one shape either way uses `raise_on_error=False`
+                    and reads `.value`.
 
             Raises:
-                Exception: If raise_on_error=True and operation fails.
+                Exception: If `raise_on_error` and the request failed, of the kind that failed.
 
             Notes:
                 - Sugar over `process_request`. It unwraps the common case: one method named,
@@ -876,19 +879,11 @@ class Manipulator(ABC):
     def _unwrap_single(result: Any) -> Any:
         """Reduce a one-method result mapping to the value it holds.
 
-        Args:
-            result (Any): Whatever the handler returned.
-
-        Returns:
-            Any: The single value if `result` reports exactly one method, `result` otherwise.
-
         Notes:
-            - Only `MethodResults` is unwrapped, never a plain dictionary a handler happens
-              to return, so a handler producing real data of its own is left alone.
+            - Delegates to `results.unwrap`, so a facade and `Response.value` cannot answer
+              differently.
         """
-        if isinstance(result, MethodResults) and len(result) == 1:
-            return next(iter(result.values()))["result"]
-        return result
+        return unwrap(result)
 
     def _get_method_registry(self, validate_annotations: bool = False) -> Dict[Type, Dict[str, Callable]]:
         """Generate the method registry for registered operations and base classes.
@@ -1021,17 +1016,17 @@ class Manipulator(ABC):
         if "operation" not in request:
             error_msg = "No operation specified in request"
             logger.error(error_msg)
-            return {"status": False, "object": request.get("obj"), "method": None, "result": None, "error": error_msg}
+            return Response({"status": False, "object": request.get("obj"), "method": None, "result": None, "error": error_msg})
 
         if "method" in request and not isinstance(request["method"], (str, type(None))):
             error_msg = f"Invalid 'method' type: expected str or None, got {type(request['method']).__name__}"
             logger.error(error_msg)
-            return {"status": False, "object": request.get("obj"), "method": None, "result": None, "error": error_msg}
+            return Response({"status": False, "object": request.get("obj"), "method": None, "result": None, "error": error_msg})
 
         if "attributes" in request and not isinstance(request["attributes"], (dict, type(None))):
             error_msg = f"Invalid 'attributes' type: expected dict or None, got {type(request['attributes']).__name__}"
             logger.error(error_msg)
-            return {"status": False, "object": request.get("obj"), "method": None, "result": None, "error": error_msg}
+            return Response({"status": False, "object": request.get("obj"), "method": None, "result": None, "error": error_msg})
 
         return self._process_single_request(request)
 
@@ -1255,25 +1250,25 @@ class Manipulator(ABC):
         if not operation:
             error_msg = "No operation specified in request"
             logger.error(error_msg)
-            return {"status": False, "object": obj, "method": None, "result": None, "error": error_msg}
+            return Response({"status": False, "object": obj, "method": None, "result": None, "error": error_msg})
 
         super_instance = self._operations.get(operation) or self._resolve_deferred(operation)
         if super_instance is None:
             error_msg = f"Operation '{operation}' not registered"
             logger.error(error_msg)
-            return {"status": False, "object": obj, "method": None, "result": None, "error": error_msg}
+            return Response({"status": False, "object": obj, "method": None, "result": None, "error": error_msg})
 
         try:
             effective_obj = self._validate_object(obj, "request object")
         except ValueError as e:
             logger.error("Object validation failed: %s", str(e))
-            return {"status": False, "object": obj, "method": None, "result": None, "error": str(e)}
+            return Response({"status": False, "object": obj, "method": None, "result": None, "error": str(e)})
 
         execute_args = {"obj": effective_obj}
         if attributes or method:
             if not isinstance(attributes, dict):
                 logger.error("Attributes must be a dictionary, got %s", type(attributes).__name__)
-                return {"status": False, "object": effective_obj, "method": None, "result": None, "error": "Invalid attributes type"}
+                return Response({"status": False, "object": effective_obj, "method": None, "result": None, "error": "Invalid attributes type"})
             execute_args["attributes"] = attributes.copy()
             if method:
                 execute_args["method"] = method
@@ -1281,12 +1276,12 @@ class Manipulator(ABC):
         try:
             super_result = super_instance.execute(**execute_args)
             logger.debug("Processed operation '%s' on %s", operation, type(effective_obj).__name__)
-            result_dict = {
+            result_dict = Response({
                 "status": super_result["status"],
                 "object": super_result["object"],
                 "method": super_result["method"],
                 "result": super_result["result"]
-            }
+            })
             if not super_result["status"]:
                 result_dict["error"] = super_result["error"]
                 if "error_type" in super_result:
@@ -1294,8 +1289,8 @@ class Manipulator(ABC):
             return result_dict
         except Exception as e:
             logger.error("Failed to process request '%s' via execute: %s", operation, str(e))
-            return {"status": False, "object": effective_obj, "method": None, "result": None,
-                    "error": str(e), "error_type": type(e).__name__}
+            return Response({"status": False, "object": effective_obj, "method": None, "result": None,
+                    "error": str(e), "error_type": type(e).__name__})
 
     def batch(self, requests: Union[Sequence[Dict[str, Any]], Dict[str, Dict[str, Any]]],
               raise_on_error: bool = False) -> Dict[str, Any]:

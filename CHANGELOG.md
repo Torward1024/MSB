@@ -13,6 +13,50 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.8.0] - 2026-08-13
+
+### Added
+
+- **`Response`: one type for what a request produced.** Reported from downstream, where a facade
+  answering with a value under `raise_on_error=True` and with the whole response under
+  `raise_on_error=False` had grown this line at every call site that wanted the second:
+
+  ```python
+  result = response["result"] if isinstance(response, dict) and "status" in response else response
+  ```
+
+  That line is also wrong for the common case. A request naming one method holds
+  `{"get_price": {"status": True, "result": 4.5}}` under `result`, and the facade unwraps it; the
+  hand-written version does not, so the two answers differ exactly where it matters.
+
+  Every response is now a `Response` -- still a `dict`, still logged and journalled and sent over
+  a wire as one -- with four properties:
+
+  | | |
+  | --- | --- |
+  | `ok` | Whether it succeeded |
+  | `value` | What it produced, unwrapped exactly as a facade unwraps it. None for a failure |
+  | `error`, `error_type` | The message and the name of the exception class |
+  | `raise_if_failed()` | Raise the kind that failed, or return the response for chaining |
+
+  The unwrapping rule lives in one function that both the facade and `value` call, so they cannot
+  answer differently.
+
+- Responses from `process_request`, from every entry of a `batch`, and from every step of a
+  pipeline -- **including a step skipped because the one it waited for failed**, which was the one
+  place still handing back a bare dictionary.
+
+### Changed
+
+- Nothing. `raise_on_error=True` returns the value it always did, `raise_on_error=False` returns
+  something that compares equal to the dictionary it always did, and code reading `response["..."]`
+  is untouched.
+
+### Upgrading from 1.7.0
+
+Nothing to do. Where an application unwraps a response by hand, `response.value` replaces it and
+is right about the one-method case.
+
 ## [1.7.0] - 2026-08-13
 
 ### Added
