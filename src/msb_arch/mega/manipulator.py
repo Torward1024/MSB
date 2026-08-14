@@ -8,6 +8,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from ..utils.logging_setup import logger
+from ..model import path_of
 from ..results import MethodResults, Response, unwrap
 import inspect
 import types
@@ -395,6 +396,56 @@ class Manipulator(ABC):
 
         return await _Plan(self, plan).arun(raise_on_error=raise_on_error)
 
+    def _recorded_object(self, entry: Dict[str, Any], alive: Any = None) -> Optional[Any]:
+        """Return the object a recorded request ran on, found in the model in hand.
+
+        Args:
+            entry (Dict[str, Any]): One journal entry.
+            alive (Any): The object the journal saw, if it is still alive. Defaults to None.
+
+        Returns:
+            Optional[Any]: The object to replay the step on, or None when nothing answers.
+
+        Notes:
+            - **The recorded path first**, so replaying against a model that has the same shape
+              reaches that model. Preferring the live object here is what used to send a replay
+              back into the model the session was recorded from, leaving the one being replayed
+              against untouched.
+            - **Then the live object**, which is the only address a manipulator managing nothing
+              has, and the exact one when a session is replayed in the process that recorded it.
+            - **The name last**, and only for a journal written before paths existed, because a
+              name is unique within a container rather than across a model.
+        """
+        path = entry.get("path")
+        if path:
+            found = self.locate(path)
+            if found is not None:
+                return found
+
+        if alive is not None:
+            if path:
+                logger.debug("Nothing at %s in this model; replaying on the object the journal "
+                             "saw", path)
+            return alive
+
+        if path:
+            logger.warning("Replaying a step recorded at %s, which is not in this model", path)
+        named = entry.get("object")
+        if isinstance(named, str):
+            # The whole walk, not the first match: a journal old enough to have no paths is
+            # exactly the case where a duplicated name picks the wrong object, so it is worth
+            # knowing there was more than one.
+            found = self._matching(named)
+            if not found:
+                logger.warning("Replaying a step that names '%s', which is not here", named)
+                return None
+            if len(found) > 1:
+                logger.warning("Replaying a step that names '%s', and %s objects here are called "
+                               "that; using the first. Re-record the session to address it by "
+                               "path", named, len(found))
+            return found[0]
+        return named
+
     def journal(self) -> Optional[Any]:
         """Return the request journal registered with this orchestrator, if there is one.
 
@@ -499,34 +550,52 @@ class Manipulator(ABC):
         return self.order_handlers(operation, needed)
 
     def find(self, name: str) -> Optional[Any]:
-        """Return the object called `name` in whatever this orchestrator manages.
+        """Return an object called `name` in whatever this orchestrator manages.
 
         Args:
             name (str): The `name` of the object to look for.
 
         Returns:
-            Optional[Any]: The object, or None when nothing here is called that.
+            Optional[Any]: The first match of a breadth-first walk, or None when nothing here
+                is called that.
 
         Notes:
-            - A breadth-first walk of the managed object and what it holds, so a name resolves
-              wherever it lives rather than only at the top.
-            - This is what makes a recorded session portable. A journal names the object a
-              request was made on rather than holding it, and replaying resolves the name
-              against the model in hand -- which is why the same session can run against
-              another project.
+            - **A name is not unique.** Names are unique within a container, not across a model:
+              two containers may each hold a `bolt`, and this returns whichever the walk reaches
+              first. Use `address`/`locate` where it matters -- a bare name is only safe when you
+              know the model has one of them.
+            - Stops at the first match, so what it costs depends on where the object is: 35 us
+              against 465 us for a full walk of a thousand objects. `locate` is a descent rather
+              than a search and does not depend on the model's size.
+        """
+        found = self._matching(name, limit=1)
+        return found[0] if found else None
+
+    def _matching(self, name: str, limit: Optional[int] = None) -> List[Any]:
+        """Return objects of that name, breadth-first from the managed object.
+
+        Args:
+            name (str): The name to look for.
+            limit (Optional[int]): Stop once this many have been found. None walks everything,
+                which is how a caller finds out whether a name is ambiguous at all.
+
+        Returns:
+            List[Any]: The matches, in the order the walk reached them.
         """
         root = self.get_managing_object()
         if root is None or not name:
-            return None
+            return []
 
-        seen, pending = set(), [root]
+        found, seen, pending = [], set(), [root]
         while pending:
             candidate = pending.pop(0)
             if id(candidate) in seen:
                 continue
             seen.add(id(candidate))
             if getattr(candidate, "name", None) == name:
-                return candidate
+                found.append(candidate)
+                if limit is not None and len(found) >= limit:
+                    return found
             held = getattr(candidate, "get_items", None)
             if held is None:
                 continue
@@ -536,7 +605,80 @@ class Manipulator(ABC):
                 logger.debug("Cannot read the items of %s: %s", type(candidate).__name__, str(e))
                 continue
             pending.extend(items.values() if isinstance(items, dict) else items)
-        return None
+        return found
+
+    def address(self, obj: Any) -> List[str]:
+        """Return where an object sits in the model, as a path `locate` accepts.
+
+        Args:
+            obj (Any): The object to address.
+
+        Returns:
+            List[str]: Names from the top down, `["store", "right", "bolt"]`. A single name for
+                something nothing owns, and an empty list for anything unnamed.
+
+        Notes:
+            - The inverse of `locate`, and what a journal records for each request, so an object
+              can be referred to across a file, a process or a wire without being sent.
+            - Read from the ownership graph rather than stored, so moving an object changes its
+              address with no bookkeeping.
+
+        Examples:
+            >>> path = manipulator.address(bolt)
+            >>> manipulator.locate(path) is bolt
+            True
+        """
+        return path_of(obj)
+
+    def locate(self, path: Sequence[str]) -> Optional[Any]:
+        """Return the object at a path, counting from what this orchestrator manages.
+
+        Args:
+            path (Sequence[str]): Names from the top down, as `model.path_of` produces them.
+                A leading segment naming the managed object itself is optional.
+
+        Returns:
+            Optional[Any]: The object, or None if any segment of the path is not there.
+
+        Notes:
+            - Unambiguous where `find` is not: a path says which `bolt`, and a model with two
+              of them resolves to the one that was meant.
+            - Descends by asking each object for the named member -- `get` for a container, the
+              field otherwise -- so nothing is searched and nothing is guessed.
+            - Only model objects answer. A segment naming a method or a plain attribute is a
+              miss, since a path addresses the model rather than reading it.
+
+        Examples:
+            >>> manipulator.locate(["store", "right", "bolt"])
+            Part(name='bolt', ...)
+        """
+        from ..base.serializable import Serializable
+
+        root = self.get_managing_object()
+        if root is None or not path:
+            return None
+
+        segments = list(path)
+        if getattr(root, "name", None) == segments[0]:
+            segments = segments[1:]
+
+        current = root
+        for segment in segments:
+            found = None
+            if hasattr(current, "get_items"):
+                try:
+                    found = current.get(segment)
+                except Exception:                       # noqa: BLE001 - a miss, reported below
+                    found = None
+            if found is None:
+                held = getattr(current, segment, None)
+                found = held if isinstance(held, Serializable) else None
+            if found is None:
+                logger.debug("Nothing called '%s' inside %s", segment, getattr(
+                    current, "name", type(current).__name__))
+                return None
+            current = found
+        return current
 
     def replay(self, journal: Optional[Any] = None, skip_failures: bool = True,
                concurrent: bool = False) -> Any:
@@ -568,19 +710,14 @@ class Manipulator(ABC):
 
         from ..pipeline import PipelineRun
 
-        plan = journal.as_plan(skip_failures=skip_failures)
+        # Resolved against *this* model, by path. A recorded step used to carry the live object
+        # when it was still alive, which sent the replay into the model it was recorded from
+        # rather than the one being replayed against -- and a step that had lost its object fell
+        # back to the name, which is not unique.
+        plan = journal.as_plan(skip_failures=skip_failures, resolve=self._recorded_object)
         if not plan:
             return PipelineRun({}, {}, None)
 
-        # A step names its object. Resolved here rather than recorded as a reference, which is
-        # what lets a session recorded against one model run against another.
-        for step in plan.values():
-            named = step.get("obj")
-            if isinstance(named, str) and not named.startswith("@"):
-                found = self.find(named)
-                if found is None:
-                    logger.warning("Replaying a step that names '%s', which is not here", named)
-                step["obj"] = found
         return self.pipeline(plan, raise_on_error=False, concurrent=concurrent)
 
     def dependents_of(self, name: str, roots: Optional[List[type]] = None) -> List[str]:

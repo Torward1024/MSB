@@ -342,7 +342,7 @@ project.deactivate_all()
 project.activate_all()
 
 # Clear project
-project.clear()
+project.remove_all()
 
 # Drop by status
 project.drop_active()  # Remove all active items

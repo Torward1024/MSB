@@ -57,9 +57,13 @@ so an interceptor never sees an unresolved reference.
 `BaseEntity` and `BaseContainer` are siblings, both deriving from `Serializable`.
 
 They spell different things with the same words. `entity.get("field")` reads an attribute;
-`container.get("name")` returns an item. `entity.clear()` nulls attributes; `container.clear()`
-removes items. While the container inherited from the entity, each of those names carried two
-incompatible meanings inside one hierarchy.
+`container.get("name")` returns an item. While the container inherited from the entity, each of
+those names carried two incompatible meanings inside one hierarchy.
+
+Making them siblings separated the types; the names had to follow. `clear()` meant three things
+across the framework -- null an entity's attributes, drop a container's items, release the
+references a `Super` holds -- so each is now `reset_attributes()`, `remove_all()` and `release()`.
+One name for one job, checkable by reading it.
 
 `Serializable` holds what they genuinely share: annotated fields and their validation, `name` and
 `isactive`, `to_dict`, the cache, ownership, `revision` and `fingerprint`. It is also the type to

@@ -186,10 +186,10 @@ class TestProjectSetGetProject:
 
 class TestProjectClear:
     @patch('msb_arch.super.project.logger')
-    def test_clear(self, mock_logger, test_project):
-        test_project.clear()
+    def test_remove_all(self, mock_logger, test_project):
+        test_project.remove_all()
         assert len(test_project._items) == 0
-        mock_logger.info.assert_called()
+        mock_logger.debug.assert_called()
 
 
 class TestProjectActivateDeactivate:

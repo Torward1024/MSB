@@ -261,7 +261,7 @@ class TestSuperClear:
     @patch('msb_arch.super.super.logger')
     def test_clear(self, mock_logger, test_super):
         test_super._methods["type"] = {}
-        test_super.clear()
+        test_super.release()
         assert test_super._manipulator is None
         assert test_super._methods == {}
         mock_logger.debug.assert_called()

@@ -152,13 +152,22 @@ class BaseEntity(Serializable):
             kwargs[key] = cls._deserialize_value(value, expected_type, f"{cls.__name__}.{key}",
                                                  cls.DISCRIMINATORS.get(key))
         return cls(name=data.get("name"), isactive=data.get("isactive", True), **kwargs)
-    def clear(self) -> None:
-        """Clear all public attributes to release references.
+    def reset_attributes(self) -> None:
+        """Set every public attribute to None, releasing whatever it referred to.
 
         Notes:
             - 'name' and 'isactive' are kept, and so is every underscore-prefixed field:
               those hold framework state such as the shared type cache, and nulling them
               on the instance would shadow the class-level value.
+            - The object stays usable: this empties it rather than discarding it.
+            - Named for what it does, because `clear` meant three different things across the
+              framework. `BaseContainer.remove_all` drops items and `Super.release` drops
+              references; none of the three is a special case of another.
+
+        Examples:
+            >>> part.reset_attributes()
+            >>> part.price is None
+            True
         """
         for key in self._fields:
             if key in ("name", "isactive") or key.startswith('_'):
@@ -166,6 +175,18 @@ class BaseEntity(Serializable):
             if hasattr(self, key):
                 super().__setattr__(key, None)
         self._invalidate_cache()
+
+    def clear(self) -> None:
+        """Deprecated. Use `reset_attributes()`.
+
+        Notes:
+            - Deprecated in 1.9.0, removed in 2.0. Behaves exactly as it did.
+        """
+        import warnings
+
+        warnings.warn("BaseEntity.clear is deprecated; use reset_attributes()",
+                      DeprecationWarning, stacklevel=2)
+        self.reset_attributes()
     def __getitem__(self, key: str) -> Any:
         """Access an attribute using dictionary-like syntax.
 

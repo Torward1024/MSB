@@ -29,6 +29,7 @@ Recorded so each is decided once rather than argued again.
 | **Persistence beyond `to_dict`/`from_dict`** — a storage format, partial reads | **No.** A product of its own. `save`/`load` cover the case every application has, migrations cover a model changing shape, and anything past that is the application's choice — which is why `save` is a default that can be replaced rather than a law |
 | A dependency graph over `Super` **classes** | Ordering between operations is a property of a workflow, not of a class. Attaching it to the class freezes one scenario. The real graph is over steps, which is what a pipeline has |
 | A metrics backend, a rate limiter, an authorisation model | Policies. MSB supplies the interceptor and no dependencies |
+| Splitting `Manipulator` into `manipulator.catalogue` / `manipulator.audit` namespaces | **No.** It is the single entry point on purpose, and a flat surface is what makes a request reach everything the same way. The API is finished, so the count of methods is not going to grow |
 | Object pooling | Entity construction cost was introspection, not allocation, and the introspection is now done once per class |
 | Parallel serialization, asynchronous invalidation | Measured slower than doing the work: 1.69x sequential with `asyncio.gather`, 1.11x with threads |
 | A cache size limit | Bounded by the object graph, not by traffic. Reported by `cache_statistics()` instead |
@@ -70,3 +71,16 @@ proposed again.
 - **A cache is where the next bug lives.** Every cache added for speed was probed afterwards:
   inheritance, two containers of different types, threads building one at once, a class whose
   fields change after first use.
+- **A name is not an address.** Replaying a session resolved each step by the object's name, and
+  names are unique inside a container rather than across a model, so a step recorded on
+  `store/right/bolt` could run on `store/left/bolt`. Silently. The other half was worse: while the
+  recorded objects were alive the step carried the live one, so replaying against a fresh model
+  wrote into the old one. Whatever refers to an object across a file, a process or a wire has to
+  say *where*, and the ownership graph already knew.
+- **A documented rake is still a rake.** "Treat the cached mapping as read only" was true, correct
+  and useless: the mapping was mutable, so the advice was the only thing standing between a caller
+  and a corrupted cache. Making the write raise cost one pass when the cache is filled.
+- **One name for three jobs reads as consistency and is not.** `clear()` nulled attributes on an
+  entity, removed items from a container and dropped references on a `Super`. Each site was
+  defensible on its own; together they meant a reader could not tell what a call did without
+  knowing the type.

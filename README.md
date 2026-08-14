@@ -2,21 +2,34 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MSB%20Software%20License-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.8.0-brightgreen.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-1.9.0-brightgreen.svg)](https://github.com/Torward1024/MSB)
 
-Mega-Super-Base (MSB) is an architecture for Python applications built around a single entry
-point. You describe your data as typed entities, you describe what may be done to them as
-operations, and everything reaches both through one orchestrator — a script, a window, a
-command line, a server.
+Mega-Super-Base (MSB) is for the application that outgrew a script: one whose data has a shape
+worth validating, whose operations keep multiplying, and which now needs a window, a command line
+and a server over the same model without three copies of the logic.
 
-A request is data, not a call:
+You describe the data as typed entities, you describe what may be done to it as operations, and
+everything reaches both through one orchestrator. A request is data, not a call:
 
 ```text
 {"operation": "configure", "obj": part, "attributes": {"set": {"params": {"price": 4.5}}}}
 ```
 
-That is what lets the same code serve a dialog, a script and a remote caller, and what lets a
-session be logged and replayed.
+Which is a small thing that buys several large ones:
+
+- The same code serves a dialog, a script and a remote caller, because none of them is calling a
+  method — they are all sending the same dictionary.
+- A session can be **recorded and replayed**: the journal keeps each request as data, with the
+  object's address in the model rather than a reference to it, so a recorded session runs again
+  against a model built from scratch and lands on the objects it meant.
+- Menus, dependency graphs, handler stubs and execution order are **derived from the code** rather
+  than listed, so none of them can go stale.
+- Metrics, auditing, authorisation and rate limiting hang on one hook that sees every request, and
+  the operations know nothing about them.
+
+Written for a working instrument — [pAstroCORE](https://github.com/Torward1024/pAstroCORE), which
+plans radio astronomy observations — and everything here exists because that application needed
+it.
 
 ## Features
 
@@ -43,6 +56,11 @@ session be logged and replayed.
 - **One place to hang metrics, auditing, rate limiting and authorisation.** An interceptor sees a
   request before it runs and its response after, and may refuse or rewrite it. Request metrics
   and a replayable journal ship using nothing more than that hook.
+- **A session that replays somewhere else.** The journal records each request as plain data, with
+  the object's address in the model rather than a reference to it, so a recorded session can be
+  written to a file and run again against a model built from scratch -- and land on the objects it
+  meant. `address` and `locate` are the same addressing on its own, for a request that has to cross
+  a process or a wire.
 - **Asynchronous when you need it.** `await manipulator.ainspect(...)` moves the work off the
   event loop, and every synchronous signature is untouched.
 - **Exceptions you can catch precisely.** Everything derives from `MSBError`, and also from the
@@ -218,4 +236,4 @@ For commercial use, a separate royalty-bearing license is required. Please conta
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 1.8.0
+- **Version**: 1.9.0

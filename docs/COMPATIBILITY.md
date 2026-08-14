@@ -25,13 +25,13 @@ short:
 
 | | |
 | --- | --- |
-| **Data** | `Serializable`, `BaseEntity`, `BaseContainer`, `Project` |
-| **Operations** | `Super`, `MethodResults`, `Response` |
+| **Data** | `Serializable`, `BaseEntity`, `BaseContainer`, `Project`, `ReadOnlyMapping`, `ReadOnlyList` |
+| **Operations** | `Super`, `MethodResults`, `Response`, `ResponseData`, `MethodOutcome` |
 | **Built-in operations** | `Inspector`, `Configurator`, `Catalogue`, `Persistence`, `Loader` |
 | **Entry point** | `Manipulator` |
 | **Protocols** | `MethodProvider`, `Interceptor` |
 | **Interceptors** | `RequestMetrics`, `RequestJournal` |
-| **Derivation** | `derive`, `label_for`, `order`, `derive_model`, `dependents_of`, `holdings_of` |
+| **Derivation** | `derive`, `label_for`, `order`, `derive_model`, `dependents_of`, `holdings_of`, `path_of` |
 | **Constraints** | `Constraint`, `Positive`, `NonNegative`, `NonZero`, `NonEmpty`, `Range`, `Predicate` |
 | **Exceptions** | `MSBError` and everything beneath it |
 | **Utilities** | `logger`, `setup_logging`, `cache_statistics` |
@@ -101,6 +101,15 @@ working exactly as it did while it is deprecated; the warning is the only change
 | Name | Since | Use instead | Goes |
 | --- | --- | --- | --- |
 | `RequestJournal.replay(manipulator)` | 1.3.0 | `manipulator.replay(journal)` | 2.0 |
+| `BaseEntity.clear()` | 1.9.0 | `reset_attributes()` | 2.0 |
+| `BaseContainer.clear()` | 1.9.0 | `remove_all()` | 2.0 |
+| `Project.clear()` | 1.9.0 | `remove_all()` | 2.0 |
+| `Super.clear()` | 1.9.0 | `release()` | 2.0 |
+
+`clear` meant three different things depending on what you called it on: null an entity's
+attributes, drop a container's items, release the references an operation holds. That is the same
+defect `get` used to have, and it is fixed the same way -- one name per job, the old name warning
+until 2.0.
 
 ## What is deliberately not promised
 
@@ -116,6 +125,32 @@ working exactly as it did while it is deprecated; the warning is the only change
   boundary, since a response carries no exception object.
 - **Ordering of a mapping**, except where documented: a set serializes in a stable order
   precisely because that one is promised.
+- **Which object a bare name resolves to.** `Manipulator.find(name)` returns the first match of a
+  walk, and a name is unique within a container rather than across a model. Where the answer
+  matters, address the object: `locate(path)` is defined, `find(name)` is a convenience.
+
+## Behaviour corrected in 1.9.0
+
+**Writing to a cached serialization** used to work and corrupt the cache. `to_dict` on an object
+with `use_cache=True` returns the mapping the cache holds, and the docstring said to treat it as
+read only; it is now a `ReadOnlyMapping` and the write raises `SerializationError`, which is also a
+`TypeError`. Reading is unaffected, and without caching the result is an ordinary dictionary. Code
+that mutated it was corrupting a cache and getting away with it, which is not behaviour that was
+promised.
+
+
+Replaying a journal used to run each step on the object the journal saw whenever that object was
+still alive, and to fall back to the recorded name otherwise. Both were wrong in ways the
+documentation already ruled out -- it promised a session that "replays against whatever model it is
+replayed on" -- so this is the code catching up with the promise, not a change of it:
+
+- A live object belongs to the model the session was recorded from. Replaying against a fresh model
+  wrote into the old one and left the fresh one untouched.
+- A name is not unique, so a step recorded on `store/right/bolt` could replay onto
+  `store/left/bolt`.
+
+A step now resolves by the path the entry records, in the model being replayed against. A journal
+written before 1.9.0 has no paths and behaves exactly as it did.
 
 ## Reporting a break
 

@@ -13,15 +13,20 @@ Reached through `manipulator.describe_model()`.
 Limits:
 
 - A graph over types, not objects. Changing `Wheel` may affect a `Car`; which car is a fact about
-  an object, and `_parents` on a live one answers that.
+  an object, which is what `path_of` reads out of `_parents` on a live one.
 - Types are reported by name. What they mean is the caller's business.
 """
+import logging
 from typing import Any, Dict, List, Optional, Set, get_args
 
 from .utils.logging_setup import logger
 
 #: The derivation only. Callers go through `manipulator.describe_model()`.
-__all__ = ["derive_model", "dependents_of", "holdings_of", "named_type"]
+__all__ = ["derive_model", "dependents_of", "holdings_of", "named_type", "path_of"]
+
+#: Stands in for the `__dict__` of something that has none, so the walk in
+#: `path_of` needs no branch for it.
+_NOTHING: Dict[str, Any] = {}
 
 
 def _serializable_types(hint: Any, owner: Optional[type] = None) -> List[type]:
@@ -238,3 +243,62 @@ def named_type(name: str) -> type:
             f"{len(found)} imported types are called '{name}': "
             f"{', '.join(sorted(one.__module__ for one in found))}")
     return found[0]
+
+
+def path_of(obj: Any) -> List[str]:
+    """Return where an object sits in the model, as names from the top down.
+
+    Args:
+        obj (Serializable): The object to locate.
+
+    Returns:
+        List[str]: `["store", "right", "bolt"]` -- every owner's name, ending with this
+            object's own. A single name for something nothing owns. Empty for anything with no
+            name at all.
+
+    Notes:
+        - Read from `_parents`, the ownership graph invalidation already walks, so nothing has
+          to be recorded for this to work.
+        - **A name is not unique; a path is what makes it addressable.** Two containers may
+          each hold a `bolt`, and a session that recorded only the name cannot say which one it
+          meant.
+        - An object with several owners -- one added to two containers with `copy_items=False`
+          -- has several paths. The first owner found is used and the rest are logged, since a
+          caller wanting a particular one can address it directly.
+        - A cycle in ownership stops the walk rather than looping.
+    """
+    name = getattr(obj, "name", None)
+    if not name:
+        return []
+
+    # Built bottom-up and reversed once: a path is a handful of segments, and every request a
+    # journal records pays for this walk.
+    upwards = [name]
+    seen = {id(obj)}
+    current = obj
+    while True:
+        owners = getattr(current, "__dict__", _NOTHING).get("_parents")
+        if not owners:
+            break
+        owner = None
+        for reference in owners.values():
+            candidate = reference()
+            if candidate is not None and id(candidate) not in seen:
+                if owner is None:
+                    owner = candidate
+                elif logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("%s has another owner, '%s'; addressing it through '%s'",
+                                 name, getattr(candidate, "name", "?"),
+                                 getattr(owner, "name", "?"))
+                else:
+                    break
+        if owner is None:
+            break
+        owner_name = getattr(owner, "name", None)
+        if not owner_name:
+            break
+        seen.add(id(owner))
+        upwards.append(owner_name)
+        current = owner
+    upwards.reverse()
+    return upwards

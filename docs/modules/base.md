@@ -28,10 +28,11 @@ A single object is not guarded, exactly as a plain Python object is not. Two thr
 attributes of the same entity, or adding to the same container, must be serialized by the
 caller; with `use_cache=True` a write racing a read can leave a stale cached mapping.
 
-`entity.get("field")` reads an attribute; `container.get("name")` returns an item.
-`entity.clear()` nulls the attributes; `container.clear()` removes the items. A container
-stored as an attribute of an entity is serialized and restored normally, because both sides
-are `Serializable`.
+`entity.get("field")` reads an attribute; `container.get("name")` returns an item. Emptying them
+is two different jobs and now has two names: `entity.reset_attributes()` nulls the attributes,
+`container.remove_all()` removes the items. (`clear()` did both, meaning something different on
+each side; it is deprecated and goes in 2.0.) A container stored as an attribute of an entity is
+serialized and restored normally, because both sides are `Serializable`.
 
 
 
@@ -271,7 +272,7 @@ new_inventory = MyContainer.from_dict(data)   # a concrete subclass, not the gen
 | `get_items()` | Get all items as list |
 | `get_active_items()` | Get only active items |
 | `set_items(items)` | Set or replace all items |
-| `clear()` | Remove all items |
+| `remove_all()` | Remove every item |
 | `clone()` | Create deep copy |
 | `__str__()` | Returns a string representation of the container |
 | `__repr__()` | Returns the official string representation of the container |
@@ -283,6 +284,53 @@ new_inventory = MyContainer.from_dict(data)   # a concrete subclass, not the gen
 | `__setitem__(key, value)` | Sets an item by key |
 | `__delitem__(key)` | Deletes an item by key |
 | `__contains__(key)` | Checks if an item is in the container |
+
+### The cached serialization is a snapshot
+
+With `use_cache=True` the same mapping comes back from every `to_dict` call. That mapping **is**
+the cache, so it is handed out read-only: a `ReadOnlyMapping`, with `ReadOnlyList` for the lists
+inside it.
+
+```python
+import json
+import pytest
+from msb_arch import BaseContainer, BaseEntity
+from msb_arch.errors import SerializationError
+
+class Bolt(BaseEntity):
+    price: float
+    tags: list
+
+class Bolts(BaseContainer[Bolt]):
+    pass
+
+box = Bolts(name="box", use_cache=True)
+box.add(Bolt(name="bolt", price=4.5, tags=["fastener"], use_cache=True))
+
+data = box.to_dict()
+
+# A dict holding lists, so everything that reads them works, including equality with plain ones.
+assert json.loads(json.dumps(data))["items"]["bolt"]["price"] == 4.5
+assert data["items"]["bolt"]["tags"] == ["fastener"]
+
+with pytest.raises(SerializationError):          # which is also a TypeError
+    data["name"] = "other"
+with pytest.raises(SerializationError):          # all the way down, lists included
+    data["items"]["bolt"]["tags"].append("x")
+
+editable = dict(data)                            # this is how you change it: copy first
+editable["name"] = "other"
+```
+
+Writing to it used to work, and changed the cache for everyone holding it, with no error and no
+sign. The docstring said "treat it as read only", which is a rake with a label on it.
+
+Without caching the result is an ordinary dictionary, since nothing else holds it.
+
+Freezing costs one pass over the tree when the cache is filled -- around 60% on top of building
+it -- and nothing per call afterwards: a cached `to_dict` of a thousand entities answers in 0.4 µs
+against 2.8 ms to rebuild it. `copy`, `deepcopy` and `pickle` all give back plain, writable
+structures.
 
 ### Entity Methods
 
@@ -296,7 +344,7 @@ new_inventory = MyContainer.from_dict(data)   # a concrete subclass, not the gen
 | `to_dict()` | Serialize to dictionary |
 | `from_dict(data)` | Deserialize from dictionary |
 | `has_attribute(key)` | Check if attribute exists |
-| `clear()` | Clear all non-internal attributes |
+| `reset_attributes()` | Set every public attribute to None |
 | `__getitem__(key)` | Access attribute using [] |
 | `__setitem__(key, value)` | Set attribute using [] |
 | `__contains__(key)` | Check attribute existence with 'in' |

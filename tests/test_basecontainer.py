@@ -213,11 +213,11 @@ class TestBaseContainerHasItem:
 
 class TestBaseContainerClear:
     def test_clear(self, test_container):
-        test_container.clear()
+        test_container.remove_all()
         assert len(test_container) == 0
 
     def test_clear_logs(self, test_container):
-        test_container.clear()
+        test_container.remove_all()
 
 
 class TestBaseContainerClone:
@@ -490,7 +490,7 @@ class TestBaseContainerLifetime:
     def test_clearing_the_container_leaves_the_callers_dict_alone(self):
         caller_items = {"item1": TestEntity(name="item1", value=1)}
         container = TestContainer(name="borrowing", items=caller_items)
-        container.clear()
+        container.remove_all()
         assert len(container) == 0
         assert set(caller_items) == {"item1"}
 
@@ -550,9 +550,9 @@ class TestHierarchySeparation:
         entity = TestEntity(name="e", value=1)
         container = TestContainer(name="c")
         container.add(entity)
-        container.clear()
+        container.remove_all()
         assert len(container) == 0
-        entity.clear()
+        entity.reset_attributes()
         assert entity.value is None
         assert entity.name == "e"
 

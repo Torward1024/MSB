@@ -212,16 +212,33 @@ class Project(ABC):
         logger.debug("Retrieved project configuration for '%s' with %s items", self.name, len(self._items))
         return result
     
-    def clear(self):
-        """Clear all items from the project.
+    def remove_all(self) -> None:
+        """Remove every item from the project's container.
 
-        This method removes all items from the project's container.
+        Notes:
+            - The project itself stays: its name, its container and its factory are untouched.
+            - Named for what it does, matching `BaseContainer.remove_all`.
+
+        Examples:
+            >>> project.remove_all()
+            >>> project.get_items()
+            {}
         """
-        try:
-            self._items.clear()
-            logger.info("Cleared project '%s'", self.name)
-        except Exception as e:
-            logger.error("Error clearing project '%s': %s", self.name, str(e))
+        self._items.remove_all()
+        logger.debug("Removed all items from project '%s'", self.name)
+
+    def clear(self) -> None:
+        """Deprecated. Use `remove_all()`.
+
+        Notes:
+            - Deprecated in 1.9.0, removed in 2.0. It also used to log and swallow anything that
+              went wrong, which hid a failure to empty the project; `remove_all` raises.
+        """
+        import warnings
+
+        warnings.warn("Project.clear is deprecated; use remove_all()",
+                      DeprecationWarning, stacklevel=2)
+        self.remove_all()
 
     def activate_item(self, name: str) -> None:
         """Activate an item in the project's container by its name.

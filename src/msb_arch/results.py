@@ -5,9 +5,62 @@ Kept out of both `Super` and `Manipulator`: a Super produces these, a Manipulato
 them on, and neither owns them. Having them here also keeps the two modules from importing
 each other.
 """
-from typing import Any, Dict
+from typing import Any, Dict, NotRequired, TypedDict
 
-__all__ = ["MethodResults", "Response", "unwrap"]
+__all__ = ["MethodOutcome", "MethodResults", "Response", "ResponseData", "unwrap"]
+
+
+class MethodOutcome(TypedDict):
+    """What one named method of a request produced.
+
+    Keys:
+        status (bool): Whether that method worked.
+        result (Any): What it returned. None when it failed.
+        error (str): The message, present only on a failure.
+    """
+
+    status: bool
+    result: Any
+    error: NotRequired[str]
+
+
+class ResponseData(TypedDict):
+    """The shape of a response, as data.
+
+    Every request produces this: a `Response` in the process that ran it, and exactly this
+    mapping once it has been through JSON, a log, a journal or a wire. A framework about
+    validating types owed its own protocol a type.
+
+    Keys:
+        status (bool): Whether the request succeeded.
+        object (str): The `name` of the object it ran on, or the value itself when the request
+            was made on plain data.
+        method (str): The handler that ran, or None when the operation dispatched by type.
+        result (Any): What the handler produced -- for the usual handler, a mapping of method
+            name to `MethodOutcome`.
+        error (str): The message, present only on a failure.
+        error_type (str): The name of the exception class, present only on a failure.
+
+    Notes:
+        - `Response` is this shape plus the four properties that save a caller unwrapping it by
+          hand. Annotate what crosses a boundary as `ResponseData`; annotate what a call returns
+          as `Response`.
+        - `error` and `error_type` are absent rather than None on a success, which is why they
+          are `NotRequired`. Read them with `.get`, or through `Response.error`.
+
+    Example:
+        ```python
+        def render(response: ResponseData) -> str:
+            return "ok" if response["status"] else f"failed: {response['error']}"
+        ```
+    """
+
+    status: bool
+    object: Any
+    method: NotRequired[Any]
+    result: NotRequired[Any]
+    error: NotRequired[Any]
+    error_type: NotRequired[Any]
 
 
 class MethodResults(dict):
@@ -58,7 +111,7 @@ def unwrap(result: Any) -> Any:
 class Response(dict):
     """What a request produced.
 
-    A `dict` with the protocol's own keys -- `status`, `object`, `method`, `result`, and
+    A `dict` in the shape of `ResponseData` -- `status`, `object`, `method`, `result`, and
     `error` and `error_type` when something went wrong -- so it logs, journals and serialises
     exactly as it always did. The properties below are what stop every caller writing the same
     unwrapping by hand.
@@ -69,6 +122,10 @@ class Response(dict):
     | `value` | What it produced, unwrapped as a facade unwraps it |
     | `error` | The message, or None |
     | `error_type` | The name of the exception class, or None |
+
+    Notes:
+        - The keys are typed by `ResponseData`, which is the same shape once it has been through
+          JSON or a wire and is no longer this class.
 
     Examples:
         >>> answer = manipulator.inspect(part, get="price", raise_on_error=False)

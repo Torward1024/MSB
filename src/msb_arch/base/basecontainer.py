@@ -13,7 +13,8 @@ from typing import (Dict,
                     get_type_hints, 
                     get_args, 
                     get_origin)
-from ..base.serializable import CYCLIC_REFERENCE, SCHEMA_FIELD, Serializable, _TRAVERSAL
+from ..base.serializable import (CYCLIC_REFERENCE, SCHEMA_FIELD, Serializable, _TRAVERSAL,
+                                 _read_only)
 from ..errors import (AttributeNotFoundError,
                       ConstraintError,
                       DuplicateNameError,
@@ -460,16 +461,37 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         """
         return name in self._items
 
-    def clear(self) -> None:
-        """Remove all items from the container.
+    def remove_all(self) -> None:
+        """Remove every item, leaving the container itself intact.
 
         Notes:
-            - Logs an info message indicating the container has been cleared.
+            - The container keeps its name, its type and its settings: what goes is what it
+              held.
+            - Named for what it does, because `clear` meant three different things across the
+              framework. `BaseEntity.reset_attributes` nulls attributes and `Super.release`
+              drops references.
+
+        Examples:
+            >>> box.remove_all()
+            >>> len(box)
+            0
         """
         if hasattr(self, '_items'):
             self._items.clear()
         self._invalidate_cache()
-        logger.info("Cleared all items from %s", self.__class__.__name__)
+        logger.debug("Removed all items from %s", self.__class__.__name__)
+
+    def clear(self) -> None:
+        """Deprecated. Use `remove_all()`.
+
+        Notes:
+            - Deprecated in 1.9.0, removed in 2.0. Behaves exactly as it did.
+        """
+        import warnings
+
+        warnings.warn("BaseContainer.clear is deprecated; use remove_all()",
+                      DeprecationWarning, stacklevel=2)
+        self.remove_all()
 
     def clone(self, deep: bool = True) -> 'BaseContainer[T]':
         """Create a deep copy of the container.
@@ -579,8 +601,9 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             - `handle_cyclic_refs` applies to the items of this container. A nested container
               reached through them uses its own default, since the traversal carries no
               policy with it.
-            - When caching is enabled the very same mapping is returned on every call. Treat
-              it as read only: mutating it corrupts the cache.
+            - When caching is enabled the very same mapping is returned on every call, so it
+              is a `ReadOnlyMapping`: a write raises `TypeError` instead of corrupting the
+              cache. `dict(data)` is the copy to change.
         """
         if handle_cyclic_refs not in ("mark", "ignore", "raise"):
             raise ConstraintError(f"Invalid handle_cyclic_refs value: {handle_cyclic_refs}")
@@ -608,6 +631,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
                 _TRAVERSAL.reset(token)
 
         if self._use_cache and is_root:
+            data = _read_only(data)
             self._cached_to_dict = data
         return data
 

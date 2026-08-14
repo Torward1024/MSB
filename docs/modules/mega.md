@@ -458,9 +458,74 @@ assert bench.replay(journal).failed == []
 With `fingerprints=True` the journal hashes the object either side of each request, so it can
 report which requests actually changed something. It costs a serialisation each way.
 
-Two limits: entries hold the live object the request named, which is what makes replay exact and
-what stops a journal from being written to a file as it stands; and replay assumes deterministic
-handlers.
+### Addressing an object
+
+A name is unique inside a container, not across a model, so the same name can sit in two places:
+
+```python
+class Shelf(BaseContainer[Readings]):
+    pass
+
+def two_shelves() -> Shelf:
+    store = Shelf(name="store")
+    for side in ("left", "right"):
+        readings = Readings(name=side)
+        readings.add(Reading(name="r1", value=1.0))
+        store.add(readings)
+    return store
+
+store = two_shelves()
+depot = Bench(base_classes=[Reading, Readings, Shelf], managing_object=store)
+
+path = depot.address(store.get("right").get("r1"))
+assert path == ["store", "right", "r1"]
+assert depot.locate(path) is store.get("right").get("r1")
+```
+
+`address` reads the ownership graph, so nothing is stored and moving an object changes its address.
+`locate` descends the path segment by segment — nothing is searched, so it cannot answer with a
+different object of the same name. The two are inverses, which is how an object is referred to
+across a file, a process or a wire without being sent.
+
+`find(name)` still walks and still answers with the first match, which is what a convenience
+lookup should cost -- it does not walk the rest of the model to check whether the name was
+ambiguous:
+
+```python
+assert depot.find("r1") is store.get("left").get("r1")     # whichever the walk reaches first
+```
+
+Replaying is where an ambiguous name is dangerous, so that is where the whole model is walked and
+a warning is logged.
+
+A journal entry records the path beside the name, and replaying resolves each step by that path **in
+the model in hand** — which is what makes a recorded session portable:
+
+```python
+audit = RequestJournal()
+depot.add_interceptor(audit)
+depot.configure(store.get("right").get("r1"), set_value=42.0)
+depot.remove_interceptor(audit)
+
+assert audit.entries[0]["path"] == ["store", "right", "r1"]
+
+fresh = two_shelves()
+replaying = Bench(base_classes=[Reading, Readings, Shelf], managing_object=fresh)
+replaying.replay(audit)
+
+assert fresh.get("right").get("r1").value == 42.0      # the one the session meant
+assert fresh.get("left").get("r1").value == 1.0        # and not the other one
+```
+
+Where a path is not in the model being replayed against, replay falls back to the object the journal
+saw if it is still alive — the only address a manipulator managing nothing has — and to the name for
+journals written before 1.9.0.
+
+Recording a path costs about 1.5 µs per request, on a walk up an ownership graph that is a handful
+of levels deep. Nothing pays it unless a journal is registered.
+
+One limit remains: replay assumes deterministic handlers. One that reads the clock, a file or a
+random seed cannot be reconstructed from its request.
 
 ## Errors
 

@@ -66,7 +66,7 @@ classDiagram
         +get(key)
         +set(params)
         +has_attribute(key)
-        +clear()
+        +remove_all()
     }
 
     class BaseContainer~T~ {
@@ -273,7 +273,7 @@ stateDiagram-v2
     [*] --> Empty: Project(name=...)
     Empty --> Holding: create_item() / add_item()
     Holding --> Holding: activate, deactivate, remove
-    Holding --> Empty: clear()
+    Holding --> Empty: remove_all()
     Holding --> Stored: to_dict()
     Stored --> Holding: from_dict()
     Holding --> [*]

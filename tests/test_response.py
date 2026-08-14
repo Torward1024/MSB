@@ -160,3 +160,33 @@ def test_reading_it_by_hand_is_not_the_same_answer(bench, part):
     assert by_hand == {"get_price": {"status": True, "result": 4.5}}
     assert answer.value == 4.5
     assert by_hand != answer.value
+
+
+def test_the_declared_shape_is_the_shape_that_ships(bench, part):
+    """`ResponseData` is a claim about the protocol, so it is checked against a real response.
+
+    A TypedDict is not enforced at runtime; nothing would notice it drifting from what a request
+    actually produces. This is what notices.
+    """
+    from msb_arch import ResponseData
+
+    declared = ResponseData.__required_keys__ | ResponseData.__optional_keys__
+
+    good = bench.inspect(part, get_price=None, raise_on_error=False)
+    assert set(good) <= declared, f"keys nothing declares: {set(good) - declared}"
+    assert ResponseData.__required_keys__ <= set(good)
+
+    failed = bench.configure(part, no_such_method=None, raise_on_error=False)
+    assert set(failed) <= declared, f"keys nothing declares: {set(failed) - declared}"
+    assert ResponseData.__required_keys__ <= set(failed)
+    assert "error" in failed and "error_type" in failed
+
+
+def test_a_method_outcome_is_the_declared_shape_too(bench, part):
+    from msb_arch import MethodOutcome
+
+    declared = MethodOutcome.__required_keys__ | MethodOutcome.__optional_keys__
+    outcome = bench.inspect(part, get_price=None, raise_on_error=False)["result"]["get_price"]
+
+    assert set(outcome) <= declared
+    assert MethodOutcome.__required_keys__ <= set(outcome)

@@ -14,6 +14,7 @@ import weakref
 from collections import defaultdict
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
+from .model import path_of
 from .utils.logging_setup import logger
 
 __all__ = ["RequestJournal", "RequestMetrics"]
@@ -141,14 +142,18 @@ class RequestJournal:
         ```
 
     Notes:
-        - **An entry is plain data**: what was asked, of which object *by name*, and whether it
-          worked. Not the request as it ran and not what it produced. A journal that holds the
-          live object and the response pins everything it audited -- found downstream in an
-          application whose storage design exists to keep results *out* of memory, where the
-          journal held a reference to every result frame it had ever recorded, so evicting one
-          freed nothing.
+        - **An entry is plain data**: what was asked, of which object -- *by name and by path* --
+          and whether it worked. Not the request as it ran and not what it produced. A journal
+          that holds the live object and the response pins everything it audited -- found
+          downstream in an application whose storage design exists to keep results *out* of
+          memory, where the journal held a reference to every result frame it had ever recorded,
+          so evicting one freed nothing.
         - Which is also what makes a session portable: it can be written to a file, and it
-          replays against whatever model it is replayed on, by name.
+          replays against whatever model it is replayed on, by address.
+        - **The path is the address; the name is a fallback.** Names are unique within a
+          container, not across a model, so two containers may each hold a `bolt`. An entry
+          records `["store", "right", "bolt"]` and replay resolves that, rather than taking the
+          first `bolt` a search happens to reach.
         - `limit` keeps the most recent entries, dropping the oldest: a sliding window, not a
           stack. That is right for diagnosis -- what just happened is what a bug report needs --
           and it means **an overflowed journal is no longer a complete session**. Replaying one
@@ -185,6 +190,10 @@ class RequestJournal:
         entry = {
             "operation": request.get("operation"),
             "object": _named(obj),
+            # Where it lives, not just what it is called. A name is unique inside a container,
+            # not across a model, so a session recorded by name alone can replay onto the wrong
+            # object. Read from the ownership graph, so nothing has to be maintained for it.
+            "path": path_of(obj) or None,
             "method": request.get("method"),
             "attributes": _plain(request.get("attributes") or {}),
             "error": None,
@@ -266,12 +275,17 @@ class RequestJournal:
         return [entry for entry in self._entries
                 if entry.get("before") is not None and entry.get("before") != entry.get("after")]
 
-    def as_plan(self, skip_failures: bool = True) -> Dict[str, Dict[str, Any]]:
+    def as_plan(self, skip_failures: bool = True,
+                resolve: Optional[Callable[[Dict[str, Any], Any], Any]] = None
+                ) -> Dict[str, Dict[str, Any]]:
         """Return the recorded session as a pipeline plan.
 
         Args:
             skip_failures (bool): Leave out requests that failed the first time. Defaults to
                 True, since replaying a known failure rarely says anything new.
+            resolve (Optional[Callable]): Called as `resolve(entry, alive)` -- the entry, and
+                the object the journal saw if it is still alive -- returning the object its step
+                should run on. Defaults to that live object, and the recorded name otherwise.
 
         Returns:
             Dict[str, Dict[str, Any]]: Steps keyed by name, each waiting for the one before, so
@@ -279,7 +293,10 @@ class RequestJournal:
 
         Notes:
             - A session is a plan whose steps have no edges except order, so replaying it is
-              running a plan. `Manipulator.replay` does that.
+              running a plan. `Manipulator.replay` does that, passing a `resolve` that addresses
+              each object by its recorded path **in the model being replayed against** -- which
+              is the difference between running the session again and writing back into the model
+              it was recorded from.
         """
         plan: Dict[str, Dict[str, Any]] = {}
         previous = None
@@ -287,13 +304,15 @@ class RequestJournal:
             if skip_failures and not entry.get("status"):
                 continue
             name = f"{entry.get('operation')}_{position}"
-            # The object is named, not held. `Manipulator.replay` resolves the name against
-            # whatever it is managing, which is what lets a session run somewhere else.
-            # The object it ran on when that is still alive, and its name otherwise --
-            # which `Manipulator.replay` resolves against whatever it is managing.
+            # The object it ran on when that is still alive, and its name otherwise. A caller
+            # replaying elsewhere passes `resolve` and gets neither.
             alive = self._referent(position - 1)
+            if resolve is not None:
+                target = resolve(entry, alive)
+            else:
+                target = alive if alive is not None else entry.get("object")
             step = {"operation": entry.get("operation"),
-                    "obj": alive if alive is not None else entry.get("object"),
+                    "obj": target,
                     "attributes": dict(entry.get("attributes") or {})}
             if entry.get("method"):
                 step["method"] = entry["method"]

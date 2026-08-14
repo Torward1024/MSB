@@ -355,19 +355,19 @@ class TestBaseEntityMagicMethods:
 
 class TestBaseEntityClear:
     def test_clear(self, test_entity):
-        test_entity.clear()
+        test_entity.reset_attributes()
         assert test_entity.value is None
         assert test_entity.optional_value is None
 
     def test_cleared_entity_can_still_be_serialized_and_restored(self, test_entity):
         # clear() nulls every attribute, so a None-valued payload must round-trip.
-        test_entity.clear()
+        test_entity.reset_attributes()
         restored = TestEntity.from_dict(test_entity.to_dict())
         assert restored.value is None
         assert restored.to_dict() == test_entity.to_dict()
 
     def test_cleared_entity_can_still_be_cloned(self, test_entity):
-        test_entity.clear()
+        test_entity.reset_attributes()
         assert test_entity.clone().to_dict() == test_entity.to_dict()
 
 
@@ -496,7 +496,7 @@ class TestBaseEntityInternalFields:
 
     def test_clear_keeps_internal_fields(self, test_entity):
         # _type_cache used to be nulled on the instance, shadowing the class-level cache.
-        test_entity.clear()
+        test_entity.reset_attributes()
         assert isinstance(test_entity._type_cache, dict)
         assert test_entity._use_cache is False
 
@@ -506,7 +506,7 @@ class TestBaseEntityInternalFields:
         assert other == test_entity
 
     def test_cleared_entities_compare_equal_after_a_round_trip(self, test_entity):
-        test_entity.clear()
+        test_entity.reset_attributes()
         assert TestEntity.from_dict(test_entity.to_dict()) == test_entity
 
     def test_repr_shows_only_public_attributes(self, test_entity):

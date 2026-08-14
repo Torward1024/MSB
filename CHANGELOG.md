@@ -13,6 +13,111 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.9.0] - 2026-08-14
+
+### Fixed
+
+- **A replayed session ran on the wrong object, silently.** Two ways, both reproduced before the
+  fix on a model holding `store/left/bolt` and `store/right/bolt`:
+
+  - *The recorded model was still alive.* A step carried that live object, so replaying against a
+    fresh model wrote into the model the session was recorded from and left the fresh one untouched.
+    "Portable session" did not work at all while the recorded objects lived.
+  - *The recorded model was gone.* The step fell back to the recorded name, and a name is unique
+    inside a container rather than across a model, so `find("bolt")` answered with `left/bolt` and
+    the write landed on the wrong object.
+
+  A journal entry now records **where** the object was -- `["store", "right", "bolt"]` -- read from
+  the ownership graph that cache invalidation already walks, so nothing has to be maintained for it.
+  Replaying resolves that path in the model in hand.
+
+  Resolution order, in full: the recorded path; then the object the journal saw if it is still alive,
+  which is the only address a manipulator managing nothing has and the exact one when a session is
+  replayed in the process that recorded it; then the name, for a journal written before this release.
+
+### Added
+
+- **`Manipulator.address(obj)` and `Manipulator.locate(path)`**, inverses of each other. `address`
+  reads an object's place in the model out of the ownership graph; `locate` descends a path segment
+  by segment, asking each object for the named member. Nothing is searched and nothing is guessed,
+  which is what `find` cannot promise. Together they are how an object is referred to across a file,
+  a process or a wire without being sent -- the missing half of a request being data.
+
+- **`path_of(obj)`**, exported, behind `address`.
+
+- **`RequestJournal.as_plan(resolve=...)`**: given a callable, each step's object comes from
+  `resolve(entry, alive)` rather than from the journal's own reference. `Manipulator.replay` passes
+  its own, which is how a plan is built against the model being replayed against.
+
+- `path` on every journal entry, beside `object`. Old readers are unaffected.
+
+- **`ReadOnlyMapping` and `ReadOnlyList`**, what `to_dict` returns from an object that caches. That
+  mapping *is* the cache, and handing out a mutable one meant a caller could change what every
+  later call reported -- for itself and for everyone else holding it, with no error and no sign.
+  The docstring said "treat it as read only", which is a rake with a label on it. A write now
+  raises `SerializationError`, which is also a `TypeError`, and names the copy to make.
+
+  Both are real `dict` and `list` subclasses, so `json.dumps`, equality against plain ones,
+  unpacking and every read work unchanged; `dict(m)`, `list(v)`, `copy`, `deepcopy` and `pickle`
+  give back plain, writable structures. Without `use_cache` nothing is frozen, since nothing else
+  holds the result.
+
+  `MappingProxyType` was measured and rejected: `json.dumps` refuses it, and serialising is the
+  point. Freezing costs one pass when the cache is filled -- about 60% on top of building it -- and
+  nothing per call afterwards, against 2.8 ms to rebuild a thousand entities. The pass copies each
+  mapping whole in C and rewrites only its nested keys, which measured 293 us against 431 us for
+  building it key by key.
+
+- **`ResponseData` and `MethodOutcome`**, `TypedDict`s for the two shapes the protocol already
+  had. A framework about validating types owed its own response one. `Response` is the runtime
+  class; `ResponseData` is the same shape once it has been through JSON, a log or a wire, which is
+  what a client-server caller actually holds. A test checks the declared keys against a real
+  response, so the declaration cannot drift from what ships.
+
+### Changed
+
+- `Manipulator.find(name)` returns the first match and stops there, as before, and its docstring no
+  longer claims that resolving a bare name is what makes a session portable. Walking the whole model
+  to report an ambiguous name was measured at 465 us against 35 us and would have been paid by
+  everyone whose names are unique, so the warning lives where the ambiguity is actually dangerous:
+  replaying a journal old enough to have no paths walks everything and says how many objects
+  answered to the name.
+
+- **`api.md` had inverted density**: a paragraph each for `activate_all` and `has_item`, one line
+  for the journal, nothing at all for interceptors or the protocols. The trivial readers are now
+  tables, and there are sections for `Interceptor`, `MethodProvider`, `RequestMetrics` and
+  `RequestJournal` -- including what an entry holds, and the three things worth knowing about a
+  journal. The "Constants" section, which listed `logging.DEBUG` and `ABC`, is gone.
+
+- Emptying a container logs at DEBUG rather than INFO, matching the rest of the routine work.
+
+### Deprecated
+
+- **`clear()` meant three different things** depending on what you called it on: null an entity's
+  attributes, drop a container's items, release the references an operation holds. That is the
+  defect `get` used to have, fixed the same way -- one name per job:
+
+  | Was | Is |
+  | --- | --- |
+  | `BaseEntity.clear()` | `reset_attributes()` |
+  | `BaseContainer.clear()` | `remove_all()` |
+  | `Project.clear()` | `remove_all()` |
+  | `Super.clear()` | `release()` |
+
+  Each old name warns, behaves exactly as it did, and goes in 2.0. `Project.clear` also logged and
+  swallowed anything that went wrong, hiding a failure to empty the project; `remove_all` raises.
+
+### Upgrading from 1.8.0
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| `DeprecationWarning: ... clear is deprecated` | One name for three jobs | `reset_attributes()`, `remove_all()` or `release()`, as the warning says. The old name works until 2.0 |
+| `SerializationError: this mapping is a cached serialization` | Writing to the result of `to_dict` on an object with `use_cache=True` | `dict(data)` and change the copy. The write was corrupting the cache before this release |
+| A replay reaches a different object than it used to | It now resolves by the recorded path in the model in hand, rather than by a live reference or a bare name | Nothing, if the replay was meant to run against the model being replayed against. That is the fix |
+
+Nothing else to do. Where an application resolves an object by name to make a request, `address`
+and `locate` do it without the ambiguity.
+
 ## [1.8.0] - 2026-08-13
 
 ### Added

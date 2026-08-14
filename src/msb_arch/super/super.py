@@ -512,16 +512,35 @@ class Super(ABC):
         self._method_cache.clear()
         logger.debug("Cleared method cache for %s", self.__class__.__name__)
 
-    def clear(self) -> None:
-        """Clear all references to prevent memory leaks.
+    def release(self) -> None:
+        """Drop everything this operation holds: the orchestrator, the registry and the cache.
 
-        This method clears the manipulator reference, method registry, and cache
-        to break potential reference cycles and aid garbage collection.
+        Notes:
+            - Breaks the reference cycle between an operation and the orchestrator that owns it,
+              so both can be collected. An operation that has been released is done; it cannot
+              serve another request.
+            - Named for what it does, because `clear` meant three different things across the
+              framework. `BaseEntity.reset_attributes` nulls attributes and
+              `BaseContainer.remove_all` drops items -- neither of which is this.
+            - `clear_cache()` is the narrower one: it forgets resolved handlers and the operation
+              carries on.
         """
         self._manipulator = None
         self._methods.clear()
         self.clear_cache()
-        logger.debug("Cleared references for %s", self.__class__.__name__)
+        logger.debug("Released the references held by %s", self.__class__.__name__)
+
+    def clear(self) -> None:
+        """Deprecated. Use `release()`.
+
+        Notes:
+            - Deprecated in 1.9.0, removed in 2.0. Behaves exactly as it did.
+        """
+        import warnings
+
+        warnings.warn("Super.clear is deprecated; use release()",
+                      DeprecationWarning, stacklevel=2)
+        self.release()
 
     def __repr__(self) -> str:
         """Return a string representation of the Super instance.
