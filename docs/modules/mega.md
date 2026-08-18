@@ -102,6 +102,9 @@ assert answer.error is None
 | `error`, `error_type` | The message and the name of the exception class, or None |
 | `raise_if_failed()` | Raise the kind that failed, or return the response for chaining |
 
+The asynchronous twin answers in the same type: `await bench.ainspect(reading, get_value=None,
+raise_on_error=False)` is a `Response` too, with the same four properties.
+
 `value` matters because the raw `result` is not the same thing: a request naming one method
 holds `{"get_value": {"status": True, "result": 19.0}}` there, and the facade unwraps it. Reading
 `response["result"]` gives the mapping; reading `response.value` gives 19.0.

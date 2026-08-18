@@ -185,13 +185,27 @@ def test_a_type_can_be_named_by_a_string(manipulator, tmp_path):
     assert isinstance(restored, OnlyThisOne) and restored.value == 7
 
 
-def test_a_name_two_types_answer_to_is_refused_rather_than_guessed(manipulator, item, tmp_path):
-    """Several modules in this suite declare an `Item`, which is exactly the situation."""
-    path = tmp_path / "item.json"
-    manipulator.save(item, path=str(path))
+def test_a_name_two_types_answer_to_is_refused_rather_than_guessed(manipulator, tmp_path):
+    """A name is ambiguous the moment two modules declare it, which happens in any real project.
 
-    with pytest.raises(RequestError, match="are called 'Item'"):
-        manipulator.load(None, path=str(path), kind="Item")
+    Declared here rather than relying on another module in this suite having declared an `Item`
+    too: that made the test pass only when the whole suite ran, and fail on this file alone.
+    """
+    class Ambiguous(BaseEntity):
+        value: int
+
+    globals()["_first_ambiguous"] = Ambiguous
+
+    class Ambiguous(BaseEntity):                    # noqa: F811 - the point is the second one
+        value: int
+
+    globals()["_second_ambiguous"] = Ambiguous
+
+    path = tmp_path / "item.json"
+    manipulator.save(Ambiguous(name="one", value=7), path=str(path))
+
+    with pytest.raises(RequestError, match="are called 'Ambiguous'"):
+        manipulator.load(None, path=str(path), kind="Ambiguous")
 
 
 def test_a_name_nothing_answers_to_says_so(manipulator, item, tmp_path):
@@ -216,3 +230,39 @@ def test_writing_to_a_directory_says_so(manipulator, item, tmp_path):
     with pytest.raises(RequestError, match="is a directory"):
         manipulator.save(item, path=str(directory))
     assert not list(tmp_path.glob("*.writing"))
+
+
+def test_loading_data_written_by_another_class_says_so(manipulator, tmp_path, caplog):
+    """`load` restores into the type of the object it was given, not the type in the file.
+
+    That is the documented contract, and it is what lets a plan or a wire name the class. It also
+    means a file written by something else can restore field for field with nothing said, which is
+    the same silent-wrong-answer shape that `find` had.
+    """
+    import logging
+
+    path = tmp_path / "elsewhere.json"
+    path.write_text(json.dumps({"type": "SomethingElse", "name": "box", "items": {}}),
+                    encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        restored = manipulator.load(Items(name="box"), path=str(path))
+
+    assert restored.name == "box"
+    assert "was written by SomethingElse" in caplog.text
+
+
+def test_loading_data_written_by_the_same_class_says_nothing(manipulator, tmp_path, caplog):
+    """Reading a file into the class that wrote it, or into one of its bases, is not a surprise."""
+    import logging
+
+    box = Items(name="box")
+    box.add(Item(name="bolt", value=4))
+    path = tmp_path / "box.json"
+    manipulator.save(box, path=str(path))
+
+    with caplog.at_level(logging.WARNING):
+        restored = manipulator.load(Items(name="other"), path=str(path))
+
+    assert restored == box
+    assert "was written by" not in caplog.text

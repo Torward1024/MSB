@@ -265,3 +265,54 @@ def test_the_loop_still_runs_while_several_requests_are_gathered(bench):
         return await counter
 
     assert asyncio.run(scenario()) > 0
+
+
+# --- the same shape on both halves of the API ---------------------------------------------
+
+def test_an_async_facade_answers_in_the_same_type_as_the_sync_one(bench):
+    """One response type means both paths, and the asynchronous one used to lose it.
+
+    Awaiting a response walks it, to await anything a method returned. The walk rebuilt every
+    mapping it passed as a plain `dict`, so `ainspect(..., raise_on_error=False)` came back
+    without `ok` or `value` -- the one convention 1.8.0 established, not holding on half the API.
+    """
+    from msb_arch import Response
+
+    job = Job(name="j", size=10)
+
+    good = asyncio.run(bench.ainspect(job, crunch=None, raise_on_error=False))
+    assert isinstance(good, Response)
+    assert good.ok is True
+    assert good.value == bench.inspect(job, crunch=None)
+
+    # `configure` stops at the first failure, so the whole response fails -- unlike `inspect`,
+    # which reads everything it can and reports each outcome.
+    failed = asyncio.run(bench.aconfigure(job, no_such_method=None, raise_on_error=False))
+    assert isinstance(failed, Response)
+    assert failed.ok is False
+    assert failed.value is None
+    assert failed.error_type == "HandlerError"
+
+
+def test_awaiting_a_response_leaves_a_cached_mapping_read_only(bench):
+    """A cached serialization is the cache. Walking a response must not hand out a writable copy."""
+    from msb_arch.base.serializable import ReadOnlyMapping
+
+    job = Job(name="cached", size=4, use_cache=True)
+
+    snapshot = asyncio.run(bench.ainspect(job, to_dict=None))
+
+    assert isinstance(snapshot, ReadOnlyMapping)
+    assert snapshot == job.to_dict()
+
+
+def test_a_method_results_mapping_keeps_its_type_through_the_await(bench):
+    """`unwrap` recognises `MethodResults` by its class, so the walk may not flatten it."""
+    from msb_arch import MethodResults
+
+    job = Job(name="j", size=10)
+
+    response = asyncio.run(bench.ainspect(job, crunch=None, double=None, raise_on_error=False))
+
+    assert isinstance(response["result"], MethodResults)
+    assert set(response["result"]) == {"crunch", "double"}

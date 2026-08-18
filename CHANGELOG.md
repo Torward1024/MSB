@@ -13,6 +13,56 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.9.1] - 2026-08-18
+
+A pass over every module looking for bugs and for work being done twice. Two bugs, both silent;
+two hot paths that were repeating themselves. No new API, and nothing documented changed meaning.
+
+### Fixed
+
+- **The asynchronous half of the API answered in a different type.** Awaiting a response walks it,
+  to await anything a method returned; the walk rebuilt every mapping it passed as a plain `dict`.
+  So `await manipulator.ainspect(obj, ..., raise_on_error=False)` came back without `ok` or `value`
+  -- the convention 1.8.0 established, not holding on half the surface -- and a cached
+  `ReadOnlyMapping` came back writable, which is the rake 1.9.0 removed everywhere else.
+
+  Nothing is rebuilt now unless something was actually awaited, and a rebuild keeps the class it
+  found. The usual response holds no awaitable at all, so the usual answer is the object itself,
+  which also takes a full recursive copy out of every asynchronous call.
+
+- **`load` said nothing when a file was written by another class.** The type restored into comes
+  from the caller by design -- that is what lets a plan or a wire name it -- but data written by
+  something else can restore field for field in silence. It now logs a warning naming both.
+
+### Changed
+
+- **Writing an attribute is about 40% cheaper and building an object about 25%**, medians of five
+  samples: 3.44 -> 2.14 us and 7.5 -> 5.2 us. Neither changed what is accepted or refused. Three
+  things were being redone on every write:
+
+  - `__setattr__` built a five-element set literal each time it ran.
+  - It resolved the field's annotation again, although the class already holds the resolved table
+    the constructor uses. Both now read the same table, so a write and a build cannot disagree
+    about what a field accepts.
+  - It logged a line at DEBUG per attribute written, which is noise at any useful volume. What was
+    requested of which object is what `RequestJournal` records.
+
+  The constructor checked `name`, `isactive` and `use_cache` through the general validator, where
+  the exact type is known: the fast path is an `isinstance` and a wrong value still goes the long
+  way for its message. Restoring a 200-item container, which builds 200 objects, came down about
+  20% as a result.
+
+- A test that only passed when the whole suite ran. `test_persistence` checked that an ambiguous
+  type name is refused, and relied on *another* module in the suite happening to declare a class of
+  the same name, so running that file alone failed. It declares both itself now. Every test file
+  passes on its own.
+
+### Upgrading from 1.9.0
+
+Nothing to do. An application awaiting a facade with `raise_on_error=False` now gets the same
+`Response` the synchronous call returns, so `response.value` works there too -- reading the
+mapping's keys works exactly as before either way.
+
 ## [1.9.0] - 2026-08-14
 
 ### Fixed
@@ -90,6 +140,7 @@ statement has since been overtaken, a note says where it was resolved.
   journal. The "Constants" section, which listed `logging.DEBUG` and `ABC`, is gone.
 
 - Emptying a container logs at DEBUG rather than INFO, matching the rest of the routine work.
+
 
 ### Deprecated
 

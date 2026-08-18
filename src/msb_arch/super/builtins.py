@@ -399,6 +399,13 @@ class Loader(_FileOperation):
         except ValueError as e:
             raise SerializationError(f"'{path}' is not valid JSON: {e}") from e
 
+        # The type comes from the caller, not from the file. Data written by something else may
+        # still restore -- field for field, silently -- so say when that is what is happening.
+        written_by = data.get("type") if isinstance(data, dict) else None
+        if written_by and written_by not in {ancestor.__name__ for ancestor in kind.__mro__}:
+            logger.warning("'%s' was written by %s; reading it as %s", path, written_by,
+                           kind.__name__)
+
         restored = kind.from_dict(data)
         logger.info("Read %s from '%s'", kind.__name__, path)
         return restored

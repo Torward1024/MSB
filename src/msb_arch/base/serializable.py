@@ -120,6 +120,11 @@ _PLAIN = frozenset((str, int, float, bool, type(None)))
 #: Attributes the framework sets itself, skipped unless a caller names one.
 _INTERNAL = frozenset(('name', '_use_cache', '_cached_to_dict', '_type_cache', 'isactive'))
 
+#: Written straight through, without being validated as a field: the two public pieces of state
+#: every `Serializable` has. Underscore-prefixed names take the same path by their prefix. A
+#: module constant because `__setattr__` runs on every write and used to build this set each time.
+_ASSIGNABLE_STATE = frozenset(('name', 'isactive'))
+
 class ReadOnlyMapping(dict):
     """A dictionary that refuses to be written to.
 
@@ -304,14 +309,21 @@ class Serializable(ABC, metaclass=EntityMeta):
             ValueError: If an unknown attribute is provided.
         """
         
-        self._validate_type('use_cache', use_cache, bool)
+        # The three arguments every object has, checked by their exact types. A wrong one goes
+        # the long way for the message; the right one -- which is every call that works -- costs
+        # an `isinstance` rather than a walk through the general validator. Building an object is
+        # the hottest path there is, and these three ran on every one of them.
+        if not isinstance(use_cache, bool):
+            self._validate_type('use_cache', use_cache, bool)
         super().__setattr__('_use_cache', use_cache)
         super().__setattr__('_cached_to_dict', None)
         super().__setattr__('_parents', None)
         super().__setattr__('_revision', 0)
-        self._validate_type('name', name, str)
+        if not isinstance(name, str):
+            self._validate_type('name', name, str)
         super().__setattr__('name', name)
-        self._validate_type('isactive', isactive, bool)
+        if not isinstance(isactive, bool):
+            self._validate_type('isactive', isactive, bool)
         super().__setattr__('isactive', isactive)
         
         settable, known = self.__class__._init_plan()
@@ -1469,18 +1481,29 @@ class Serializable(ABC, metaclass=EntityMeta):
         Notes:
             - Assigning a nested entity records this entity as its owner, so mutating the
               nested entity later invalidates the cached serialization of both.
+            - The annotation comes from the class's resolved table rather than being resolved
+              again here: this runs on every write, and the answer is the same for every
+              instance. It is also the same table the constructor uses, so building an object
+              and writing to it afterwards cannot disagree about what a field accepts.
+            - Says nothing at DEBUG. A line per attribute write is noise at any useful volume,
+              and what was requested of which object is what `RequestJournal` records.
         """
-        internal_attrs = {"name", "isactive", "_use_cache", "_cached_to_dict", "_container"}
-        if key in internal_attrs or key.startswith('_'):
+        if key.startswith('_') or key in _ASSIGNABLE_STATE:
             super().__setattr__(key, value)
-        elif key in self._fields:
-            expected_type = self._resolve_type(self._fields[key])
-            self._validate_type(key, value, expected_type)
+            return
+        resolved = self.__class__._resolved_fields()
+        if key in resolved:
+            self._validate_type(key, value, resolved[key])
             super().__setattr__(key, value)
             if isinstance(value, Serializable):
                 value._adopt(self)
             self._invalidate_cache()
-            logger.debug("Set attribute '%s' of %s", key, self.__class__.__name__)
+        elif key in self._fields:
+            # Annotated but left out of the resolved table, which only happens for an annotation
+            # that cannot be resolved at all. Validation reports that against a real value.
+            self._validate_type(key, value, self._fields[key])
+            super().__setattr__(key, value)
+            self._invalidate_cache()
         else:
             raise UnknownAttributeError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
 

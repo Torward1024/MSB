@@ -652,7 +652,8 @@ class TestBaseEntitySetattr:
     def test_setattr_valid(self, mock_logger, test_entity):
         test_entity.value = 100
         assert test_entity.value == 100
-        mock_logger.debug.assert_called()
+        # A write says nothing: a line per attribute is noise, and the journal records requests.
+        mock_logger.debug.assert_not_called()
 
     def test_setattr_invalid_type(self, test_entity):
         with pytest.raises(TypeError):

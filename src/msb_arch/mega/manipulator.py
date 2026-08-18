@@ -1232,16 +1232,38 @@ class Manipulator(ABC):
             - This is what makes `async def` methods on an entity work: applying one on a
               worker thread produces a coroutine rather than a value, and it is awaited here,
               back on the loop where it belongs.
+            - **Nothing is rebuilt unless something was awaited.** Rebuilding every mapping as a
+              plain `dict` cost the asynchronous path the types the synchronous one returns: a
+              `Response` came back without `ok` or `value`, and a cached `ReadOnlyMapping` came
+              back writable. Since the usual response holds no awaitable at all, the usual
+              answer is now the object itself, and rebuilding keeps the class it found.
         """
         if inspect.isawaitable(response):
             return await response
+
         if isinstance(response, dict):
-            resolved = type(response)() if isinstance(response, MethodResults) else {}
+            awaited = None
             for key, value in response.items():
-                resolved[key] = await self._resolve_awaitables(value)
-            return resolved
+                resolved = await self._resolve_awaitables(value)
+                if resolved is not value:
+                    if awaited is None:
+                        awaited = {}
+                    awaited[key] = resolved
+            if awaited is None:
+                return response
+            merged = dict(response)
+            merged.update(awaited)
+            try:
+                return type(response)(merged)
+            except Exception:                       # noqa: BLE001 - a mapping that needs more
+                return merged
+
         if isinstance(response, list):
-            return [await self._resolve_awaitables(item) for item in response]
+            awaited_items = [await self._resolve_awaitables(item) for item in response]
+            if all(new is old for new, old in zip(awaited_items, response)):
+                return response
+            return awaited_items
+
         return response
 
     def _get_executor(self):
