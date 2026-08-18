@@ -744,9 +744,21 @@ nothing owns; empty for anything unnamed.
 
 ##### `locate(path: Sequence[str]) -> Optional[Any]`
 
-The object at a path, descending from the managed object — `get` for a container, the attribute
-otherwise. Nothing is searched and nothing is guessed, so unlike `find` it says which `bolt`. A
-leading segment naming the managed object itself is optional. None if any segment is missing.
+The object at a path, descending from the managed object. Nothing is searched and nothing is
+guessed, so unlike `find` it says which `bolt`. None if any segment is missing.
+
+A model holds its parts in three shapes, and a path is built from *names* rather than from how
+they are held, so each segment is looked for all three ways:
+
+| Shape | Reached by |
+| --- | --- |
+| An item of a container | `get(name)` |
+| An item of a project | `get_items()[name]`, since a `Project` calls it `get_item` |
+| A container in a field of an entity | the field whose value is named `name` — `bolts: Bolts` holds one called `bolts_of_press`, and the path carries that |
+
+The **top** of a path is optional: the managed object's own name, or the container a project
+keeps its items in. That container is plumbing — nothing outside can ask for it by name — so a
+path naming it starts below it.
 
 `address` and `locate` are inverses, which is how an object is referred to across a file, a process
 or a wire without being sent:

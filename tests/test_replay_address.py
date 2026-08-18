@@ -13,7 +13,7 @@ import gc
 import logging
 import pytest
 
-from msb_arch import BaseContainer, BaseEntity, Manipulator, RequestJournal
+from msb_arch import BaseContainer, BaseEntity, Manipulator, Project, RequestJournal
 from msb_arch.model import path_of
 
 
@@ -245,3 +245,76 @@ def test_locate_addresses_the_model_and_nothing_else():
     assert workshop.locate(["store", "get_items"]) is None
     assert workshop.locate(["store", "right", "bolt", "price"]) is None
     assert workshop.locate(["store", "right", "bolt", "set_price"]) is None
+
+
+# --- the two shapes a real model actually has ----------------------------------------------------
+
+class Bolt(BaseEntity):
+    size: int
+
+
+class Bolts(BaseContainer[Bolt]):
+    pass
+
+
+class Machine(BaseEntity):
+    """An entity holding a container in a *field*, which is how a model names its parts.
+
+    The container has a name of its own -- `bolts_of_press` -- and the field is called `bolts`.
+    A path is built from names and `locate` descends by members, so the two have to meet.
+    """
+
+    bolts: Bolts
+
+
+class Works(Project):
+    _item_type = Machine
+
+    def create_item(self, **kwargs):
+        self.add_item(Machine(name=kwargs.get("name", "machine"),
+                              bolts=Bolts(name=f"bolts_of_{kwargs.get('name', 'machine')}")))
+
+
+def _works() -> Works:
+    """`works / press / bolts_of_press / bolt`, with a second machine holding a `bolt` too."""
+    works = Works("works")
+    for side in ("press", "lathe"):
+        works.create_item(name=side)
+        works.get_item(side).bolts.add(Bolt(name="bolt", size=1 if side == "press" else 2))
+    return works
+
+
+def test_locate_descends_from_a_project_into_its_items():
+    """A `Project` has `get_items` and `get_item`, and no `get`. `locate` asked for `get`, the
+    AttributeError was swallowed, and every path rooted at a project died on its first segment
+    -- which is every path in an application whose model is a project."""
+    works = _works()
+    workshop = Workshop(base_classes=[Bolt, Bolts, Machine], managing_object=works)
+
+    assert workshop.locate(["press"]) is works.get_item("press")
+
+
+def test_locate_follows_a_container_held_in_a_field():
+    """`path_of` is built from *object* names and `locate` descends by *member* names. A
+    container held in a field has a name of its own, so the two disagreed and the path could
+    not be followed."""
+    works = _works()
+    workshop = Workshop(base_classes=[Bolt, Bolts, Machine], managing_object=works)
+    target = works.get_item("press").bolts.get("bolt")
+
+    address = workshop.address(target)
+    # `address` reports the ownership graph as it is, and a project owns its items through a
+    # container of its own. That container is the top of the path and `locate` starts below it,
+    # exactly as it starts below the root's own name.
+    assert address[-3:] == ["press", "bolts_of_press", "bolt"]
+    assert workshop.locate(address) is target
+
+
+def test_address_and_locate_are_inverses_on_a_project():
+    """What the pair claims. Both machines hold a `bolt`, so a name cannot say which."""
+    works = _works()
+    workshop = Workshop(base_classes=[Bolt, Bolts, Machine], managing_object=works)
+
+    for side in ("press", "lathe"):
+        target = works.get_item(side).bolts.get("bolt")
+        assert workshop.locate(workshop.address(target)) is target, side

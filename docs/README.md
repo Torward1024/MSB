@@ -72,7 +72,7 @@ error taxonomy, logging and the validation helpers.
 
 ## Version
 
-1.9.1
+1.9.2
 
 ## License
 

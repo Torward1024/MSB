@@ -1,6 +1,7 @@
 # mega/manipulator.py
 from abc import ABC
 from typing import Dict, Any, Optional, Callable, List, Sequence, Type, Union
+
 from .. import errors
 from ..errors import DispatchError, HandlerError, NotFoundError, RegistrationError, RequestError
 from ..protocols import Interceptor
@@ -652,27 +653,24 @@ class Manipulator(ABC):
             >>> manipulator.locate(["store", "right", "bolt"])
             Part(name='bolt', ...)
         """
-        from ..base.serializable import Serializable
-
         root = self.get_managing_object()
         if root is None or not path:
             return None
 
+        from ..model import member_called
+
         segments = list(path)
-        if getattr(root, "name", None) == segments[0]:
+        # The top of a path is the root itself, or the container the root keeps its items in --
+        # a `Project` holds that privately, so nothing can ask for it by name and a path naming
+        # it is one this could not follow. Either way it is the top, and the walk starts below.
+        while len(segments) > 1 and member_called(segments[0], root) is None:
+            if getattr(root, "name", None) != segments[0] and len(segments) == 1:
+                break
             segments = segments[1:]
 
         current = root
         for segment in segments:
-            found = None
-            if hasattr(current, "get_items"):
-                try:
-                    found = current.get(segment)
-                except Exception:                       # noqa: BLE001 - a miss, reported below
-                    found = None
-            if found is None:
-                held = getattr(current, segment, None)
-                found = held if isinstance(held, Serializable) else None
+            found = member_called(segment, current)
             if found is None:
                 logger.debug("Nothing called '%s' inside %s", segment, getattr(
                     current, "name", type(current).__name__))

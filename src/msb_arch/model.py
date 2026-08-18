@@ -19,6 +19,7 @@ Limits:
 import logging
 from typing import Any, Dict, List, Optional, Set, get_args
 
+from .base.serializable import Serializable
 from .utils.logging_setup import logger
 
 #: The derivation only. Callers go through `manipulator.describe_model()`.
@@ -243,6 +244,63 @@ def named_type(name: str) -> type:
             f"{len(found)} imported types are called '{name}': "
             f"{', '.join(sorted(one.__module__ for one in found))}")
     return found[0]
+
+
+
+def member_called(name: str, owner: Any) -> Optional[Any]:
+    """Return the model object called `name` that `owner` holds, or None.
+
+    Args:
+        name (str): One segment of a path -- the *name* of the object being looked for.
+        owner (Serializable): The object to look inside.
+
+    Returns:
+        Optional[Any]: What it holds under that name.
+
+    Notes:
+        - Three ways, because a model holds its parts in three shapes and a path is built from
+          names rather than from how they are held:
+
+          | Shape | Reached by |
+          | --- | --- |
+          | An item of a container | `get(name)` |
+          | An item of a project | `get_item(name)`, which is what a `Project` calls it |
+          | A container in a field of an entity | the field whose value is named `name` |
+
+        - The third is why `address` and `locate` were not inverses. An entity naming its parts
+          -- `bolts: Bolts` -- holds a container whose own name is `bolts_of_press`, and a path
+          carries the name while the field is called something else. Matching on the *value's*
+          name is what closes that, and it is the shape every application has.
+        - A field is only followed when it holds a model object, so a path still addresses the
+          model rather than reading an attribute off it.
+    """
+    # Asked before taken, so a miss costs nothing and says nothing. Calling the accessors blind
+    # and catching what came back logged a complaint per miss -- and three ways are tried, so an
+    # ordinary lookup complained twice on its way to succeeding.
+    found = None
+    if getattr(owner, "has_item", None) is not None:            # a container
+        if owner.has_item(name):
+            found = owner.get(name)
+    elif getattr(owner, "get_items", None) is not None:         # a project
+        try:
+            items = owner.get_items()
+        except Exception:                                       # noqa: BLE001 - not a mapping
+            items = None
+        if isinstance(items, dict) and name in items:
+            found = items[name]
+    if isinstance(found, Serializable):
+        return found
+
+    held = getattr(owner, name, None)
+    if isinstance(held, Serializable):
+        return held
+
+    # A container held in a field carries its own name, which is the one a path records.
+    for field in getattr(type(owner), "__annotations__", {}):
+        value = getattr(owner, field, None)
+        if isinstance(value, Serializable) and getattr(value, "name", None) == name:
+            return value
+    return None
 
 
 def path_of(obj: Any) -> List[str]:

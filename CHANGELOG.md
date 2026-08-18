@@ -13,6 +13,43 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.9.2] - 2026-08-18
+
+### Fixed
+
+- **`address` and `locate` were not inverses**, which is the one thing the pair claims. Both
+  halves reproduced on MSB's own classes before the fix, and both bit the shape every real
+  application has:
+
+  - **`locate` could not descend from a `Project` into its items.** It asked for `get`; a
+    `Project` has `get_items` and `get_item` and no `get`, so the miss was swallowed and every
+    path rooted at a project died on its first segment. That is every path in an application
+    whose model is a project.
+  - **A path is built from *object* names; `locate` descended by *member* names.** An entity
+    naming its parts -- `bolts: Bolts` -- holds a container called something of its own, and the
+    path carries that name while the field is called `bolts`. The segment could never be
+    followed.
+
+  So the fix 1.9.0 shipped -- a replayed step resolving by path rather than by an ambiguous name
+  -- never engaged for such a model: replay fell through to the live reference, or to the bare
+  name it was meant to replace. Measured downstream on a model with two observations of the same
+  source: `locate(address(source))` returned None; it now returns that source and not the other.
+
+  A segment is looked for three ways now, one per shape a model holds its parts in -- a
+  container's item, a project's item, and a container held in a field, matched on the *value's*
+  name. Each holder is asked before it is read, so a miss costs nothing and logs nothing: the
+  blind version complained twice on its way to succeeding.
+
+- **The top of a path is optional in both forms.** It was already so for the managed object's
+  own name; it is now also so for the container a project keeps its items in. That container is
+  plumbing -- nothing outside can ask for it -- so `path_of` still reports it, since it reports
+  the ownership graph as it is, and `locate` starts below it.
+
+### Upgrading from 1.9.1
+
+Nothing to do. A path that resolved before resolves to the same object; paths that returned
+None now resolve. An application that worked around this by resolving names itself can stop.
+
 ## [1.9.1] - 2026-08-18
 
 A pass over every module looking for bugs and for work being done twice. Two bugs, both silent;
