@@ -23,11 +23,19 @@ instance.
 1. The requested name, if it already denotes a handler of this operation
 2. `_<operation>_<name>` -- the name a request asked for
 3. `_<operation>_<type>` -- the type of the object, lower-cased
-4. `_<operation>_basecontainer` -- for any container
+4. `_<operation>_<base>` -- each of its ancestors in turn, ending at `_<operation>_baseentity`
+   or `_<operation>_basecontainer`
 5. `_<operation>` -- the fallback
 
 A request naming something outside the operation falls through to a more general handler rather
 than reaching it.
+
+**A handler written for a base class serves every subclass of it.** A model with
+`Spectrometer(Instrument)` needs `_service_instrument` and nothing else; before 1.10.0 the walk
+stopped at the exact type and such a request failed to dispatch, so a hierarchy meant one handler
+per leaf. Writing `_service_spectrometer` as well still wins for that type -- most specific first.
+
+Resolution is cached per operation and type, so the walk is paid once.
 
 ## The built-in operations
 

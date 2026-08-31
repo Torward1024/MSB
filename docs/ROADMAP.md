@@ -19,6 +19,8 @@ Nothing here is scheduled. Each says what would have to be true before it could 
 | **Incremental recomputation** — run only the steps whose inputs changed | Identity for mutable objects. `revision` and `fingerprint()` answer "did this change"; what is missing is deciding which of them a scheduler should trust, and what a cache keyed on one is allowed to keep |
 | **A faster validation path** | A real workload to measure against. Building an entity is 8.4 µs against 0.4 µs for a plain object with the same fields; a Rust-backed validator would be roughly an order of magnitude better than what is left, and would end the promise of no dependencies |
 | **Distribution** — a command line, a server | Nothing technical. A plan is data and a session replays, so both are wrappers. Neither belongs in a framework with no dependencies; both belong in whatever uses it |
+| **`pickle` of a model** | Nothing technical either. The only thing blocking it is the weak owner map, which `__getstate__` would drop and `__setstate__` restore. It waits on a use for it: multiprocessing, or a model cached on disk between runs |
+| **Quieter logs for a method a type does not have** | A decision about levels. A non-strict `inspect` naming a method the type lacks logs at ERROR, although the failure is already reported in the result; the same walk is how a caller discovers what a type answers to |
 
 ## Closed by decision
 
@@ -80,6 +82,15 @@ proposed again.
 - **A documented rake is still a rake.** "Treat the cached mapping as read only" was true, correct
   and useless: the mapping was mutable, so the advice was the only thing standing between a caller
   and a corrupted cache. Making the write raise cost one pass when the cache is filled.
+- **A promise in the documentation is a claim about the code.** The base module said every
+  supported hint round-trips through JSON, and two of them -- `Type[X]` and `Callable` -- did not:
+  one was fixed, and the other is now stated as the exception it is. A table nobody executes drifts
+  from what runs.
+- **An asymmetry is a bug waiting to be reported.** Containers had a base-class fallback for
+  handlers and entities did not, so every hierarchy paid for it with a handler per leaf type.
+- **A benchmark can be an artefact of its order.** Invariants looked like a 15.6% tax on every
+  attribute write until the two versions were measured in the reverse order, where the same
+  difference appeared with its sign flipped. Alternate, and check that the effect survives.
 - **One name for three jobs reads as consistency and is not.** `clear()` nulled attributes on an
   entity, removed items from a container and dropped references on a `Super`. Each site was
   defensible on its own; together they meant a reader could not tell what a call did without

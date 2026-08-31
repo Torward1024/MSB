@@ -1108,3 +1108,29 @@ An attribute's annotation is its validation rule, enforced structurally and nest
 
 See [Type Validation](modules/base.md#type-validation-_validate_type) for what each hint accepts
 and what it refuses.
+
+## invariant
+
+A rule about the whole object, which no rule about one field can express.
+
+```python
+class Window(BaseEntity):
+    start: float
+    end: float
+
+    @invariant("end must be after start")
+    def _ordered(self) -> bool:
+        return self.end > self.start
+```
+
+| | |
+| --- | --- |
+| `@invariant(message="")` | Marks a method as a rule. The message defaults to its docstring, then its name |
+| Checked | On construction, on restore, and after each write — the three points a field constraint is checked at |
+| Refused change | Undone: a write goes back, and a group applied through `set` goes back whole |
+| Fields that move together | `set({...})` applies the group and checks once at the end |
+| Containers | A rule sees the contents, checked after `add`, `remove`, `set_item`, `set_items` and `remove_all` |
+| Inheritance | Rules are inherited; a subclass overrides one by defining a method of that name |
+| `check_invariants()` | Checks every rule now. For code that writes attributes directly |
+| `InvariantError` | A `ValidationError` and a `ValueError`. `ConstraintError` is about one value; this is about their relation |
+| Cost | Collected when the class is created; a class that declares none is unaffected |

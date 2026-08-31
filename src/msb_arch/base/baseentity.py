@@ -3,8 +3,9 @@ from abc import ABC
 from typing import Any, Dict, List, Union
 
 from .serializable import (CYCLIC_REFERENCE, EntityMeta, SCHEMA_FIELD,
-                           Serializable, _INTERNAL)
-from ..errors import (NotFoundError,
+                           Serializable, _INTERNAL, _MISSING)
+from ..errors import (InvariantError,
+                      NotFoundError,
                       ResolutionError,
                       TypeValidationError,
                       UnknownAttributeError)
@@ -46,17 +47,40 @@ class BaseEntity(Serializable):
 
         Notes:
             - Only attributes defined in `__annotations__` can be set.
-            - Logs an info message with updated attributes.
+            - **A group is applied together.** Rules declared with `@invariant` are checked once,
+              at the end, rather than between two fields that have to move together -- which is
+              what makes `end` and `start` settable at all when one must stay after the other.
+              If the group leaves the object breaking a rule, every attribute in it goes back.
         """
+        rules = self.__class__._invariant_cache
+        restore = ({key: self.__dict__.get(key, _MISSING) for key in params} if rules else None)
+        if rules:
+            self.__dict__['_holding_invariants'] = True
+        try:
+            for key, value in params.items():
+                if key not in self._fields:
+                    raise UnknownAttributeError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
+                if key in _INTERNAL:
+                    # `__setattr__` sets these without checking, since the framework writes them
+                    # itself; a caller naming one through `set` still has to mean it.
+                    self._validate_type(key, value, self._fields.get(key))
+                setattr(self, key, value)          # which validates everything else
+        finally:
+            if rules:
+                self.__dict__.pop('_holding_invariants', None)
 
-        for key, value in params.items():
-            if key not in self._fields:
-                raise UnknownAttributeError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
-            if key in _INTERNAL:
-                # `__setattr__` sets these without checking, since the framework writes them
-                # itself; a caller naming one through `set` still has to mean it.
-                self._validate_type(key, value, self._fields.get(key))
-            setattr(self, key, value)          # which validates everything else
+        if rules:
+            try:
+                self.check_invariants()
+            except InvariantError:
+                for key, previous in restore.items():
+                    if previous is _MISSING:
+                        self.__dict__.pop(key, None)
+                    else:
+                        object.__setattr__(self, key, previous)
+                self._invalidate_cache()
+                raise
+
         self._invalidate_cache()
         logger.debug("Updated attributes of %s: %s", self.__class__.__name__, list(params.keys()))
     def get(self, key: Union[str, List[str], None] = None) -> Union[Any, Dict[str, Any]]:

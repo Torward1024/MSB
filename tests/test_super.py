@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from typing import Dict, Any, Type
+from msb_arch import BaseContainer, BaseEntity, errors
 from msb_arch.super.super import Super
 from msb_arch.mega.manipulator import Manipulator
 
@@ -315,3 +316,105 @@ class TestSuperDel:
     def test_del(self, mock_logger, test_super):
         del test_super
         mock_logger.error.assert_not_called()
+
+class Instrument(BaseEntity):
+    """A base type, with a subclass below it: the shape any real model has."""
+
+    reading: float = 0.0
+
+
+class Spectrometer(Instrument):
+    channels: int = 1
+
+
+class Instruments(BaseContainer[Instrument]):
+    pass
+
+
+class Maintenance(Super):
+    OPERATION = "service"
+
+    def _service_instrument(self, obj, attributes):
+        return "instrument"
+
+    def _service_basecontainer(self, obj, attributes):
+        return "container"
+
+
+class Bench(Manipulator):
+    pass
+
+
+@pytest.fixture
+def bench():
+    orchestrator = Bench(base_classes=[Instrument, Spectrometer, Instruments])
+    orchestrator.register_operation(Maintenance(orchestrator))
+    return orchestrator
+
+
+def test_a_handler_written_for_a_base_class_serves_its_subclasses(bench):
+    """Resolution walks the type's ancestors, so a hierarchy needs one handler, not one per leaf.
+
+    Before this, `_service_instrument` did not answer for a `Spectrometer(Instrument)` and the
+    request failed with `DispatchError` -- while containers had had exactly this fallback all
+    along, spelled `_<operation>_basecontainer`.
+    """
+    assert bench.service(Spectrometer(name="s", channels=4)) == "instrument"
+    assert bench.service(Instrument(name="i")) == "instrument"
+
+
+def test_the_type_s_own_handler_still_wins(bench):
+    class Precise(Super):
+        OPERATION = "calibrate"
+
+        def _calibrate_instrument(self, obj, attributes):
+            return "generic"
+
+        def _calibrate_spectrometer(self, obj, attributes):
+            return "specific"
+
+    bench.register_operation(Precise(bench))
+
+    assert bench.calibrate(Spectrometer(name="s")) == "specific"
+    assert bench.calibrate(Instrument(name="i")) == "generic"
+
+
+def test_a_container_still_reaches_the_container_fallback(bench):
+    """`basecontainer` is now a step of the same walk rather than a special case."""
+    assert bench.service(Instruments(name="rack")) == "container"
+
+
+def test_an_unrelated_type_reaches_the_operation_s_own_default():
+    class Loose(BaseEntity):
+        size: int = 0
+
+    class Anything(Super):
+        OPERATION = "handle"
+
+        def _handle_instrument(self, obj, attributes):
+            return "instrument"
+
+        def _handle(self, obj, attributes):
+            return "default"
+
+    orchestrator = Bench(base_classes=[Instrument, Loose])
+    orchestrator.register_operation(Anything(orchestrator))
+
+    assert orchestrator.handle(Loose(name="l")) == "default"
+
+
+def test_a_type_with_no_handler_anywhere_still_fails_to_dispatch():
+    class Loose(BaseEntity):
+        size: int = 0
+
+    class Narrow(Super):
+        OPERATION = "narrow"
+
+        def _narrow_instrument(self, obj, attributes):
+            return "instrument"
+
+    orchestrator = Bench(base_classes=[Instrument, Loose])
+    orchestrator.register_operation(Narrow(orchestrator))
+
+    with pytest.raises(errors.DispatchError):
+        orchestrator.narrow(Loose(name="l"))

@@ -32,7 +32,7 @@ short:
 | **Protocols** | `MethodProvider`, `Interceptor` |
 | **Interceptors** | `RequestMetrics`, `RequestJournal` |
 | **Derivation** | `derive`, `label_for`, `order`, `derive_model`, `dependents_of`, `holdings_of`, `path_of` |
-| **Constraints** | `Constraint`, `Positive`, `NonNegative`, `NonZero`, `NonEmpty`, `Range`, `Predicate` |
+| **Constraints** | `Constraint`, `Positive`, `NonNegative`, `NonZero`, `NonEmpty`, `Range`, `Predicate`, `invariant` |
 | **Exceptions** | `MSBError` and everything beneath it |
 | **Utilities** | `logger`, `setup_logging`, `cache_statistics` |
 
@@ -128,6 +128,18 @@ until 2.0.
 - **Which object a bare name resolves to.** `Manipulator.find(name)` returns the first match of a
   walk, and a name is unique within a container rather than across a model. Where the answer
   matters, address the object: `locate(path)` is defined, `find(name)` is a convenience.
+
+## Behaviour widened in 1.10.0
+
+Resolving a handler now walks the object's ancestors between its own type and the operation's
+fallback, so `_<operation>_<base>` answers for every subclass of that base. Requests that used to
+fail with `DispatchError` because only the leaf type had a handler now dispatch; a handler written
+for the exact type still wins. Nothing that dispatched before dispatches differently.
+
+`to_dict` writes a `Type[X]` field as the class's name rather than the class itself, which is what
+the documented promise -- that every supported hint round-trips through JSON -- always said and the
+code did not do: one such field made an object unsavable. Data written by an earlier version holds
+no such field, since it could not be written at all.
 
 ## Behaviour corrected in 1.9.0
 

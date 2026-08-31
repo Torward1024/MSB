@@ -16,7 +16,9 @@ import hashlib
 import weakref
 from contextvars import ContextVar
 from threading import RLock
-from ..errors import (ResolutionError,
+from ..errors import (AttributeNotFoundError,
+                      InvariantError,
+                      ResolutionError,
                       SerializationError,
                       TypeValidationError,
                       UnknownAttributeError)
@@ -91,6 +93,16 @@ class EntityMeta(ABCMeta):
         annotations.update(attrs.get('__annotations__', {}))
         new_class._fields = annotations
         new_class._type_cache = {}
+        # Rules declared with `@invariant`, collected here rather than on first use: the check
+        # for "are there any" sits in every write and every container mutation, and an attribute
+        # lookup is what it can afford. Bases first, so a subclass overrides by redefining.
+        rules = {}
+        for base in reversed(new_class.__mro__):
+            for attribute_name, attribute in list(vars(base).items()):
+                message = getattr(attribute, '_msb_invariant', None)
+                if message is not None:
+                    rules[attribute_name] = message
+        new_class._invariant_cache = tuple(rules.items())
         with _REGISTRY_LOCK:
             EntityMeta._entity_registry.setdefault(name, weakref.WeakSet()).add(new_class)
         return new_class
@@ -344,6 +356,11 @@ class Serializable(ABC, metaclass=EntityMeta):
         if unknown_attrs:
             raise UnknownAttributeError(f"Unknown attributes provided for {self.__class__.__name__}: {set(unknown_attrs)}")
 
+        if self.__class__._invariant_cache:
+            # Every field is set by now, which is the first point a rule about the whole object
+            # can be evaluated at all.
+            self.check_invariants()
+
         if self.__dict__.get('_use_cache'):
             # Registered so that invalidation can tell, without walking, whether any cache
             # exists to go stale. Weakly held, so this never keeps an object alive.
@@ -538,6 +555,49 @@ class Serializable(ABC, metaclass=EntityMeta):
         resolved = {field: expected for field, expected, _ in cls._init_plan()[0]}
         type.__setattr__(cls, '_resolved_fields_cache', (resolved, len(cls._fields)))
         return resolved
+
+    @classmethod
+    def _invariant_rules(cls) -> tuple:
+        """Return the object-wide rules declared on this class and its bases.
+
+        Returns:
+            tuple: `(method name, message)` for each rule, worked out once per class.
+
+        Notes:
+            - Read from the class rather than declared in a list, so a rule cannot be written
+              and then forgotten in a registry.
+            - Bases first, so a subclass overrides a rule by defining a method of that name.
+        """
+        return getattr(cls, '_invariant_cache', ())
+
+    def check_invariants(self) -> None:
+        """Raise if any rule about this object as a whole does not hold.
+
+        Raises:
+            InvariantError: Naming the object and the rule that failed.
+
+        Notes:
+            - Runs automatically when the object is built, restored, or written to. Call it by
+              hand after writing several attributes directly, where `set` would have checked.
+            - Nothing to do for a class that declares no rules, which is the usual case and
+              costs one lookup of a table built once.
+
+        Examples:
+            >>> window.start, window.end = 1.0, 2.0
+            >>> window.check_invariants()
+        """
+        for name, message in self.__class__._invariant_cache:
+            try:
+                holds = getattr(self, name)()
+            except InvariantError:
+                raise
+            except Exception as error:              # noqa: BLE001 - the rule itself is broken
+                raise InvariantError(
+                    f"{type(self).__name__} '{self.__dict__.get('name')}': the rule '{name}' "
+                    f"could not be evaluated: {type(error).__name__}: {error}") from error
+            if not holds:
+                raise InvariantError(
+                    f"{type(self).__name__} '{self.__dict__.get('name')}': {message}")
 
     @classmethod
     def _init_plan(cls):
@@ -1058,6 +1118,9 @@ class Serializable(ABC, metaclass=EntityMeta):
                         payload = {k: v for k, v in value.items() if k != discriminator}
                     return entity_type.from_dict(payload)
 
+        if origin is type:
+            return cls._named_class(value, args[0] if args else None)
+
         if origin is Union:
             for member in args:
                 if member is type(None):
@@ -1133,6 +1196,41 @@ class Serializable(ABC, metaclass=EntityMeta):
         return key
 
     @classmethod
+    def _named_class(cls, value: Any, bound: Any = None) -> Any:
+        """Return the class a `Type[X]` field names.
+
+        Args:
+            value (Any): What the data held: a class already, or the name `to_dict` wrote.
+            bound (Any): The `X` of `Type[X]`, when the annotation gave one.
+
+        Returns:
+            Any: The class of that name, or the value unchanged when nothing answers to it --
+                validation reports that against the real value, where it can say which field.
+
+        Notes:
+            - `X` and its subclasses are searched first, so a field declared `Type[Tool]`
+              resolves within the tools rather than anywhere in the model.
+            - A modelled type is then looked up by name, which is the same resolution a plan or
+              a `load(kind=...)` uses.
+        """
+        if isinstance(value, type) or not isinstance(value, str):
+            return value
+
+        if isinstance(bound, type):
+            pending = [bound]
+            while pending:
+                candidate = pending.pop()
+                if candidate.__name__ == value:
+                    return candidate
+                pending.extend(candidate.__subclasses__())
+
+        from ..model import named_type
+        try:
+            return named_type(value)
+        except Exception:                           # noqa: BLE001 - reported by validation
+            return value
+
+    @classmethod
     def _serialize_value(cls, value: Any, seen: Set[int]) -> Any:
         """Reduce a value to data that survives JSON, descending through collections.
 
@@ -1172,6 +1270,11 @@ class Serializable(ABC, metaclass=EntityMeta):
                 return sorted(items)
             except TypeError:
                 return sorted(items, key=repr)
+        if isinstance(value, type):
+            # A `Type[X]` field holds a class, and JSON has no class. Written by name, which
+            # `_deserialize_value` resolves against the same annotation. Without this the whole
+            # mapping was rejected by `json.dumps`, so one such field made an object unsavable.
+            return value.__name__
         return value
 
     def fingerprint(self) -> str:
@@ -1494,10 +1597,29 @@ class Serializable(ABC, metaclass=EntityMeta):
         resolved = self.__class__._resolved_fields()
         if key in resolved:
             self._validate_type(key, value, resolved[key])
+            # Only a class that declares a rule pays for the undo: reading the old value costs
+            # a lookup, and this runs on every write there is.
+            guarded = (bool(self.__class__._invariant_cache)
+                       and not self.__dict__.get('_holding_invariants'))
+            previous = self.__dict__.get(key, _MISSING) if guarded else None
             super().__setattr__(key, value)
             if isinstance(value, Serializable):
                 value._adopt(self)
             self._invalidate_cache()
+            # A rule about the whole object, checked after the write that could break it, and
+            # the write undone when it does: a refused assignment must leave the object as it
+            # was, exactly as a refused type does. Held back while `set` applies a group, since
+            # two fields that must move together cannot be checked between them.
+            if guarded:
+                try:
+                    self.check_invariants()
+                except InvariantError:
+                    if previous is _MISSING:
+                        self.__dict__.pop(key, None)
+                    else:
+                        super().__setattr__(key, previous)
+                    self._invalidate_cache()
+                    raise
         elif key in self._fields:
             # Annotated but left out of the resolved table, which only happens for an annotation
             # that cannot be resolved at all. Validation reports that against a real value.

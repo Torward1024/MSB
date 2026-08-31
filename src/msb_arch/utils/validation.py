@@ -223,6 +223,47 @@ def check_non_zero(value: float, name: str) -> None:
         logger.error("%s must be non-zero, got %s", name, value)
         raise ConstraintError(f"{name} must be non-zero, got {value}")
 
+def invariant(message: str = "") -> Callable:
+    """Mark a method as a rule the whole object must satisfy.
+
+    Args:
+        message (str): What is wrong when the rule does not hold, used in the error. Defaults
+            to the method's docstring, and to its name when there is none.
+
+    Returns:
+        Callable: The method, marked. It is an ordinary method and stays callable.
+
+    Notes:
+        - **A `Constraint` guards one value; an invariant guards their relation.** Annotating a
+          field says `end` is a float; only a rule about the object can say `end` is after
+          `start`.
+        - Checked when the object is built, when it is restored, and after each write -- the
+          same three points a field constraint is checked at.
+        - A write that needs two fields to move together goes through `set`, which applies them
+          all and checks once at the end. That is what `set` is for; the alternative would be
+          rules that cannot be satisfied one assignment at a time.
+        - Rules are inherited, and a subclass overrides one by defining a method of the same
+          name.
+
+    Examples:
+        >>> class Window(BaseEntity):
+        ...     start: float
+        ...     end: float
+        ...
+        ...     @invariant("end must be after start")
+        ...     def _ordered(self) -> bool:
+        ...         return self.end > self.start
+        >>> Window(name="w", start=2.0, end=1.0)
+        Traceback (most recent call last):
+        ...
+        msb_arch.errors.InvariantError: Window 'w': end must be after start
+    """
+    def mark(rule: Callable) -> Callable:
+        rule._msb_invariant = message or (rule.__doc__ or "").strip().split("\n")[0] or rule.__name__
+        return rule
+    return mark
+
+
 class Constraint(ABC):
     """A rule an annotated value must satisfy beyond having the right type.
 

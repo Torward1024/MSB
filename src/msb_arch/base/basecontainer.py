@@ -18,6 +18,7 @@ from ..base.serializable import (CYCLIC_REFERENCE, SCHEMA_FIELD, Serializable, _
 from ..errors import (AttributeNotFoundError,
                       ConstraintError,
                       DuplicateNameError,
+                      InvariantError,
                       ItemNameError,
                       NotFoundError,
                       ResolutionError,
@@ -217,6 +218,36 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         """
         pass
 
+    def _composition_changed(self, restore: Optional[Dict[str, Any]] = None) -> None:
+        """Invalidate the cache and check any rule about what this container holds.
+
+        Args:
+            restore (Optional[Dict[str, Any]]): The items as they were, put back when a rule
+                refuses the new composition. None when the class declares no rules, where
+                taking a snapshot would be paid for nothing.
+
+        Notes:
+            - A `@invariant` on a container is about its contents -- at most eight antennas, no
+              two stations at one site -- which no field constraint can express.
+            - A refused change leaves the container as it was, the same way a refused write
+              leaves an entity as it was.
+        """
+        self._invalidate_cache()
+        if not self.__class__._invariant_cache:
+            return
+        try:
+            self.check_invariants()
+        except InvariantError:
+            if restore is not None:
+                self._items.clear()
+                self._items.update(restore)
+                self._invalidate_cache()
+            raise
+
+    def _items_snapshot(self) -> Optional[Dict[str, Any]]:
+        """Return what to put back if a rule refuses the change, or None when none can."""
+        return dict(self._items) if self.__class__._invariant_cache else None
+
     def add(self, item: Union[T, List[T], 'BaseContainer[T]'], copy_items: bool = True) -> None:
         """Add one or more items to the collection using their names as keys.
 
@@ -240,6 +271,9 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             - Copying costs roughly three times as much as storing the reference; on 4000
               items that is about 57 ms against 17 ms.
         """
+        # Taken before the change, so a rule that refuses the new composition can put
+        # the old one back. None unless this class declares one.
+        guarded_items = self._items_snapshot()
         item_type = self.__class__._resolved_item_type()
 
         if isinstance(item, item_type):
@@ -285,7 +319,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         else:
             raise TypeValidationError(f"Item must be of type {item_type.__name__}, List[{item_type.__name__}], or BaseContainer[{item_type.__name__}], got {type(item).__name__}")
 
-        self._invalidate_cache()
+        self._composition_changed(guarded_items)
 
     def set_item(self, name: str, item: T) -> None:
         """Set or replace an item in the container by its name.
@@ -298,6 +332,9 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             ValueError: If the item's name does not match the provided name or if it fails validation.
             TypeError: If the item's type does not match the expected type T.
         """
+        # Taken before the change, so a rule that refuses the new composition can put
+        # the old one back. None unless this class declares one.
+        guarded_items = self._items_snapshot()
         item_type = self.__class__._resolved_item_type()
         if not isinstance(item, item_type):
             raise TypeValidationError(f"Item must be of type {item_type.__name__}, got {type(item).__name__}")
@@ -306,7 +343,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         self._validate_item(item)
         self._items[name] = item
         item._adopt(self)
-        self._invalidate_cache()
+        self._composition_changed(guarded_items)
         logger.debug("Set item with name '%s' in %s", name, self.__class__.__name__)
 
     def remove(self, name: str) -> None:
@@ -322,10 +359,13 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             - This used to log a warning and then fail with a bare `KeyError` anyway, so the
               warning prevented nothing and the error said nothing about the container.
         """
+        # Taken before the change, so a rule that refuses the new composition can put
+        # the old one back. None unless this class declares one.
+        guarded_items = self._items_snapshot()
         if name not in self._items:
             raise NotFoundError(f"Name '{name}' not found in {self.__class__.__name__}")
         del self._items[name]
-        self._invalidate_cache()
+        self._composition_changed(guarded_items)
         logger.debug("Removed item with name '%s' from %s", name, self.__class__.__name__)
 
     def get(self, name: str) -> Optional[T]:
@@ -442,12 +482,15 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         Raises:
             ValueError: If any item fails validation or has a mismatched name.
         """
+        # Taken before the change, so a rule that refuses the new composition can put
+        # the old one back. None unless this class declares one.
+        guarded_items = self._items_snapshot()
         self._items.clear()
         self._validate_items(items)
         self._items.update(items)
         for item in self._items.values():
             item._adopt(self)
-        self._invalidate_cache()
+        self._composition_changed(guarded_items)
         logger.debug("Set %s items in %s", len(items), self.__class__.__name__)
 
     def has_item(self, name: str) -> bool:
@@ -476,9 +519,12 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             >>> len(box)
             0
         """
+        # Taken before the change, so a rule that refuses the new composition can put
+        # the old one back. None unless this class declares one.
+        guarded_items = self._items_snapshot()
         if hasattr(self, '_items'):
             self._items.clear()
-        self._invalidate_cache()
+        self._composition_changed(guarded_items)
         logger.debug("Removed all items from %s", self.__class__.__name__)
 
     def clear(self) -> None:

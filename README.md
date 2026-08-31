@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MSB%20Software%20License-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.9.2-brightgreen.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-1.10.0-brightgreen.svg)](https://github.com/Torward1024/MSB)
 
 Mega-Super-Base (MSB) is for the application that outgrew a script: one whose data has a shape
 worth validating, whose operations keep multiplying, and which now needs a window, a command line
@@ -37,6 +37,9 @@ it.
   including `List`, `Dict`, `Tuple`, `Set`, `Union`, `Literal`, `Callable` and `Type[X]`.
 - **Constraints on values, not just types.** `price: Annotated[float, Positive()]` is enforced on
   construction, on assignment and on restore, with no `__init__` of your own.
+- **Rules about the whole object.** `@invariant("end must be after start")` guards what no
+  per-field rule can — the relation between several. Checked at the same three points, and a
+  refused change is undone rather than half-applied.
 - **Containers for collections.** Named, queryable, serializable, with bulk operations.
 - **One entry point.** A `Manipulator` registers operations and processes requests; a facade per
   operation means you rarely write a request dictionary by hand.
@@ -236,4 +239,4 @@ For commercial use, a separate royalty-bearing license is required. Please conta
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 1.9.2
+- **Version**: 1.10.0

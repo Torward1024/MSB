@@ -82,6 +82,15 @@ class ConstraintError(ValidationError, ValueError):
     """
 
 
+class InvariantError(ValidationError, ValueError):
+    """Every value is allowed on its own and the object as a whole is not.
+
+    What a rule marked with `@invariant` raises: `end` before `start`, weights that do not sum
+    to one, a window outside the band its receiver covers. A `ConstraintError` is about one
+    value; this is about the relation between several.
+    """
+
+
 class UnknownAttributeError(ValidationError, ValueError):
     """An attribute was supplied that the class never declared.
 

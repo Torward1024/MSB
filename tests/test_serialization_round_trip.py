@@ -16,7 +16,7 @@ The tests go through real `json.dumps`/`json.loads` rather than comparing dictio
 a dictionary comparison is exactly what failed to notice any of this.
 """
 import json
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Union
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Type, Union
 
 import pytest
 
@@ -368,3 +368,59 @@ def test_a_container_migration_is_taken():
 def test_a_container_at_version_one_writes_no_version():
     box = Rigs(name="box")
     assert SCHEMA_FIELD not in box.to_dict()
+
+
+# --- a class held in a field ---------------------------------------------------------------------
+
+class Fastener(BaseEntity):
+    """A type a `Type[X]` field can name."""
+
+    grip: float
+
+
+class Bolt(Fastener):
+    thread: str = "M6"
+
+
+class Recipe(BaseEntity):
+    """Fields that hold classes rather than instances, which is what `Type[X]` declares."""
+
+    makes: Optional[Type[Fastener]] = None
+    steps: List[Type[Fastener]] = []
+    by_stage: Dict[str, Type[Fastener]] = {}
+
+
+def test_a_class_in_a_field_survives_json():
+    """`Type[X]` is in the table of hints the base module says round-trip. It did not.
+
+    `to_dict` left the class itself in the mapping, so `json.dumps` refused the whole object:
+    one such field made everything holding it unsavable.
+    """
+    recipe = Recipe(name="r", makes=Bolt, steps=[Fastener, Bolt], by_stage={"first": Fastener})
+
+    text = json.dumps(dict(recipe.to_dict()))
+    restored = Recipe.from_dict(json.loads(text))
+
+    assert restored.makes is Bolt
+    assert restored.steps == [Fastener, Bolt]
+    assert restored.by_stage == {"first": Fastener}
+    assert restored == recipe
+
+
+def test_a_class_is_written_by_name():
+    recipe = Recipe(name="r", makes=Bolt)
+
+    assert dict(recipe.to_dict())["makes"] == "Bolt"
+
+
+def test_a_name_resolves_within_what_the_annotation_bounds():
+    """`Type[Fastener]` resolves among the fasteners, not anywhere in the model."""
+    restored = Recipe.from_dict({"type": "Recipe", "name": "r", "makes": "Fastener"})
+
+    assert restored.makes is Fastener
+
+
+def test_a_name_nothing_answers_to_is_refused_by_validation():
+    """Left as it arrived, so validation reports it against the field rather than guessing."""
+    with pytest.raises(errors.MSBError):
+        Recipe.from_dict({"type": "Recipe", "name": "r", "makes": "Sasquatch"})

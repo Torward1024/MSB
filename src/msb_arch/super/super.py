@@ -396,15 +396,29 @@ class Super(ABC):
 
         Returns:
             List[str]: Candidate attribute names in resolution order.
+
+        Notes:
+            - **The type's ancestors come between its own name and the fallback**, so a handler
+              written for a base class serves every subclass of it. Without that, a model with
+              any hierarchy in it needed one handler per leaf type -- `_care_tool` did not
+              answer for a `PowerTool(Tool)` and the request failed to dispatch, while the
+              container side had had exactly this fallback all along as
+              `_<operation>_basecontainer`.
+            - Most specific first: the requested name, this type, each ancestor in method
+              resolution order, then the operation's own default. `Serializable`, `BaseEntity`
+              and `BaseContainer` are part of that walk, which is where `basecontainer` now
+              comes from rather than from a special case.
+            - Resolution is cached per operation and type, so the walk is paid once.
         """
         candidates = []
         if method_name:
             if self._is_handler_name(method_name):
                 candidates.append(method_name)
             candidates.append(f"_{self._operation}_{method_name}")
-        candidates.append(f"_{self._operation}_{type(obj).__name__.lower()}")
-        if isinstance(obj, BaseContainer):
-            candidates.append(f"_{self._operation}_basecontainer")
+        for ancestor in type(obj).__mro__:
+            if ancestor is object:
+                continue
+            candidates.append(f"_{self._operation}_{ancestor.__name__.lower()}")
         candidates.append(f"_{self._operation}")
         return candidates
 

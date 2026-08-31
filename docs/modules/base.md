@@ -179,15 +179,92 @@ Parameterized hints are checked structurally and nested to any depth, so
 | `Sequence[X]`, `Mapping[K, V]` and other abstract collections | `isinstance` against the origin only |
 | `Annotated[X, ...]` | unwrapped to X |
 
-- **Every hint above round-trips through JSON.** `to_dict` writes only data -- a set, a
-  frozenset and a tuple all become lists, and entities held inside a list or a dict are
-  serialized like any other -- and `from_dict` restores the declared type from the annotation.
-  A set is written in a stable order, so the same object always produces the same output.
+- **Every hint above round-trips through JSON, except `Callable`.** `to_dict` writes only data
+  -- a set, a frozenset and a tuple all become lists, a `Type[X]` field is written as the class's
+  name, and entities held inside a list or a dict are serialized like any other -- and
+  `from_dict` restores the declared type from the annotation. A set is written in a stable order,
+  so the same object always produces the same output.
+- **A `Callable` field does not survive a file.** A function is code, and restoring one from a
+  name would mean importing whatever a file asks for. Such a field is written as it is, which
+  `json.dumps` refuses: keep callables out of anything that is saved, or hold the *name* of the
+  operation and look it up yourself.
+- **A `Type[X]` field is written by name and resolved back within `X`.** `Type[Fastener]` holding
+  `Bolt` writes `"Bolt"`, and restoring searches `Fastener` and its subclasses first, then the
+  model's types by name. A name nothing answers to is left as it is, so validation reports it
+  against the field.
 - `None` elements inside collections are skipped, mirroring the top-level rule for attributes.
 - Elements of abstract collections are deliberately left unchecked so that validation never
   consumes an arbitrary iterable.
 - A hint that cannot be resolved to a class is accepted rather than raising, so an exotic
   annotation never blocks an otherwise valid assignment.
+
+### A rule about the whole object
+
+A constraint guards one value. It cannot say that `end` comes after `start`, that weights sum to
+one, or that an array holds at most three antennas -- every value is allowed on its own and the
+object is still wrong. That is what `@invariant` is for:
+
+```python
+from msb_arch import BaseContainer, BaseEntity, errors, invariant
+
+class Window(BaseEntity):
+    start: float = 0.0
+    end: float = 1.0
+
+    @invariant("end must be after start")
+    def _ordered(self) -> bool:
+        return self.end > self.start
+
+Window(name="w", start=1.0, end=2.0)          # fine
+```
+
+Checked at the same three points a field constraint is -- when the object is built, when it is
+restored, and after each write -- and **a refused change leaves the object as it was**:
+
+```python
+window = Window(name="w", start=1.0, end=2.0)
+try:
+    window.end = 0.5
+except errors.InvariantError:
+    pass
+assert window.end == 2.0                      # the write was undone
+```
+
+Two fields that must move together are set together. `set` applies the whole group and checks
+once at the end, which is what makes such a rule satisfiable at all:
+
+```python
+window.set({"start": 10.0, "end": 20.0})
+assert (window.start, window.end) == (10.0, 20.0)
+```
+
+A group that leaves the object breaking a rule is refused whole -- every attribute in it goes
+back. The same is true through a request, since `configure` writes through `set`.
+
+A container's rule is about what it holds, and is checked after anything that changes that:
+
+```python
+class Antenna(BaseEntity):
+    diameter: float = 1.0
+
+class Antennas(BaseContainer[Antenna]):
+
+    @invariant("an array holds at most three antennas")
+    def _small_enough(self) -> bool:
+        return len(self) <= 3
+
+rack = Antennas(name="rack")
+rack.add(Antenna(name="a1"))
+```
+
+| | |
+| --- | --- |
+| Message | The argument, or the method's docstring, or its name |
+| Inherited | Yes. A subclass overrides a rule by defining a method of the same name |
+| Several rules | All are checked; the first that fails is reported |
+| A rule that raises | Reported as `InvariantError` naming the rule, rather than escaping as itself |
+| `check_invariants()` | Call it by hand after writing attributes directly rather than through `set` |
+| Cost | Rules are collected when the class is created. A class that declares none is unaffected |
 
 ## BaseContainer
 

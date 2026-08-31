@@ -13,6 +13,74 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [1.10.0] - 2026-08-31
+
+A pass over the whole framework after a break: bugs, then what was missing. One promise was not
+being kept, one gap made hierarchies painful, and one kind of rule had nowhere to live.
+
+### Added
+
+- **`@invariant`: a rule about the whole object.** `Annotated[float, Positive()]` guards one
+  value. It cannot say that `end` comes after `start`, that weights sum to one, or that an array
+  holds at most three antennas -- every value is allowed on its own and the object is still
+  wrong. Such rules were written by hand in setters, where nothing enforced them on construction,
+  on restore, or on a write arriving through a request.
+
+  ```python
+  class Window(BaseEntity):
+      start: float
+      end: float
+
+      @invariant("end must be after start")
+      def _ordered(self) -> bool:
+          return self.end > self.start
+  ```
+
+  Checked at the same three points a field constraint is -- built, restored, written to -- and
+  **a refused change is undone**: a write goes back to the value it had, and a group applied
+  through `set` goes back whole. Two fields that must move together are set together, which is
+  what makes such a rule satisfiable at all; `configure` writes through `set`, so a request
+  behaves the same way.
+
+  A container's rule is about its contents, checked after `add`, `remove`, `set_item`,
+  `set_items` and `remove_all`, and a refused change puts the items back.
+
+  Rules are inherited, a subclass overrides one by defining a method of that name, and
+  `check_invariants()` runs them on demand. They are collected when the class is created, so a
+  class that declares none pays nothing: measured against 1.9.2, an attribute write and a
+  container `add` are unchanged within the noise of the machine -- the first reading said +15.6%
+  until the measurement order was reversed and the same difference appeared with its sign flipped.
+
+- **`InvariantError`**, a `ValidationError` and a `ValueError`. `ConstraintError` is about one
+  value; this is about the relation between several.
+
+### Fixed
+
+- **A `Type[X]` field could not be saved.** `to_dict` left the class itself in the mapping, so
+  `json.dumps` refused the whole object -- one such field made everything holding it unsavable --
+  while the base module promised that every supported hint round-trips through JSON. It is now
+  written as the class's name and resolved back within the `X` of `Type[X]`, then among the
+  model's types. A name nothing answers to is left as it arrived, so validation reports it against
+  the field rather than guessing.
+
+- **A handler written for a base class did not serve its subclasses.** Resolution went from the
+  exact type straight to the operation's fallback, so `_service_instrument` did not answer for a
+  `Spectrometer(Instrument)` and the request failed with `DispatchError`: any hierarchy needed one
+  handler per leaf type. The walk now passes through the type's ancestors, which is also where
+  `_<operation>_basecontainer` comes from -- it had been a special case for containers of exactly
+  this shape. A handler for the exact type still wins, and resolution stays cached per type.
+
+### Changed
+
+- The documented promise about `Callable` fields is now accurate: they do **not** survive a file.
+  A function is code, and restoring one from a name would mean importing whatever a file asks for.
+  Keep callables out of anything that is saved, or hold the name of an operation and look it up.
+
+### Upgrading from 1.9.2
+
+Nothing to do. A model with `Type[X]` fields can now be saved, where before `json.dumps` refused
+it; requests that failed to dispatch on a subclass now reach the base class's handler.
+
 ## [1.9.2] - 2026-08-18
 
 ### Fixed
