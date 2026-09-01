@@ -19,7 +19,7 @@ keywords = ["msb", "architecture", "extensible"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
-    "License :: Other/Proprietary License",
+    "License :: OSI Approved :: Apache Software License",
 ]
 
 dependencies = []
@@ -32,5 +32,8 @@ Issues = "https://github.com/Torward1024/MSB/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/msb_arch"]
+# Apache-2.0 asks that the NOTICE travel with the code, so it ships in the distribution.
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "docs", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE"]
 [tool.hatch.version]
 path = "src/msb_arch/__init__.py"

@@ -1,8 +1,8 @@
 # MSB Architecture
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MSB%20Software%20License-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.0.0-brightgreen.svg)](https://github.com/Torward1024/MSB)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-2.0.1-brightgreen.svg)](https://github.com/Torward1024/MSB)
 
 Mega-Super-Base (MSB) is for the application that outgrew a script: one whose data has a shape
 worth validating, whose operations keep multiplying, and which now needs a window, a command line
@@ -231,15 +231,18 @@ runs the same suites against it, so the distribution that ships is the one that 
 
 ## License
 
-MSB is licensed under the [MSB Software License](LICENSE) for non-commercial and research use,
-allowing free use, modification, and distribution for non-commercial purposes with attribution.
+[Apache License 2.0](LICENSE). Use it for anything, including commercially, in open or closed
+source: keep the licence and the [NOTICE](NOTICE) with the code, state what you changed, and the
+patent grant protects you as long as you do not sue over it.
 
-For commercial use, a separate royalty-bearing license is required. Please contact
-[almax1024@gmail.com](mailto:almax1024@gmail.com) for details.
+Releases up to and including 1.10.0 went out under the earlier MSB Software License and stay under
+it; 2.0.0 and later are Apache-2.0.
+
+Available for collaboration, contract work and support — [almax1024@gmail.com](mailto:almax1024@gmail.com).
 
 ## Contacts
 
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 2.0.0
+- **Version**: 2.0.1

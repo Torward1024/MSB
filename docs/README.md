@@ -72,8 +72,8 @@ error taxonomy, logging and the validation helpers.
 
 ## Version
 
-2.0.0
+2.0.1
 
 ## License
 
-MSB Software License. See [LICENSE](../LICENSE).
+[Apache License 2.0](../LICENSE). Releases up to 1.10.0 went out under the earlier MSB Software License and stay under it.

@@ -13,6 +13,22 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [2.0.1] - 2026-09-01
+
+### Changed
+
+- **Licensed under Apache-2.0.** The MSB Software License it carried before was written for this
+  project alone: not recognised by any scanner, reported by PyPI as `Other/Proprietary`, and
+  incompatible with everything it might otherwise have been used inside -- so a framework meant to
+  be built on could not be. Apache-2.0 allows use anywhere, keeps the requirement to carry the
+  copyright and the `NOTICE`, and adds an explicit patent grant that a permissive licence like MIT
+  does not.
+
+  Releases up to and including 1.10.0 went out under the earlier licence and stay under it. A
+  change of licence is not retroactive, in either direction.
+
+- `NOTICE` ships with the distribution, as Apache-2.0 asks.
+
 ## [2.0.0] - 2026-09-01
 
 One behaviour corrected, three surfaces made consistent, and the removals 1.x announced. Small for

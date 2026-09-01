@@ -51,4 +51,4 @@ __all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "M
            "path_of",
            "RequestMetrics", "RequestJournal", "cache_statistics"]
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
