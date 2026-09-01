@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MSB%20Software%20License-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.10.0-brightgreen.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-2.0.0-brightgreen.svg)](https://github.com/Torward1024/MSB)
 
 Mega-Super-Base (MSB) is for the application that outgrew a script: one whose data has a shape
 worth validating, whose operations keep multiplying, and which now needs a window, a command line
@@ -34,7 +34,9 @@ it.
 ## Features
 
 - **Typed entities.** Attributes validated against their annotations, nested to any depth,
-  including `List`, `Dict`, `Tuple`, `Set`, `Union`, `Literal`, `Callable` and `Type[X]`.
+  including `List`, `Dict`, `Tuple`, `Set`, `Union`, `Literal`, `Callable` and `Type[X]`. A value
+  written after the annotation is what the field starts as, and a declared list or dict belongs
+  to the object rather than to the class.
 - **Constraints on values, not just types.** `price: Annotated[float, Positive()]` is enforced on
   construction, on assignment and on restore, with no `__init__` of your own.
 - **Rules about the whole object.** `@invariant("end must be after start")` guards what no
@@ -60,10 +62,10 @@ it.
   request before it runs and its response after, and may refuse or rewrite it. Request metrics
   and a replayable journal ship using nothing more than that hook.
 - **A session that replays somewhere else.** The journal records each request as plain data, with
-  the object's address in the model rather than a reference to it, so a recorded session can be
-  written to a file and run again against a model built from scratch -- and land on the objects it
-  meant. `address` and `locate` are the same addressing on its own, for a request that has to cross
-  a process or a wire.
+  the object's address in the model rather than a reference to it, so `json.dumps(journal.entries)`
+  on one side and `manipulator.replay(json.loads(...))` on the other run the same session against
+  another project, in another process -- landing on the objects it meant. `address` and `locate`
+  are the same addressing on its own, for a request that has to cross a wire.
 - **Asynchronous when you need it.** `await manipulator.ainspect(...)` moves the work off the
   event loop, and every synchronous signature is untouched.
 - **Exceptions you can catch precisely.** Everything derives from `MSBError`, and also from the
@@ -184,7 +186,8 @@ Main classes:
   not a subclass: the two mean different things by `get`, `set` and `clear`.
 - **`Super`** — an operation. Subclass it, name the operation, and write handlers as
   `_<operation>_<type>`, or `_<operation>` for the fallback.
-- **`Project`** — a named collection of entities with a factory for creating them.
+- **`Project`** — a named collection of entities with a factory for creating them: the thing an
+  application saves as a whole. A `Serializable` like the other two, addressed by its items.
 - **`Manipulator`** — the entry point. Registers operations, processes requests and pipelines,
   and answers what it knows about itself and the model.
 - **`MethodResults`** — what an operation reports: every method it ran, mapped to its outcome.
@@ -239,4 +242,4 @@ For commercial use, a separate royalty-bearing license is required. Please conta
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 1.10.0
+- **Version**: 2.0.0

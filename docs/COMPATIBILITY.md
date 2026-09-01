@@ -98,18 +98,20 @@ working exactly as it did while it is deprecated; the warning is the only change
 
 ### Currently deprecated
 
-| Name | Since | Use instead | Goes |
-| --- | --- | --- | --- |
-| `RequestJournal.replay(manipulator)` | 1.3.0 | `manipulator.replay(journal)` | 2.0 |
-| `BaseEntity.clear()` | 1.9.0 | `reset_attributes()` | 2.0 |
-| `BaseContainer.clear()` | 1.9.0 | `remove_all()` | 2.0 |
-| `Project.clear()` | 1.9.0 | `remove_all()` | 2.0 |
-| `Super.clear()` | 1.9.0 | `release()` | 2.0 |
+**Nothing is currently deprecated.** Everything announced in 1.x was removed in 2.0:
+
+| Removed in 2.0 | Deprecated in | Use instead |
+| --- | --- | --- |
+| `RequestJournal.replay(manipulator)` | 1.3.0 | `manipulator.replay(journal)` |
+| `BaseEntity.clear()` | 1.9.0 | `reset_attributes()` |
+| `BaseContainer.clear()` | 1.9.0 | `remove_all()` |
+| `Project.clear()` | 1.9.0 | `remove_all()` |
+| `Super.clear()` | 1.9.0 | `release()` |
 
 `clear` meant three different things depending on what you called it on: null an entity's
 attributes, drop a container's items, release the references an operation holds. That is the same
-defect `get` used to have, and it is fixed the same way -- one name per job, the old name warning
-until 2.0.
+defect `get` used to have, and it was fixed the same way -- one name per job, with the old name
+warning for a release and then going.
 
 ## What is deliberately not promised
 

@@ -96,11 +96,14 @@ classDiagram
     class Project {
         +create_item()
         +add_item(item)
+        +get_item(name)
         +get_items()
+        +get_all()
     }
 
     Serializable <|-- BaseEntity
     Serializable <|-- BaseContainer
+    Serializable <|-- Project
     Super <|-- Inspector
     Super <|-- Configurator
     Super <|-- Catalogue

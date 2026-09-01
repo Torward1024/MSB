@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 from typing import Dict, Any
 from msb_arch.super.project import Project
 from msb_arch.base.baseentity import BaseEntity
+from msb_arch import errors
 
 
 class TestEntity(BaseEntity):
@@ -294,3 +295,154 @@ class TestProjectFromDictIsConcrete:
 
         with pytest.raises(TypeError):
             Incomplete(name="Incomplete")
+
+
+# --- a project is a Serializable, like an entity and a container ---------------------------------
+
+class ProjectTask(BaseEntity):
+    effort: float = 1.0
+
+
+class UrgentProjectTask(ProjectTask):
+    fee: float = 0.0
+
+
+class Tasks(Project):
+    _item_type = ProjectTask
+
+    def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
+        self.add_item(ProjectTask(name=item_code, isactive=isactive))
+
+
+def test_two_equal_projects_compare_equal():
+    """It inherited identity comparison, so `load(...) == project` was False for its own file."""
+    project = Tasks(name="p")
+    project.create_item("t1")
+
+    assert Tasks.from_dict(project.to_dict()) == project
+    assert project != Tasks(name="other")
+
+
+def test_an_item_is_rebuilt_as_the_class_its_data_names():
+    """A project holding a subclass could be written and not read: the extra fields were rejected."""
+    project = Tasks(name="p")
+    project.add_item(UrgentProjectTask(name="u", fee=5.0))
+
+    restored = Tasks.from_dict(project.to_dict())
+
+    assert type(restored.get_item("u")) is UrgentProjectTask
+    assert restored.get_item("u").fee == 5.0
+
+
+def test_a_project_that_declares_no_item_type_still_reads_its_own_file():
+    class Loose(Project):
+        def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
+            self.add_item(ProjectTask(name=item_code, isactive=isactive))
+
+    project = Loose(name="p")
+    project.create_item("t1")
+
+    assert type(Loose.from_dict(project.to_dict()).get_item("t1")) is ProjectTask
+
+
+def test_data_naming_a_type_the_project_does_not_hold_is_refused():
+    class Unrelated(BaseEntity):
+        size: int = 1
+
+    data = dict(Tasks(name="p").to_dict())
+    data["items"] = {"x": dict(Unrelated(name="x").to_dict())}
+
+    # Named at the boundary, rather than as a type failure from the container further in.
+    with pytest.raises(errors.SerializationError, match="is not a ProjectTask"):
+        Tasks.from_dict(data)
+
+
+def test_a_project_has_a_fingerprint_and_a_revision():
+    project = Tasks(name="p")
+    project.create_item("t1")
+
+    before = project.fingerprint()
+    project.get_item("t1").effort = 9.0
+
+    assert project.fingerprint() != before
+    assert project.revision >= 0
+
+
+def test_the_shape_of_a_saved_project_is_unchanged():
+    """Files written by earlier versions still read, so the keys stay exactly these."""
+    project = Tasks(name="p")
+    project.create_item("t1")
+
+    assert sorted(dict(project.to_dict())) == ["items", "name"]
+
+
+def test_a_rule_about_the_project_is_checked_on_every_change():
+    from msb_arch import invariant
+
+    class Guarded(Tasks):
+        @invariant("a project needs at least one task")
+        def _not_empty(self) -> bool:
+            return len(self.get_items()) > 0
+
+    with pytest.raises(errors.InvariantError):
+        Guarded(name="empty")
+
+    project = Guarded(name="g", items={"t1": ProjectTask(name="t1")})
+    for change in (lambda: project.remove_item("t1"),
+                   lambda: project.remove_all(),
+                   lambda: project.drop_active()):
+        with pytest.raises(errors.InvariantError):
+            change()
+        assert [item.name for item in project.get_items()] == ["t1"]
+
+    project.create_item("t2")
+    project.remove_item("t2")
+    assert [item.name for item in project.get_items()] == ["t1"]
+
+
+def test_get_items_means_the_same_on_a_project_as_on_a_container():
+    """One handler written for both used to walk objects in one case and names in the other."""
+    project = Tasks(name="p")
+    project.create_item("t1")
+    project.create_item("t2")
+
+    assert [item.name for item in project.get_items()] == ["t1", "t2"]
+    assert sorted(project.get_all()) == ["t1", "t2"]
+    assert project.get_all()["t1"] is project.get_item("t1")
+
+
+def test_a_handler_written_for_a_container_walks_a_project_the_same_way():
+    from msb_arch import BaseContainer
+
+    class Basket(BaseContainer[ProjectTask]):
+        pass
+
+    basket = Basket(name="b")
+    basket.add(ProjectTask(name="t1"))
+    project = Tasks(name="p")
+    project.create_item("t1")
+
+    def total_effort(holder):
+        return sum(item.effort for item in holder.get_items())
+
+    assert total_effort(basket) == total_effort(project)
+
+
+def test_a_request_reaches_an_item_through_the_project():
+    """`inspect(collection, name=..., ...)` means the same for a project as for a container."""
+    from msb_arch import Manipulator
+
+    class Shop(Manipulator):
+        pass
+
+    project = Tasks(name="p")
+    project.create_item("t1")
+    shop = Shop(base_classes=[ProjectTask, Tasks])
+
+    assert shop.inspect(project, name="t1", get="effort") == 1.0
+
+    shop.configure(project, name="t1", set={"params": {"effort": 5.0}})
+    assert project.get_item("t1").effort == 5.0
+
+    refused = shop.inspect(project, name="absent", get="effort", raise_on_error=False)
+    assert refused.ok is False

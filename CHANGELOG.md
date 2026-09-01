@@ -13,6 +13,107 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [2.0.0] - 2026-09-01
+
+One behaviour corrected, three surfaces made consistent, and the removals 1.x announced. Small for
+a major version, which is the point: everything here was either promised or a defect.
+
+### Changed -- breaking
+
+- **A value written after an annotation is what the field starts as.** It was ignored:
+
+  ```python
+  class Reading(BaseEntity):
+      value: float = 0.0
+
+  Reading(name="r").value          # None before 2.0, while Reading.value was 0.0
+  ```
+
+  The constructor set every field it was not given to None, so the syntax meant nothing and the
+  object was wrong in a way that only surfaced when something did arithmetic on it. Everyone
+  arriving from a dataclass, from pydantic or from attrs writes this; the workaround was to pass
+  every value by hand at every construction, which is what the application downstream does in all
+  of its classes.
+
+  A declared value is inherited, overridden by a subclass declaring its own, validated like any
+  other value, and used by `from_dict` when the data has no such field. **A mutable one is copied
+  per object** -- `tags: List[str] = []` gives each object its own list rather than one shared by
+  the class, which is the only place this departs from a plain class body and is what the
+  declaration means.
+
+  Nothing measurable was added to construction: 4995 ns before, 4636 ns after, medians of
+  alternating runs.
+
+- **`Project.get_items()` returns a list, and `get_all()` returns the mapping** -- exactly as on a
+  container. A project answered with a mapping and a container with a list, so one handler written
+  for both walked objects in one case and names in the other, silently. Replace
+  `project.get_items()` with `project.get_all()` where the mapping is what you wanted.
+
+- **`Project` is a `Serializable`.** It was an `ABC` of its own, and everything the base layer
+  gained went past it: two equal projects compared unequal, so `load(...) == project` was False for
+  a file just written from it; `fingerprint` and `revision` did not exist; a rule declared with
+  `@invariant` was never checked. Its own surface -- `add_item`, `get_item`, `create_item` -- and
+  the shape of a saved file are unchanged. Its private copy of the schema-migration machinery is
+  gone, since that is the base layer's job.
+
+### Removed
+
+Everything 1.x announced, on schedule:
+
+| Removed | Deprecated in | Use instead |
+| --- | --- | --- |
+| `RequestJournal.replay(manipulator)` | 1.3.0 | `manipulator.replay(journal)` |
+| `BaseEntity.clear()` | 1.9.0 | `reset_attributes()` |
+| `BaseContainer.clear()` | 1.9.0 | `remove_all()` |
+| `Project.clear()` | 1.9.0 | `remove_all()` |
+| `Super.clear()` | 1.9.0 | `release()` |
+
+### Fixed
+
+- **A project could be written and not read.** `from_dict` rebuilt every item as the declared
+  `_item_type` and ignored the class each item's data named, so a project holding any subclass
+  raised `Unknown attribute` on the subclass's own fields -- and a project that declared no
+  `_item_type` rejected every field there was. Items are now rebuilt as the class their data
+  names, refusing at the boundary anything that is not what the project holds.
+
+- **A session could be written and not read.** `journal.entries` produced plain data, and nothing
+  turned that data back into a session: `entries` hands back a copy, so filling it did nothing,
+  and replaying the still-empty journal reported success having done nothing at all. That is the
+  whole point of a portable session, so:
+
+  ```python
+  saved = json.dumps(journal.entries)              # one process
+  core.replay(json.loads(saved))                   # another, against another project
+  ```
+
+  `replay` now takes a journal or the entries themselves, `RequestJournal.from_entries` builds one
+  from data, and an empty session says so instead of looking like a successful replay.
+
+### Added
+
+- `Project.get_all()`, the mapping `get_items` used to return.
+- The built-in `inspect` and `configure` descend into a project by name, as they always did into a
+  container: `inspect(project, name="t1", get="effort")` rather than fetching the item first.
+- `RequestJournal.from_entries(entries)`.
+- A rule declared with `@invariant` on a `Project` is checked when it is built and after anything
+  that changes what it holds, with the items put back when a rule refuses the change.
+
+### Changed
+
+- A method a type does not have is logged at DEBUG rather than ERROR. The failure is already in
+  the response, and a non-strict `inspect` naming methods that only some types answer to is how a
+  caller discovers what a type offers -- an application doing that printed pages of errors while
+  working correctly, and paid 13 µs per call to build the log record's stack frame. The same call
+  is now 10.6 µs against 20.7 µs.
+
+### Upgrading from 1.10.0
+
+1. Search for `.clear()` on entities, containers, projects and operations, and for
+   `journal.replay(...)`. Each has had a named replacement for at least one minor version.
+2. Search for `project.get_items()`. Where a mapping was wanted, it is now `project.get_all()`.
+3. Check classes that declare values after their annotations. Those values now take effect, where
+   before every field started as None.
+
 ## [1.10.0] - 2026-08-31
 
 A pass over the whole framework after a break: bugs, then what was missing. One promise was not

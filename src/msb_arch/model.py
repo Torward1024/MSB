@@ -281,13 +281,11 @@ def member_called(name: str, owner: Any) -> Optional[Any]:
     if getattr(owner, "has_item", None) is not None:            # a container
         if owner.has_item(name):
             found = owner.get(name)
-    elif getattr(owner, "get_items", None) is not None:         # a project
+    elif getattr(owner, "get_item", None) is not None:          # a project
         try:
-            items = owner.get_items()
-        except Exception:                                       # noqa: BLE001 - not a mapping
-            items = None
-        if isinstance(items, dict) and name in items:
-            found = items[name]
+            found = owner.get_item(name)
+        except Exception:                                       # noqa: BLE001 - nothing of that name
+            found = None
     if isinstance(found, Serializable):
         return found
 

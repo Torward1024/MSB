@@ -32,6 +32,24 @@ type is refused at the door:
 Part(name="bad", price="cheap", material="steel")
 ```
 
+**A value written after the annotation is what the field starts as**, exactly as you would expect
+from a dataclass:
+
+```python
+class Order(BaseEntity):
+    quantity: int = 1
+    note: str = ""
+    lines: list = []
+    customer: str                      # nothing declared, so it starts as None
+
+order = Order(name="o-1")
+assert (order.quantity, order.note, order.customer) == (1, "", None)
+assert Order(name="o-2", quantity=5).quantity == 5      # what you pass wins
+```
+
+A declared list or dict belongs to the object rather than to the class — each `Order` gets its own
+empty `lines`, which is what the declaration means and not what a plain Python class body does.
+
 ## 2. Constrain the values, not only the types
 
 A `float` that must be positive is not a `float`. Say so on the annotation and the model enforces
@@ -51,8 +69,70 @@ except ConstraintError as error:
     assert "must be positive" in str(error)
 ```
 
-The rules that ship: `Positive`, `NonNegative`, `NonZero`, `NonEmpty`, `Range(low, high)` and
-`Predicate(test, description)` for anything else.
+The rules that ship, all used the same way:
+
+```python
+from msb_arch import NonNegative, NonZero, Predicate, Range
+
+class Measured(BaseEntity):
+    stock: Annotated[int, NonNegative()]                       # 0 or more
+    ratio: Annotated[float, NonZero()]                         # anything but zero
+    grade: Annotated[int, Range(1, 5)]                         # within bounds, inclusive
+    code: Annotated[str, Predicate(str.isupper, "must be upper case")]
+
+Measured(name="ok", stock=0, ratio=0.5, grade=3, code="ABC")
+
+try:
+    Measured(name="bad", stock=-1, ratio=0.5, grade=3, code="ABC")
+except ConstraintError as error:
+    assert "non-negative" in str(error)
+```
+
+`Predicate` takes any callable and the words to use when it says no, which covers the rules that
+have no name of their own.
+
+### A rule about the whole object
+
+A constraint guards one value. It cannot say that a discount is not larger than the price, or that
+a window ends after it starts — every value is fine on its own and the object is still wrong. That
+is what `@invariant` is for:
+
+```python
+from msb_arch import InvariantError, invariant
+
+class Discounted(BaseEntity):
+    price: float = 10.0
+    discount: float = 0.0
+
+    @invariant("a discount cannot exceed the price")
+    def _discount_fits(self) -> bool:
+        return self.discount <= self.price
+
+try:
+    Discounted(name="bad", price=5.0, discount=9.0)
+except InvariantError as error:
+    assert "cannot exceed" in str(error)
+```
+
+It is checked at the same three points a constraint is — when the object is built, when it is
+restored from a file, and after every write — and **a refused change is undone**:
+
+```python
+offer = Discounted(name="offer", price=10.0, discount=2.0)
+try:
+    offer.discount = 99.0
+except InvariantError:
+    pass
+assert offer.discount == 2.0            # the write was rolled back
+```
+
+Two fields that have to move together are written together, and the rule is checked once at the
+end:
+
+```python
+offer.set({"price": 100.0, "discount": 50.0})
+assert (offer.price, offer.discount) == (100.0, 50.0)
+```
 
 ## 3. Collect them
 
@@ -73,6 +153,38 @@ assert len(box) == 2
 assert box["bolt"].price == 4.5
 assert [part.name for part in box.get_by_value({"material": "brass"})] == ["nut"]
 ```
+
+### Entity, container, project — which one
+
+| You have | Use | It is addressed by |
+| --- | --- | --- |
+| A thing with fields | `BaseEntity` | its attributes |
+| Several of them, by name | `BaseContainer[T]` | its items |
+| The thing your application saves as a whole, and creates members of | `Project` | its items, plus the factory you write |
+
+A `Project` is a named collection with one method you fill in — `create_item` — which is what a
+menu, a wizard or a command line calls to add something. It reads and writes like everything else:
+
+```python
+from msb_arch import Project
+
+class Inventory(Project):
+    _item_type = Part
+
+    def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
+        self.add_item(Part(name=item_code, price=1.0, material="steel"))
+
+inventory = Inventory(name="warehouse")
+inventory.create_item("washer")
+inventory.add_item(Part(name="rivet", price=0.5, material="steel"))
+
+assert [item.name for item in inventory.get_items()] == ["washer", "rivet"]
+assert sorted(inventory.get_all()) == ["rivet", "washer"]
+assert Inventory.from_dict(inventory.to_dict()) == inventory
+```
+
+`get_items()` gives the items and `get_all()` gives them by name — the same pair a container has,
+so one function works on either.
 
 ## 4. Drive it
 
@@ -285,6 +397,32 @@ workshop.remove_interceptor(journal)          # or the replay records itself
 assert len(workshop.replay(journal)) == 2
 ```
 
+### Running the same session against another model
+
+An entry records **where** the object was, not just what it was called, so replaying resolves each
+step in whatever model the orchestrator is pointed at. Repeating a calculation for another project
+is two lines, and nothing is edited by hand:
+
+```python
+second_box = Parts(name="box")
+second_box.add(Part(name="hinge", price=2.0, material="brass"))
+workshop.set_managing_object(second_box)
+
+workshop.replay(journal)                      # the same requests, this model's objects
+```
+
+A session is plain data, so it also crosses a file or a process:
+
+```python
+import json
+
+written = json.dumps(journal.entries)         # save it anywhere
+workshop.replay(json.loads(written))          # and run it later, or elsewhere
+```
+
+`replay` takes a journal or the entries themselves. What it will not do is quietly reach back into
+the model the session was recorded from — that is what the recorded path prevents.
+
 Two cheaper questions about change, when a whole journal is more than you need:
 
 ```python
@@ -358,6 +496,59 @@ it than catch it:
 response = workshop.cost(widget, no_such_method=None, raise_on_error=False)
 assert response["status"] is False
 ```
+
+The ones you will actually meet, and what each means:
+
+```python
+from msb_arch import (AttributeNotFoundError, DispatchError, DuplicateNameError,
+                      NotFoundError, RegistrationError, TypeValidationError,
+                      UnknownAttributeError)
+
+box = Parts(name="box")
+box.add(Part(name="bolt", price=4.5, material="steel"))
+
+try:
+    box.add(Part(name="bolt", price=1.0, material="brass"))
+except DuplicateNameError:
+    pass                                     # that name is taken in this container
+
+try:
+    box.remove("absent")
+except NotFoundError:
+    pass                                     # no item of that name
+
+try:
+    Part(name="p", price="cheap", material="steel")
+except TypeValidationError:
+    pass                                     # the value is not what the annotation declares
+
+try:
+    Part(name="p", price=1.0, material="steel", colour="red")
+except UnknownAttributeError:
+    pass                                     # no such field on this class
+
+try:
+    workshop.cost(Part(name="loose", price=1.0, material="steel"), method="nothing_like_this")
+except (DispatchError, MSBError):
+    pass                                     # no handler answers for this operation and object
+```
+
+`RegistrationError` comes from registering two operations of one name, and
+`AttributeNotFoundError` from reading an attribute a class never declared — it is both a
+`NotFoundError` and an `AttributeError`, so old code catching the built-in still works.
+
+## What usually trips people up
+
+| What happens | Why, and what to do |
+| --- | --- |
+| A field is `None` although you expected a value | Only a value written after the annotation becomes the start: `quantity: int` starts as None, `quantity: int = 1` starts as 1 |
+| Two objects share a list | They do not, since 2.0: a declared `[]` is copied per object. If you assign a list yourself, that is your list and sharing is on you |
+| `find("bolt")` returns the wrong one | A name is unique inside a container, not across a model. Address it: `locate(manipulator.address(obj))`, and that is what a replayed session uses |
+| Writing to a cached `to_dict()` raises | That mapping **is** the cache. Take `dict(...)` of it when you need to change something |
+| A `Callable` field breaks `save` | A function is code, not data. Store the *name* of the operation and look it up |
+| `inspect` reports a failure but the response says success | Reading is not strict: it applies what it can and reports each outcome. `configure` stops at the first failure, since a half-applied configuration is not a result |
+| A handler is not found for your subclass | It is, since 1.10: resolution walks the base classes. Check the operation is registered and the type is in `base_classes` |
+| Nothing happens when a session is replayed | The requests probably failed to resolve: point the orchestrator at the model with `set_managing_object`, and check `outcome.failed` |
 
 ## Where to go next
 

@@ -109,6 +109,39 @@ raise_on_error=False)` is a `Response` too, with the same four properties.
 holds `{"get_value": {"status": True, "result": 19.0}}` there, and the facade unwraps it. Reading
 `response["result"]` gives the mapping; reading `response.value` gives 19.0.
 
+`raise_if_failed()` turns a response back into an exception where that is what you want, and
+returns the response itself so it can be chained:
+
+```python
+value = bench.inspect(reading, get_value=None, raise_on_error=False).raise_if_failed().value
+assert value == 19.0
+```
+
+A request naming several methods answers with `MethodResults` -- the outcome of each, by name --
+and `values_only()` reduces it to what each produced:
+
+```python
+several = bench.inspect(reading, get_value=None, get=["name"], raise_on_error=False)
+
+assert several.value["get_value"]["result"] == 19.0
+assert several.value.values_only() == {"get_value": 19.0, "get": {"name": "r1"}}
+```
+
+A failed method maps to None there, which is why the full mapping is what you read when the
+difference matters.
+
+`ResponseData` and `MethodOutcome` are `TypedDict`s of those two shapes, for the far side of a
+wire where the runtime class is gone and only the data arrives:
+
+```python
+from msb_arch import ResponseData
+
+def handle(payload: ResponseData) -> bool:
+    return payload["status"]
+
+assert handle(dict(bench.inspect(reading, get_value=None, raise_on_error=False))) is True
+```
+
 ```python
 failed = bench.configure(reading, no_such_method=None, raise_on_error=False)
 
@@ -124,8 +157,13 @@ Set one, and a request may leave `obj` out.
 ```python
 bench.set_managing_object(reading)
 assert bench.inspect(get_value=None) == 19.0
+assert bench.get_managing_object() is reading
 bench.set_managing_object(None)
 ```
+
+It is what `address`, `locate`, `find` and a replayed session are all relative to: the model this
+orchestrator is pointed at. `clear_base_classes()` is the matching reset for the types it was
+taught, when a process rebuilds its model from scratch.
 
 ### Registering operations
 
@@ -342,8 +380,34 @@ is followed through its annotation. What it cannot see is a key read under a nam
 run time, which makes it a lower bound in that one shape: use it to offer parameters, not to
 reject a request naming one it does not list.
 
-`order_handlers(operation, names)` sorts handlers so each follows what it needs;
-`requirements_of(operation, name)` is the transitive walk.
+Three questions follow from that, and each was written by hand in applications before it existed:
+
+Three questions follow from it, and every application orchestrating an operation was answering
+them by hand:
+
+```python
+# what has to run before this handler?
+assert bench.requirements_of("catalogue", "order") == []
+
+# put a set of handlers into a runnable order
+assert bench.order_handlers("catalogue", ["order", "model"]) == ["order", "model"]
+
+# I want these handlers -- give me them plus whatever they need, in order
+assert bench.plan_for("catalogue", ["order"]) == ["order"]
+```
+
+| | |
+| --- | --- |
+| `requirements_of(operation, name)` | Everything that handler needs, transitively |
+| `order_handlers(operation, names)` | Those handlers, each after what it needs |
+| `plan_for(operation, wanted)` | The join of the two: what to run so everything wanted can be |
+
+And what a request may name for a given type -- which is what a dialog builds its controls from:
+
+```python
+assert "get_value" in bench.get_methods_for_type(Reading)
+assert "set_value" in bench.get_methods_for_type(Reading)
+```
 
 The model graph comes from the annotations:
 
@@ -364,6 +428,34 @@ assert "def _audit_readings(" in source
 
 Containers get a working walk over their items; entities get a stub that raises.
 
+### The same answers without an orchestrator
+
+Everything above is derived by functions that take a class or an object, exported for tooling
+that has one in hand and no orchestrator -- a code generator, a documentation build, an editor
+plug-in:
+
+```python
+from msb_arch import derive, derive_model, dependents_of, holdings_of, label_for, path_of
+
+assert label_for("radio_source") == "Radio Source"          # what a menu shows
+
+model = derive_model([Reading, Readings])                    # the graph, once
+assert holdings_of(model, "Readings") == ["Reading"]        # what it reaches
+assert dependents_of(model, "Reading") == ["Readings"]      # what would feel a change
+
+series_of_two = Readings(name="series")
+series_of_two.add(Reading(name="r9", value=1.0))
+assert path_of(series_of_two.get("r9")) == ["series", "r9"]
+```
+
+| | Behind |
+| --- | --- |
+| `derive(super_class)` | `describe_operations()` |
+| `derive_model(roots)` | `describe_model()` |
+| `holdings_of(graph, name)`, `dependents_of(graph, name)` | the same graph, read one type at a time |
+| `label_for(name)` | the `label` in a catalogue entry |
+| `path_of(obj)` | `address()` |
+
 ## The asynchronous surface
 
 Every facade has an `a`-prefixed twin that runs the work on an executor the framework owns, so
@@ -379,8 +471,26 @@ async def main():
 assert asyncio.run(main()) == 12.0
 ```
 
-`aprocess_request`, `abatch` and `apipeline` are the same for the other three entry points. The
-whole synchronous pipeline runs on the executor, interceptors included, so one interceptor
+`aprocess_request`, `abatch` and `apipeline` are the same for the other three entry points:
+
+```python
+async def everything():
+    single = await bench.aprocess_request({
+        "operation": "inspect", "obj": reading, "attributes": {"get_value": None}})
+    batched = await bench.abatch([
+        {"operation": "inspect", "obj": reading, "attributes": {"get_value": None}},
+        {"operation": "configure", "obj": reading, "attributes": {"set_value": 12.0}},
+    ])
+    planned = await bench.apipeline({
+        "read": {"operation": "inspect", "obj": reading, "get_value": None},
+    })
+    return single.value, len(batched), planned.failed
+
+value, count, failed = asyncio.run(everything())
+assert value == 12.0 and count == 2 and failed == []
+```
+
+The whole synchronous pipeline runs on the executor, interceptors included, so one interceptor
 serves both paths -- and cannot await inside.
 
 The hop onto the executor costs about 170 µs. It pays for work longer than that.
@@ -461,6 +571,40 @@ assert bench.replay(journal).failed == []
 With `fingerprints=True` the journal hashes the object either side of each request, so it can
 report which requests actually changed something. It costs a serialisation each way.
 
+Read directly, a journal answers four questions, and a metrics interceptor two:
+
+```python
+from msb_arch import RequestJournal, RequestMetrics
+
+reader = Bench(base_classes=[Reading, Readings])
+audit, counter = RequestJournal(), RequestMetrics()
+reader.add_interceptor(audit)
+reader.add_interceptor(counter)
+
+reader.configure(reading, set_value=7.0)
+reader.inspect(reading, get_value=None)
+
+assert audit.failures() == []                       # only the requests that failed
+assert len(audit.touching("r1")) == 2               # what happened to one object
+assert [step["operation"] for step in audit.as_plan().values()] == ["configure", "inspect"]
+assert counter.snapshot()["configure"]["calls"] == 1
+
+audit.clear()                                       # start a fresh session
+counter.reset()
+assert audit.entries == []
+```
+
+| | |
+| --- | --- |
+| `entries` | Every entry, oldest first — plain data, safe to write to a file |
+| `failures()` | Only the requests that failed |
+| `touching(name)` | Every request that named one object. `manipulator.history(name)` is the same thing |
+| `changed()` | Only those that left the object different. Needs `fingerprints=True` |
+| `as_plan()` | The session as a pipeline plan, which is what `replay` runs |
+| `clear()` | Forget everything recorded so far |
+| `RequestMetrics.snapshot()` | Calls, total and average time, and failures per operation — a copy, not the live counters |
+| `RequestMetrics.reset()` | Zero them |
+
 ### Addressing an object
 
 A name is unique inside a container, not across a model, so the same name can sit in two places:
@@ -524,16 +668,92 @@ Where a path is not in the model being replayed against, replay falls back to th
 saw if it is still alive — the only address a manipulator managing nothing has — and to the name for
 journals written before 1.9.0.
 
+A session is plain data both ways, which is what makes it portable across a file or a process:
+
+```python
+import json
+
+written = json.dumps(audit.entries)
+replaying.replay(json.loads(written))          # a journal, or the entries themselves
+```
+
+`RequestJournal.from_entries(entries)` builds a journal from the same data when you want one. An
+empty session says so rather than looking like a replay that worked.
+
 Recording a path costs about 1.5 µs per request, on a walk up an ownership graph that is a handful
 of levels deep. Nothing pays it unless a journal is registered.
 
 One limit remains: replay assumes deterministic handlers. One that reads the clock, a file or a
 random seed cannot be reconstructed from its request.
 
+## Keeping an orchestrator tidy
+
+Rarely needed, and there when it is -- a long-lived process that rebuilds part of its model, or a
+test that wants a clean slate:
+
+| | |
+| --- | --- |
+| `get_interceptors()` | The chain as it stands, outermost first |
+| `clear_cache()` | Drop the resolution caches of every registered operation. Needed only when handlers are attached at run time by some other route |
+| `clear_ops()` | Forget every registered operation, built-ins included |
+| `clear_base_classes()` | Forget every type it was taught |
+| `close()` | Shut the executor down. Also done by leaving a `with` block |
+
+```python
+housekeeping = Bench(base_classes=[Reading])
+housekeeping.add_interceptor(RequestMetrics())
+
+assert len(housekeeping.get_interceptors()) == 1
+housekeeping.clear_cache()                       # resolution starts fresh
+housekeeping.clear_ops()
+assert housekeeping.get_supported_operations() == []
+housekeeping.close()
+```
+
+## The two protocols
+
+Neither is a base class to inherit: both are `runtime_checkable` shapes, so anything with the
+right method satisfies them.
+
+| | |
+| --- | --- |
+| `Interceptor` | `__call__(request, call_next)` -- what `add_interceptor` accepts |
+| `MethodProvider` | `get_methods_for_type(obj_type)` -- what a `Super` uses to learn what a type answers to |
+
+```python
+from msb_arch import Interceptor, MethodProvider
+
+def counting(request, call_next):
+    return call_next(request)
+
+class OwnProvider:
+    def get_methods_for_type(self, obj_type):
+        return {}
+
+assert isinstance(counting, Interceptor)
+assert isinstance(OwnProvider(), MethodProvider)
+```
+
 ## Errors
 
 A facade raises the kind of failure that happened, with the operation's own error types
 preserved across the response boundary.
+
+| Error | Raised when |
+| --- | --- |
+| `RequestError` | The request itself is wrong: nothing to run on, no path given, a `kind` that is not a type |
+| `DispatchError` | No handler resolves for this operation and this object |
+| `HandlerError` | A method failed, or a handler raised something of its own |
+| `NotFoundError` | A named item, file or journal is not there. Also a `KeyError` |
+| `AttributeNotFoundError` | An attribute read by name is not declared. A `NotFoundError` and an `AttributeError` |
+| `RegistrationError` | Two operations of one name, or one that would shadow a `Manipulator` method |
+| `TypeValidationError`, `ConstraintError`, `InvariantError` | The value, the rule on it, or the rule about the whole object |
+| `SerializationError` | Data that cannot be read, or a write to a cached mapping |
+| `ResolutionError` | An annotation or a type name that cannot be resolved -- including one two classes answer to |
+
+`OperationError` is the parent of the first three, `ValidationError` of the validation ones, and
+`MSBError` of everything. Each is also the built-in it replaces, so `except TypeError` keeps
+working while `except InvariantError` becomes possible.
 
 ```python
 from msb_arch import errors

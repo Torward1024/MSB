@@ -276,100 +276,133 @@ container.add(Item(name="item1", value=100))
 processor = NestedProcessor()
 result = processor.execute(container, {"item": "item1", "operation": "get_value"})
 ```
+## Project
 
-## Project Class
-
-`Project` is an abstract class for managing collections of `BaseEntity` objects within a structured project context. It provides high-level operations for project management.
-
-### A worked example
+A `Project` is the thing an application saves as a whole: a named collection of entities plus the
+one method you fill in -- `create_item` -- which is what a menu, a wizard or a command line calls
+to add a member. It is a `Serializable` like an entity and a container, so it compares, hashes its
+contents, versions its file and takes rules of its own.
 
 ```python
-from msb_arch.super import Project
-from msb_arch.base import BaseEntity
+from msb_arch import BaseEntity, Project, invariant
 
 class Task(BaseEntity):
-    name: str
-    priority: int
-    completed: bool = False
+    priority: int = 1
+    done: bool = False
 
-class TaskProject(Project):
-    _item_type = Task
+class Tasks(Project):
+    _item_type = Task                      # unannotated on purpose: it is not a field
 
-    def create_item(self, item_code="TASK", isactive=True):
-        """Create a new task with default values"""
-        return Task(name=f"{item_code}_{len(self._items) + 1}",
-                   priority=1, isactive=isactive)
+    def create_item(self, item_code: str = "TASK", isactive: bool = True) -> None:
+        self.add_item(Task(name=item_code, isactive=isactive))
 
-# Create project
-project = TaskProject(name="my_tasks")
+tasks = Tasks(name="sprint")
+tasks.create_item("design")
+tasks.add_item(Task(name="develop", priority=2))
 
-# Add items
-task1 = Task(name="design", priority=2)
-project.add_item(task1)
-project.create_item("develop")  # Creates and adds automatically
-
-# Query items
-high_priority = project.get_active_items()
-print(f"Active tasks: {len(high_priority)}")
-
-# Serialize project
-project_data = project.to_dict()
-print(project_data["name"])  # "my_tasks"
-print(len(project_data["items"]))  # 2
+assert [item.name for item in tasks.get_items()] == ["design", "develop"]
+assert sorted(tasks.get_all()) == ["design", "develop"]
+assert tasks.get_item("design").priority == 1
 ```
 
-### Project Operations
+`get_items()` returns the items and `get_all()` returns them by name -- the same pair a container
+has, so a function written for one works on the other.
 
-### Items
+### What it offers
+
+| Doing | Method |
+| --- | --- |
+| Add one you built | `add_item(item)` |
+| Build and add one | `create_item(code, isactive)` -- yours to write |
+| Reach one | `get_item(name)` |
+| Everything | `get_items()`, `get_all()` |
+| Only some | `get_active_items()`, `get_inactive_items()` |
+| Turn one on or off | `activate_item(name)`, `deactivate_item(name)`, `activate_all()`, `deactivate_all()` |
+| Remove | `remove_item(name)`, `remove_all()`, `drop_active()`, `drop_inactive()` |
+| Replace wholesale | `set_project(name, items)` |
+| Write and read | `to_dict()`, `from_dict(data)` |
+
+### It reads and writes like everything else
+
+An item comes back as the class its data named, so a project holding a subclass of its item type
+restores as that subclass:
 
 ```python
-# Add existing item
-project.add_item(Task(name="test", priority=1))
+class Urgent(Task):
+    deadline: str = "today"
 
-# Create and add new item
-new_task = project.create_item("review")
-project.add_item(new_task)
+tasks.add_item(Urgent(name="hotfix", priority=3))
+restored = Tasks.from_dict(tasks.to_dict())
 
-# Get items
-all_tasks = project.get_items()
-active_tasks = project.get_active_items()
-
-# Modify items
-project.activate_item("design")
-project.deactivate_item("test")
-
-# Remove items
-project.remove_item("test")
+assert type(restored.get_item("hotfix")) is Urgent
+assert restored.get_item("hotfix").deadline == "today"
+assert restored == tasks                       # equal, because it holds the same things
 ```
 
-### In bulk
+### A rule about the project
+
+What no rule about a single field can say -- checked when the project is built and after anything
+that changes what it holds, with the items put back when a rule refuses:
 
 ```python
-# Activate/deactivate all
-project.deactivate_all()
-project.activate_all()
+class Staffed(Tasks):
 
-# Clear project
-project.remove_all()
+    @invariant("a sprint needs at least one task")
+    def _not_empty(self) -> bool:
+        return len(self.get_items()) > 0
 
-# Drop by status
-project.drop_active()  # Remove all active items
-project.drop_inactive()  # Remove all inactive items
+sprint = Staffed(name="sprint", items={"design": Task(name="design")})
+try:
+    sprint.remove_all()
+except Exception as error:
+    assert "at least one task" in str(error)
+assert [item.name for item in sprint.get_items()] == ["design"]
 ```
 
-### Reading and writing the whole project
+### Moving items about, and replacing the lot
 
 ```python
-# Get project info
-info = project.get_project()
-print(info["name"])
-print(len(info["items"]))
+board = Tasks(name="board")
+board.add_item(Task(name="design"))
+board.add_item(Task(name="develop", priority=2))
 
-# Set project configuration. Note the asymmetry: `get_project` reports items as serialized
-# mappings, while `set_project` takes the entities themselves, so the two do not compose.
-project.set_project(name="updated_tasks",
-                    items={"task1": Task(name="task1", priority=1)})
-assert project.name == "updated_tasks"
+board.set_item("design", Task(name="design", priority=3))     # replace one under its name
+assert board.get_item("design").priority == 3
+
+board.deactivate_item("develop")
+board.drop_inactive()                                          # removes them, unlike deactivate
+assert [item.name for item in board.get_items()] == ["design"]
+
+board.remove_item("design")
+assert board.get_items() == []
+
+board.set_project(name="next sprint", items={"review": Task(name="review")})
+assert board.get_name() == "next sprint"
+assert sorted(board.get_all()) == ["review"]
+
+board.set_name("sprint 2")
+assert board.get_project()["name"] == "sprint 2"
+```
+
+`get_project()` reports the project as data -- what `to_dict` produces. Note the asymmetry with
+`set_project`, which takes the entities themselves rather than their mappings, so the two do not
+compose directly.
+
+### Through a request
+
+The built-in operations descend into a project by name, exactly as they do into a container:
+
+```python
+from msb_arch import Manipulator
+
+class Board(Manipulator):
+    pass
+
+board = Board(base_classes=[Task, Tasks])
+assert board.inspect(tasks, name="develop", get="priority") == 2
+
+board.configure(tasks, name="develop", set={"params": {"priority": 5}})
+assert tasks.get_item("develop").priority == 5
 ```
 
 ## Integration with Manipulator
@@ -382,9 +415,9 @@ from msb_arch.mega import Manipulator
 class Workbench(Manipulator):
     pass
 
-bench = Workbench(base_classes=[Task])
+bench = Workbench(base_classes=[Task, Tasks])
 bench.register_operation(Calculator(bench))
-bench.set_managing_object(TaskProject(name="tasks"))
+bench.set_managing_object(Tasks(name="tasks"))
 
 result = bench.process_request({
     "operation": "calculate",
@@ -393,6 +426,32 @@ result = bench.process_request({
 
 assert result["result"] == 30
 ```
+
+## Letting an operation go
+
+An operation and the orchestrator that owns it refer to each other, so neither is collected while
+the other lives. `release()` breaks that, for a process that builds orchestrators as it goes:
+
+```python
+from msb_arch import Manipulator, Super
+
+class Temporary(Super):
+    OPERATION = "temporary"
+
+    def _temporary(self, obj, attributes):
+        return "done"
+
+short_lived = Manipulator(base_classes=[Task])
+operation = Temporary(short_lived)
+short_lived.register_operation(operation)
+
+assert short_lived.temporary(Task(name="t")) == "done"
+operation.release()                     # done: it cannot serve another request
+```
+
+`clear_cache()` is the milder one: it forgets which handler resolved for which type, and the
+operation keeps working. Needed only when handlers are attached at run time by some route other
+than `register_method`.
 
 ## The response
 

@@ -14,6 +14,7 @@ from typing import (Dict,
 import json
 import hashlib
 import weakref
+from copy import copy
 from contextvars import ContextVar
 from threading import RLock
 from ..errors import (AttributeNotFoundError,
@@ -33,6 +34,11 @@ SCHEMA_FIELD = "schema_version"
 
 # Sentinel for cache lookups: None is a legitimate cached value, so it cannot mark a miss.
 _MISSING = object()
+
+#: Declared values that every instance needs its own copy of. One list shared by every object of
+#: a class is the oldest mistake in the language, and a field declared `= []` means "each starts
+#: empty" rather than "all share this one".
+_MUTABLE_STARTS = (list, dict, set, bytearray)
 
 # Guards the class registry. Declaring a class and reading the registry can happen on
 # different threads, and a WeakSet cannot be added to while it is being iterated.
@@ -339,10 +345,12 @@ class Serializable(ABC, metaclass=EntityMeta):
         super().__setattr__('isactive', isactive)
         
         settable, known = self.__class__._init_plan()
-        for field, expected_type, checker in settable:
+        for field, expected_type, checker, start, copied in settable:
             if field in _INTERNAL and field not in kwargs:
                 continue
-            value = kwargs.get(field, None)
+            value = kwargs.get(field, _MISSING)
+            if value is _MISSING:
+                value = copy(start) if copied else start
             # What `_validate_type` does, with the checker looked up once per class. None is
             # accepted for every field but `name`, which is checked above.
             if value is not None and (checker is None or not checker(value)):
@@ -356,9 +364,11 @@ class Serializable(ABC, metaclass=EntityMeta):
         if unknown_attrs:
             raise UnknownAttributeError(f"Unknown attributes provided for {self.__class__.__name__}: {set(unknown_attrs)}")
 
-        if self.__class__._invariant_cache:
+        if self.__class__._invariant_cache and not self.__dict__.get('_holding_invariants'):
             # Every field is set by now, which is the first point a rule about the whole object
-            # can be evaluated at all.
+            # can be evaluated at all. A subclass that still has state to build -- a `Project`
+            # creates its container after this returns -- holds the check back and runs it at the
+            # end of its own constructor.
             self.check_invariants()
 
         if self.__dict__.get('_use_cache'):
@@ -552,7 +562,7 @@ class Serializable(ABC, metaclass=EntityMeta):
         if cached is not None and cached[1] == len(cls._fields):
             return cached[0]
 
-        resolved = {field: expected for field, expected, _ in cls._init_plan()[0]}
+        resolved = {field: expected for field, expected, _, _, _ in cls._init_plan()[0]}
         type.__setattr__(cls, '_resolved_fields_cache', (resolved, len(cls._fields)))
         return resolved
 
@@ -604,8 +614,10 @@ class Serializable(ABC, metaclass=EntityMeta):
         """Return the fields to set when building one of these, and the names it accepts.
 
         Returns:
-            Tuple[Tuple[Tuple[str, Any], ...], frozenset]: Each field with its annotation
-                resolved, and the set of names a constructor may be given.
+            Tuple[Tuple[Tuple[str, Any, Any, Any, bool], ...], frozenset]: For each field, its
+                name, its resolved annotation, its compiled check, what it starts as, and
+                whether that has to be copied per instance. Plus the set of names a constructor
+                may be given.
 
         Notes:
             - Resolving an annotation gives the same answer for every instance, so it is done
@@ -614,6 +626,12 @@ class Serializable(ABC, metaclass=EntityMeta):
               `_fields` as it is constructed.
             - An unresolvable annotation is left as it is; `_validate_type` reports the failure
               against a real value, where it can say which one.
+            - **A value written after the annotation is what the field starts as.** `price:
+                float = 4.5` used to leave `price` at None on every instance while the class
+                itself kept 4.5, so the syntax meant nothing and the object was wrong in a way
+                that only showed up when something did arithmetic on it.
+            - A mutable start -- `tags: List[str] = []` -- is copied per instance, since one
+              list shared by every object of a class is never what was meant.
         """
         plan = cls.__dict__.get('_init_plan_cache')
         if plan is not None and plan[2] == len(cls._fields):
@@ -621,15 +639,41 @@ class Serializable(ABC, metaclass=EntityMeta):
 
         settable = []
         for field, hint in cls._fields.items():
+            start, copied = cls._starting_value(field)
             try:
                 resolved = cls._resolve_type(hint)
             except Exception:                       # reported later, against a real value
-                settable.append((field, hint, None))
+                settable.append((field, hint, None, start, copied))
                 continue
-            settable.append((field, resolved, cls._compiled_validator(hint)))
+            settable.append((field, resolved, cls._compiled_validator(hint), start, copied))
         built = (tuple(settable), frozenset(cls._fields), len(cls._fields))
         type.__setattr__(cls, '_init_plan_cache', built)
         return built[0], built[1]
+
+    @classmethod
+    def _starting_value(cls, field: str):
+        """Return what a field starts as, and whether that value has to be copied per instance.
+
+        Args:
+            field (str): The annotated field.
+
+        Returns:
+            Tuple[Any, bool]: The declared value and whether each instance needs its own copy.
+                `(None, False)` for a field declared with no value, which is what every field
+                used to get.
+
+        Notes:
+            - Read from the class, so a value declared on a base class serves its subclasses and
+              a subclass overrides it by declaring its own.
+            - Whatever is found is the starting value, and validation judges it like any other:
+              a class that annotates a field and then defines something else of that name is
+              told so against the value, rather than being quietly given None.
+        """
+        for klass in cls.__mro__:
+            if field in vars(klass):
+                declared = vars(klass)[field]
+                return declared, isinstance(declared, _MUTABLE_STARTS)
+        return None, False
 
     @classmethod
     def _written_fields(cls) -> tuple:

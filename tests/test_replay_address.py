@@ -318,3 +318,60 @@ def test_address_and_locate_are_inverses_on_a_project():
     for side in ("press", "lathe"):
         target = works.get_item(side).bolts.get("bolt")
         assert workshop.locate(workshop.address(target)) is target, side
+
+
+# --- a session is data, and data becomes a session again -----------------------------------------
+
+def test_a_session_written_to_json_can_be_replayed_from_it():
+    """The loop that was open: `entries` produced data, and nothing turned data back into a session.
+
+    `entries` hands back a copy, so filling it by hand did nothing, and replaying the still-empty
+    journal reported success having done nothing at all.
+    """
+    import json
+
+    store = _store()
+    journal = _recorded(store)
+    saved = json.dumps(journal.entries)
+    del store
+    gc.collect()
+
+    fresh = _store()
+    replaying = Workshop(base_classes=[Part, Parts, Shelf], managing_object=fresh)
+
+    outcome = replaying.replay(json.loads(saved))
+
+    assert outcome.failed == []
+    assert fresh.get("right").get("bolt").price == 42.0
+    assert fresh.get("left").get("bolt").price == 1.0
+
+
+def test_replay_takes_a_journal_rebuilt_from_entries():
+    import json
+
+    store = _store()
+    journal = _recorded(store)
+    rebuilt = RequestJournal.from_entries(json.loads(json.dumps(journal.entries)))
+
+    assert [entry["operation"] for entry in rebuilt.entries] == \
+           [entry["operation"] for entry in journal.entries]
+
+    fresh = _store()
+    replaying = Workshop(base_classes=[Part, Parts, Shelf], managing_object=fresh)
+    replaying.replay(rebuilt)
+
+    assert fresh.get("right").get("bolt").price == 42.0
+
+
+def test_replaying_an_empty_session_says_so(caplog):
+    """It used to look exactly like a successful replay."""
+    import logging
+
+    fresh = _store()
+    replaying = Workshop(base_classes=[Part, Parts, Shelf], managing_object=fresh)
+
+    with caplog.at_level(logging.WARNING):
+        outcome = replaying.replay([])
+
+    assert outcome.failed == []
+    assert "no requests in it" in caplog.text

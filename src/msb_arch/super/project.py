@@ -3,21 +3,29 @@ from abc import ABC, abstractmethod
 from threading import RLock
 from typing import Dict, Any, Optional, Type, List, TypeVar
 from ..utils.validation import check_non_empty_string
-from ..errors import DuplicateNameError, SerializationError, TypeValidationError
+from ..errors import DuplicateNameError, InvariantError, SerializationError, TypeValidationError
 from ..utils.logging_setup import logger
 from ..base.basecontainer import BaseContainer
 from ..base.baseentity import BaseEntity
 from ..base.serializable import Serializable
 T = TypeVar('T', bound=Serializable)
 
-class Project(ABC):
-    """Abstract super-class for managing collections of BaseEntity items within a project using BaseContainer.
+class Project(Serializable, ABC):
+    """A named collection of entities with a factory for creating them.
 
     Attributes:
-        _name (str): The name of the project, must be a non-empty string.
         _items (BaseContainer[BaseEntity]): Container of BaseEntity items indexed by their names.
         _item_type (Type[Serializable]): The type of items stored in the container, defaults to
             BaseEntity. A project can hold containers too, since both share Serializable.
+
+    Notes:
+        - **A `Serializable`, like an entity and a container.** It was an `ABC` of its own for a
+          while, and everything the base layer gained went past it: two equal projects compared
+          unequal, `fingerprint` and `revision` were missing, and a rule declared with
+          `@invariant` was never checked. Its own surface is unchanged -- `add_item`, `get_item`,
+          `create_item` -- and so is the shape of a saved file.
+        - It **holds** a container rather than being one, because a project is defined by its
+          factory: `create_item` is what an application fills in.
     """
     name: str
 
@@ -28,8 +36,11 @@ class Project(ABC):
     # Written only once it is no longer 1, so nothing changes until it has to.
     SCHEMA_VERSION = 1
 
-    _item_type: Type[Serializable] = BaseEntity
-    _container_types: Dict[Type[Serializable], Type[BaseContainer]] = {}
+    # Deliberately unannotated, like `DISCRIMINATORS` on `Serializable`: an annotation here
+    # would make each one of `_fields`, and the constructor would then set it to None on every
+    # instance -- which turned `isinstance(item, self._item_type)` into a TypeError.
+    _item_type = BaseEntity
+    _container_types = {}
     # Guards the cache above: two threads creating the first project of a type would
     # otherwise each build a class, and the projects would hold containers of unrelated
     # classes that compare unequal.
@@ -46,8 +57,18 @@ class Project(ABC):
             ValueError: If the name is not a non-empty string.
         """
         check_non_empty_string(name, "Project name")
-        self.name = name
-        self._items = self._create_container(items=items, name=f"{name}_items")
+        # A rule about a project is usually about what it holds, and what it holds does not
+        # exist until three lines further down. Held back over the base constructor and run once
+        # the project is whole.
+        self.__dict__['_holding_invariants'] = True
+        super().__init__(name=name)
+        # Set past `__setattr__`: `_items` is framework state, and the container adopts the
+        # project as its owner so that an item's address runs through the project.
+        object.__setattr__(self, '_items', self._create_container(items=items, name=f"{name}_items"))
+        self._items._adopt(self)
+        self.__dict__.pop('_holding_invariants', None)
+        if self.__class__._invariant_cache:
+            self.check_invariants()
         logger.debug("Initialized project '%s' with %s items", name, len(self._items))
 
     @classmethod
@@ -77,6 +98,30 @@ class Project(ABC):
                 logger.debug("Created container type for items of type '%s'", item_type.__name__)
         return container_type(items=items, name=name)
 
+    def _rules_hold(self, restore: Optional[Dict[str, Any]] = None) -> None:
+        """Check any rule about the project, and put its items back when one refuses.
+
+        Args:
+            restore (Optional[Dict[str, Any]]): The items as they were, or None when this class
+                declares no rule and taking a snapshot would be paid for nothing.
+
+        Notes:
+            - A project's rules are usually about what it holds -- at least one source, no two
+              stations at one site -- so every method that changes the contents ends here.
+        """
+        if not self.__class__._invariant_cache:
+            return
+        try:
+            self.check_invariants()
+        except InvariantError:
+            if restore is not None:
+                self._items.set_items(restore)
+            raise
+
+    def _guarded(self) -> Optional[Dict[str, Any]]:
+        """Return what to put back if a rule refuses the change, or None when none can."""
+        return dict(self._items.get_all()) if self.__class__._invariant_cache else None
+
     def add_item(self, item: BaseEntity) -> None:
         """Add a BaseEntity item to the project's container.
 
@@ -91,8 +136,10 @@ class Project(ABC):
             raise TypeValidationError(f"Item must be of type {self._item_type.__name__} for project '{self.name}', got {type(item).__name__}")
         if self._items.has_item(item.name):
             raise DuplicateNameError(f"Item with name '{item.name}' already exists in project '{self.name}'")
+        guarded = self._guarded()
         self._items.add(item)
         logger.debug("Added item '%s' to project '%s'", item.name, self.name)
+        self._rules_hold(guarded)
 
     @abstractmethod
     def create_item(self, item_code: str = "ITEM_DEFAULT", isactive: bool = True) -> None:
@@ -111,8 +158,10 @@ class Project(ABC):
             name (str): The name to assign to the item.
             item (BaseEntity): The BaseEntity item to set in the project.
         """
+        guarded = self._guarded()
         self._items.set_item(name, item)
         logger.info("Set item '%s' in project '%s'", item.name, self.name)
+        self._rules_hold(guarded)
 
     def remove_item(self, name: str) -> None:
         """Remove an item from the project by its name.
@@ -120,8 +169,10 @@ class Project(ABC):
         Args:
             name (str): The name of the item to remove from the project.
         """
+        guarded = self._guarded()
         self._items.remove(name)
         logger.info("Removed item '%s' from project '%s'", name, self.name)
+        self._rules_hold(guarded)
     
     def get_active_items(self) -> List[T]:
         """Retrieve all active items in the container.
@@ -152,11 +203,33 @@ class Project(ABC):
         logger.debug("Retrieved item '%s' from project '%s'", name, self.name)
         return item
 
-    def get_items(self) -> Dict[str, BaseEntity]:
-        """Retrieve all items in the project as a dictionary.
+    def get_items(self) -> List[BaseEntity]:
+        """Return every item the project holds.
 
         Returns:
-            Dict[str, BaseEntity]: A dictionary of all BaseEntity items in the project, keyed by their names.
+            List[BaseEntity]: The items, in the order they were added.
+
+        Notes:
+            - **The same thing `BaseContainer.get_items` returns**, which it did not until 2.0:
+              a project answered with a mapping and a container with a list, so one handler
+              written for both walked objects in one case and names in the other, silently. Ask
+              `get_all()` for the mapping, exactly as on a container.
+
+        Examples:
+            >>> [item.name for item in project.get_items()]
+            ['s1', 's2']
+        """
+        return self._items.get_items()
+
+    def get_all(self) -> Dict[str, BaseEntity]:
+        """Return every item the project holds, keyed by name.
+
+        Returns:
+            Dict[str, BaseEntity]: The items by name -- what `get_items` used to return.
+
+        Examples:
+            >>> sorted(project.get_all())
+            ['s1', 's2']
         """
         return self._items.get_all()
 
@@ -198,9 +271,11 @@ class Project(ABC):
         old_name = self.name
         old_count = len(self._items)
         self.name = name
+        guarded = self._guarded()
         self._items.set_items(items)
         self._items.name = f"{name}_items"
         logger.info("Project updated: name changed from '%s' to '%s', items count changed from %s to %s", old_name, name, old_count, len(self._items))
+        self._rules_hold(guarded)
 
     def get_project(self) -> Dict[str, Any]:
         """Get the entire project configuration as a dictionary.
@@ -222,23 +297,12 @@ class Project(ABC):
         Examples:
             >>> project.remove_all()
             >>> project.get_items()
-            {}
+            []
         """
+        guarded = self._guarded()
         self._items.remove_all()
         logger.debug("Removed all items from project '%s'", self.name)
-
-    def clear(self) -> None:
-        """Deprecated. Use `remove_all()`.
-
-        Notes:
-            - Deprecated in 1.9.0, removed in 2.0. It also used to log and swallow anything that
-              went wrong, which hid a failure to empty the project; `remove_all` raises.
-        """
-        import warnings
-
-        warnings.warn("Project.clear is deprecated; use remove_all()",
-                      DeprecationWarning, stacklevel=2)
-        self.remove_all()
+        self._rules_hold(guarded)
 
     def activate_item(self, name: str) -> None:
         """Activate an item in the project's container by its name.
@@ -286,7 +350,10 @@ class Project(ABC):
         Raises:
             ValueError: If there are no active items.
         """
-        return self._items.drop_active()
+        guarded = self._guarded()
+        dropped = self._items.drop_active()
+        self._rules_hold(guarded)
+        return dropped
 
     def drop_inactive(self) -> None:
         """Remove all inactive items from the container.
@@ -294,7 +361,10 @@ class Project(ABC):
         Raises:
             ValueError: If there are no inactive items.
         """
-        return self._items.drop_inactive()
+        guarded = self._guarded()
+        dropped = self._items.drop_inactive()
+        self._rules_hold(guarded)
+        return dropped
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the project to a dictionary for serialization.
@@ -310,34 +380,32 @@ class Project(ABC):
         return data
 
     @classmethod
-    def migrate(cls, data: Dict[str, Any], from_version: int) -> Dict[str, Any]:
-        """Bring a project saved under an older `SCHEMA_VERSION` up to the current shape.
+    def _item_class(cls, data: Any) -> Type[Serializable]:
+        """Return the class to rebuild one item as.
 
         Args:
-            data (Dict[str, Any]): The saved project, with its original field names.
-            from_version (int): The version it was written under.
+            data (Any): The item's serialized mapping, which carries the name of the class that
+                wrote it.
 
         Returns:
-            Dict[str, Any]: The project in the shape this version expects.
+            Type[Serializable]: The class that data names, when it is the project's item type or
+                a subclass of it; the declared `_item_type` when the data names nothing.
 
         Raises:
-            SerializationError: By default, naming both versions. Raising `SCHEMA_VERSION`
-                without overriding this declares that older files cannot be read, and says so
-                at the boundary rather than failing later on a missing field.
+            SerializationError: If the data names a type this project does not hold.
         """
-        raise SerializationError(
-            f"{cls.__name__} cannot read a project written under schema version "
-            f"{from_version}; it is now version {cls.SCHEMA_VERSION}. Override `migrate` to "
-            f"bring it forward.")
+        declared = cls._item_type
+        named = data.get("type") if isinstance(data, dict) else None
+        if not named:
+            return declared
 
-    @classmethod
-    def _migrated(cls, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply `migrate` if the saved version is behind, and drop the version key."""
-        written_under = data.pop("schema_version", 1)
-        if written_under != cls.SCHEMA_VERSION:
-            data = cls.migrate(data, written_under)
-            data.pop("schema_version", None)
-        return data
+        resolved = declared._resolve_entity_type(named, declared)
+        if resolved is None:
+            return declared
+        if not issubclass(resolved, declared):
+            raise SerializationError(
+                f"'{named}' is not a {declared.__name__}, which is what {cls.__name__} holds")
+        return resolved
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Project':
@@ -356,14 +424,20 @@ class Project(ABC):
             - This used to be abstract while carrying a full implementation, which forced
               every subclass to write a stub it could not meaningfully fill. Subclasses that
               already override it are unaffected; the rest now inherit a working method.
+            - **An item is rebuilt as the class its data names**, so a project holding a
+              subclass of its item type reads back as that subclass -- which is what a container
+              has always done. Restoring everything as `_item_type` meant a project with any
+              hierarchy in it could be written and not read: the extra fields of the subclass
+              were rejected as unknown attributes, and the default `_item_type` of `BaseEntity`
+              rejected every field there was.
         """
-        data = cls._migrated(dict(data))
+        data = cls._apply_migration(dict(data))
         try:
             check_non_empty_string(data["name"], "Project name")
             items = {}
             for k, v in data.get("items", {}).items():
                 try:
-                    items[k] = cls._item_type.from_dict(v)
+                    items[k] = cls._item_class(v).from_dict(v)
                 except (TypeError, ValueError) as e:
                     logger.error("Failed to deserialize item '%s' for project: %s", k, str(e))
                     raise SerializationError(f"Invalid data for item '{k}': {str(e)}") from e
@@ -371,6 +445,28 @@ class Project(ABC):
         except (KeyError, TypeError, ValueError) as e:
             logger.error("Failed to deserialize Project from dict with name '%s': %s", data.get('name', 'unknown'), str(e))
             raise SerializationError(f"Invalid project data: {str(e)}") from e
+
+    def __eq__(self, other: Any) -> bool:
+        """Two projects are equal when they are the same kind, named the same and hold the same.
+
+        Args:
+            other (Any): The object to compare with.
+
+        Returns:
+            bool: True when both are of this class, share a name and their items compare equal.
+
+        Notes:
+            - The items are compared by the container, which already knows how. Before this a
+              project inherited identity comparison, so `load(...) == project` was False for a
+              file just written from it.
+        """
+        if not isinstance(other, self.__class__):
+            return NotImplemented if not isinstance(self, other.__class__) else False
+        return self.name == other.name and self._items == other._items
+
+    def __hash__(self) -> int:
+        """Projects are mutable; hashing one by identity keeps it usable as a dict key."""
+        return object.__hash__(self)
 
     def __repr__(self) -> str:
         """Return a string representation of the Project."""

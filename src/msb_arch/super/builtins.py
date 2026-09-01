@@ -99,11 +99,14 @@ class Inspector(Super):
             Optional[Callable]: A callable taking a name and returning the member.
 
         Notes:
-            - The hook for descent, which is not uniform: a container answers `get(name)`, a
-              `Project` answers something else. Override it and both built-ins descend into
-              your type correctly.
+            - The hook for descent, which is not uniform: a container answers `get(name)` and a
+              `Project` answers `get_item(name)`. Both are covered; override this for a
+              collection of your own and both built-ins descend into it correctly.
+            - Asked of the object rather than of a type, so nothing here has to import `Project`.
         """
-        return obj.get if isinstance(obj, BaseContainer) else None
+        if isinstance(obj, BaseContainer):
+            return obj.get
+        return getattr(obj, "get_item", None)
 
     def _inspect(self, obj: Any, attributes: Dict[str, Any]) -> Any:
         """Apply every method the request names to any object.
@@ -144,7 +147,9 @@ class Configurator(Super):
 
         See `Inspector._nested_getter`; the two share the hook and the reason for it.
         """
-        return obj.get if isinstance(obj, BaseContainer) else None
+        if isinstance(obj, BaseContainer):
+            return obj.get
+        return getattr(obj, "get_item", None)
 
     def _configure(self, obj: Any, attributes: Dict[str, Any]) -> Any:
         """Apply every method the request names to any object, stopping at the first failure.

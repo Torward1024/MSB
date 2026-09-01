@@ -200,17 +200,6 @@ class BaseEntity(Serializable):
                 super().__setattr__(key, None)
         self._invalidate_cache()
 
-    def clear(self) -> None:
-        """Deprecated. Use `reset_attributes()`.
-
-        Notes:
-            - Deprecated in 1.9.0, removed in 2.0. Behaves exactly as it did.
-        """
-        import warnings
-
-        warnings.warn("BaseEntity.clear is deprecated; use reset_attributes()",
-                      DeprecationWarning, stacklevel=2)
-        self.reset_attributes()
     def __getitem__(self, key: str) -> Any:
         """Access an attribute using dictionary-like syntax.
 

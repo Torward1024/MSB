@@ -527,18 +527,6 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         self._composition_changed(guarded_items)
         logger.debug("Removed all items from %s", self.__class__.__name__)
 
-    def clear(self) -> None:
-        """Deprecated. Use `remove_all()`.
-
-        Notes:
-            - Deprecated in 1.9.0, removed in 2.0. Behaves exactly as it did.
-        """
-        import warnings
-
-        warnings.warn("BaseContainer.clear is deprecated; use remove_all()",
-                      DeprecationWarning, stacklevel=2)
-        self.remove_all()
-
     def clone(self, deep: bool = True) -> 'BaseContainer[T]':
         """Create a deep copy of the container.
 

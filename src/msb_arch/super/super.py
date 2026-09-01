@@ -253,7 +253,11 @@ class Super(ABC):
               result protocol and is never copied into `MethodResults`.
         """
         if method_name not in valid_methods:
-            logger.error("Invalid method '%s' for '%s'", method_name, type(obj).__name__)
+            # At DEBUG, not ERROR: the failure is already in the response, and a non-strict
+            # operation naming methods that only some types answer to is how a caller discovers
+            # what a type offers. Logging it as an error made a working application print pages
+            # of them -- and cost 13 us per call to build the record's stack frame.
+            logger.debug("No method '%s' on '%s'", method_name, type(obj).__name__)
             return self._build_response(obj, False, method_name, None, f"Method '{method_name}' not found")
 
         method = valid_methods[method_name]
@@ -543,18 +547,6 @@ class Super(ABC):
         self._methods.clear()
         self.clear_cache()
         logger.debug("Released the references held by %s", self.__class__.__name__)
-
-    def clear(self) -> None:
-        """Deprecated. Use `release()`.
-
-        Notes:
-            - Deprecated in 1.9.0, removed in 2.0. Behaves exactly as it did.
-        """
-        import warnings
-
-        warnings.warn("Super.clear is deprecated; use release()",
-                      DeprecationWarning, stacklevel=2)
-        self.release()
 
     def __repr__(self) -> str:
         """Return a string representation of the Super instance.

@@ -250,6 +250,37 @@ class RequestJournal:
         """Every recorded request, oldest first."""
         return list(self._entries)
 
+    @classmethod
+    def from_entries(cls, entries: List[Dict[str, Any]], **options: Any) -> "RequestJournal":
+        """Return a journal holding a session that was recorded earlier.
+
+        Args:
+            entries (List[Dict[str, Any]]): Entries as `entries` produced them -- straight from a
+                file, a database row or a wire.
+            **options: Passed to the constructor, so `limit` and `fingerprints` work as usual.
+
+        Returns:
+            RequestJournal: A journal that replays exactly those requests.
+
+        Notes:
+            - The other half of `entries`. A session was already plain data, but nothing turned
+              that data back into a session, so `json.dump(journal.entries)` could be written and
+              never read: filling `entries` by hand did nothing, since it hands back a copy, and
+              replaying the empty journal reported success having done nothing at all.
+            - The objects the journal saw are **not** restored, and cannot be: they belonged to
+              the process that recorded them. Each step is resolved by its recorded path in the
+              model being replayed against, which is what the path is for.
+
+        Examples:
+            >>> saved = json.dumps(journal.entries)
+            >>> manipulator.replay(RequestJournal.from_entries(json.loads(saved)))
+        """
+        journal = cls(**options)
+        for entry in entries:
+            journal._entries.append(dict(entry))
+            journal._referents.append(None)
+        return journal
+
     def failures(self) -> List[Dict[str, Any]]:
         """Only the entries whose request did not succeed."""
         return [entry for entry in self._entries if not entry.get("status")]
@@ -321,26 +352,6 @@ class RequestJournal:
             plan[name] = step
             previous = name
         return plan
-
-    def replay(self, manipulator, skip_failures: bool = True) -> List[Any]:
-        """Deprecated. Use `manipulator.replay(journal)`.
-
-        Args:
-            manipulator (Manipulator): The orchestrator to replay against.
-            skip_failures (bool): Leave out requests that failed the first time.
-
-        Returns:
-            List[Any]: The responses, in order.
-
-        Notes:
-            - Deprecated in 1.3.0, removed in 2.0. The orchestrator runs requests, so replaying
-              belongs on it rather than on a record of them.
-        """
-        import warnings
-
-        warnings.warn("RequestJournal.replay is deprecated; use manipulator.replay(journal)",
-                      DeprecationWarning, stacklevel=2)
-        return list(manipulator.replay(self, skip_failures=skip_failures).values())
 
     def clear(self) -> None:
         """Discard every entry."""

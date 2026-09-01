@@ -110,10 +110,6 @@ Check if attribute exists.
 Set every public attribute to None, releasing what it referred to. `name`, `isactive` and
 underscore-prefixed fields are kept. The object stays usable.
 
-##### `clear() -> None`
-
-Deprecated in 1.9.0, goes in 2.0 — use `reset_attributes()`.
-
 ##### `__getitem__(key: str) -> Any`
 
 Access an attribute using dictionary-like syntax.
@@ -239,10 +235,6 @@ Set or replace all items in the container.
 
 Remove every item. The container keeps its name, type and settings.
 
-##### `clear() -> None`
-
-Deprecated in 1.9.0, goes in 2.0 — use `remove_all()`.
-
 ##### `clone(deep: bool = True) -> BaseContainer[T]`
 
 Create container copy.
@@ -361,10 +353,6 @@ Clear the method cache.
 Drop the orchestrator, the method registry and the cache, breaking the cycle between an operation
 and its owner. A released operation cannot serve another request; `clear_cache()` is the narrower
 one that only forgets resolved handlers.
-
-##### `clear() -> None`
-
-Deprecated in 1.9.0, goes in 2.0 — use `release()`.
 
 ### The built-in operations
 
@@ -490,11 +478,14 @@ Get item by name.
 
 **Returns:** Item instance
 
-##### `get_items() -> Dict[str, BaseEntity]`
+##### `get_items() -> List[BaseEntity]`
 
-Get all items.
+Every item the project holds, in the order they were added — the same thing
+`BaseContainer.get_items` returns.
 
-**Returns:** Items dictionary
+##### `get_all() -> Dict[str, BaseEntity]`
+
+The same items keyed by name, as on a container.
 
 ##### `get_active_items() -> List[T]`
 
@@ -551,9 +542,14 @@ Create project from dictionary.
 
 Remove every item from the project's container.
 
-##### `clear() -> None`
+### Project: the rest of the surface
 
-Deprecated in 1.9.0, goes in 2.0 — use `remove_all()`.
+| | |
+| --- | --- |
+| `get_project() -> Dict[str, Any]` | The project as data: its name and its items, serialized. What `to_dict` produces |
+| `set_project(name, items) -> None` | Replace both at once. Note the asymmetry: `get_project` reports items as mappings, `set_project` takes the entities |
+| `set_name(name) -> None` | Rename it. The container it keeps is renamed with it |
+| `get_name() -> str` | Its name |
 
 ## Mega module
 
@@ -753,7 +749,7 @@ they are held, so each segment is looked for all three ways:
 | Shape | Reached by |
 | --- | --- |
 | An item of a container | `get(name)` |
-| An item of a project | `get_items()[name]`, since a `Project` calls it `get_item` |
+| An item of a project | `get_item(name)`, which is what a `Project` calls it |
 | A container in a field of an entity | the field whose value is named `name` — `bolts: Bolts` holds one called `bolts_of_press`, and the path carries that |
 
 The **top** of a path is optional: the managed object's own name, or the container a project
@@ -784,7 +780,8 @@ What `RequestMetrics.snapshot()` reports, or None if none is registered.
 
 ##### `replay(journal=None, skip_failures=True, concurrent=False) -> PipelineRun`
 
-Run a recorded session again, as a pipeline.
+Run a recorded session again, as a pipeline. Takes a `RequestJournal`, or the entries one produced
+— read back from a file, a database or a wire — or nothing, meaning the journal registered here.
 
 Each step is resolved **in the model this orchestrator manages**, by the path the entry recorded;
 then, when nothing is there, by the object the journal saw if it is still alive — which is the only
@@ -885,9 +882,11 @@ An entry is plain data, so a session can be written to a file:
 | `entries` | Every entry, in order |
 | `failures()` | Only the ones that failed |
 | `history(name)` | Every request that named a given object |
+| `touching(name)` | The same thing under the name the journal calls it; `history` is the orchestrator's word for it |
 | `changed()` | Only the ones that left the object different. Needs `fingerprints=True` |
 | `as_plan(skip_failures=True, resolve=None)` | The session as a pipeline plan |
 | `clear()` | Discard every entry |
+| `from_entries(entries, **options)` | Build a journal from data read back — a file, a database row, a wire. The classmethod that closes the loop with `entries` |
 
 Three things worth knowing:
 
@@ -1029,6 +1028,43 @@ Update logging configuration to clear the log file.
 **Parameters:**
 - `log_file` (str): Path to the log file
 - `clear_log` (bool): Whether to clear the log file
+
+## Derivation helpers
+
+Read out of the code rather than written down anywhere, and reached through the orchestrator in
+normal use. Exported for tooling that has a class or an object in hand and no orchestrator.
+
+| | |
+| --- | --- |
+| `derive(super_class)` | What each handler of a `Super` needs, calls and accepts. Behind `manipulator.describe_operations()` |
+| `order(super_class, operation)` | Its handlers in an order where nothing runs before what it needs |
+| `label_for(name)` | A human label for a type or handler name: `"radio_source"` → `"Radio Source"`. What a menu shows |
+| `derive_model(roots)` | The type graph: what holds what, and what is held by what. Behind `manipulator.describe_model()` |
+| `holdings_of(type_name, roots)` | What one type holds, from that graph |
+| `dependents_of(type_name, roots)` | Every type that would feel a change to this one. Behind `manipulator.dependents_of()` |
+| `path_of(obj)` | Where a live object sits in the model, as a path. Behind `manipulator.address()` |
+| `named_type(name)` | The modelled class of that name, refusing to guess between two |
+
+```python
+from msb_arch import derive_model, label_for, path_of
+
+assert label_for("radio_source") == "Radio Source"
+assert "Parts" in derive_model([Part, Parts])
+assert path_of(box.get("bolt")) == ["box", "bolt"]
+```
+
+## cache_statistics
+
+```python
+from msb_arch import cache_statistics
+
+counts = cache_statistics()
+assert set(counts) == {"objects", "populated", "entries"}
+```
+
+What the serialization cache holds right now: how many live objects have caching enabled, how many
+currently hold a mapping, and how many keys those mappings have in total. Computed on demand from
+the registry invalidation already keeps, so nothing is counted while the framework runs.
 
 ## Response formats
 

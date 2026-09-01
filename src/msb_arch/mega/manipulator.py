@@ -683,8 +683,9 @@ class Manipulator(ABC):
         """Run a recorded session again, against whatever this orchestrator manages.
 
         Args:
-            journal (Optional[RequestJournal]): The session to replay. Defaults to the one
-                registered here.
+            journal (Optional[Any]): The session to replay: a `RequestJournal`, or the entries
+                one produced -- read back from a file, a database or a wire. Defaults to the
+                journal registered here.
             skip_failures (bool): Leave out requests that failed the first time.
             concurrent (bool): Ignored for a session, which is ordered by construction. Present
                 so the signature matches `pipeline`.
@@ -698,13 +699,31 @@ class Manipulator(ABC):
         Notes:
             - A session is a plan whose steps have no edges except order, so this is `pipeline`
               with the plan the journal produced.
+            - **Each step runs on the object at its recorded path, in the model this orchestrator
+              manages.** Point the orchestrator at another project and replay: the same requests
+              are made of that project's objects. Nothing is edited by hand.
+            - Taking the entries directly is what makes a session portable across processes:
+              `json.dump(journal.entries)` on one side, `manipulator.replay(json.load(...))` on
+              the other.
             - Replaying against the orchestrator holding the journal records the replay. Remove
               the journal first, or replay against another orchestrator.
             - Replay assumes deterministic handlers.
+
+        Examples:
+            >>> outcome = core.replay(journal)                  # the session it just recorded
+            >>> core.set_managing_object(another_project)
+            >>> outcome = core.replay(json.load(open("session.json")))
         """
+        if isinstance(journal, (list, tuple)):
+            from ..interceptors import RequestJournal
+
+            journal = RequestJournal.from_entries(list(journal))
         journal = journal if journal is not None else self.journal()
         if journal is None:
             raise NotFoundError("No RequestJournal was given and none is registered")
+
+        if not journal.entries:
+            logger.warning("Replaying a session with no requests in it")
 
         from ..pipeline import PipelineRun
 

@@ -418,3 +418,25 @@ def test_a_type_with_no_handler_anywhere_still_fails_to_dispatch():
 
     with pytest.raises(errors.DispatchError):
         orchestrator.narrow(Loose(name="l"))
+
+
+def test_a_method_a_type_does_not_have_is_not_an_error_in_the_log(caplog):
+    """It is already reported in the result, and asking is how a caller discovers what a type has.
+
+    Logging it at ERROR made an application that reads several methods across mixed types print
+    pages of them, and cost 13 us per call to build the record's stack frame.
+    """
+    import logging
+
+    class Reader(Super):
+        OPERATION = "read"
+
+    orchestrator = Bench(base_classes=[Instrument])
+    orchestrator.register_operation(Reader(orchestrator))
+    instrument = Instrument(name="i")
+
+    with caplog.at_level(logging.WARNING):
+        answer = orchestrator.inspect(instrument, no_such_method=None, raise_on_error=False)
+
+    assert answer["result"]["no_such_method"]["status"] is False
+    assert caplog.records == []

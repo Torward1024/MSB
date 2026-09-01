@@ -148,22 +148,20 @@ def test_replaying_without_a_journal_says_so(manipulator):
         manipulator.replay()
 
 
-def test_the_old_way_still_works_and_warns(manipulator, item):
-    """Deprecated in 1.3.0, removed in 2.0, and working the whole time."""
+def test_replaying_belongs_to_the_orchestrator(manipulator, item):
+    """`RequestJournal.replay(manipulator)` was deprecated in 1.3.0 and removed in 2.0."""
+    assert not hasattr(RequestJournal, "replay")
+
     recorder = Manipulator(item, base_classes=[Item])
     journal = RequestJournal()
     recorder.add_interceptor(journal)
     recorder.configure(item, set={"params": {"value": 3}})
 
     item.value = 1
-    with pytest.deprecated_call():
-        responses = journal.replay(manipulator)
+    outcome = manipulator.replay(journal)
 
     assert item.value == 3
-    assert len(responses) == 1
-
-
-# --- the other interceptor, reached the same way ------------------------------------------
+    assert outcome.failed == []
 
 def test_metrics_are_asked_of_the_manipulator(manipulator, item):
     from msb_arch import RequestMetrics

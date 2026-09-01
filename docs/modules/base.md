@@ -29,10 +29,10 @@ attributes of the same entity, or adding to the same container, must be serializ
 caller; with `use_cache=True` a write racing a read can leave a stale cached mapping.
 
 `entity.get("field")` reads an attribute; `container.get("name")` returns an item. Emptying them
-is two different jobs and now has two names: `entity.reset_attributes()` nulls the attributes,
+is two different jobs and has two names: `entity.reset_attributes()` nulls the attributes,
 `container.remove_all()` removes the items. (`clear()` did both, meaning something different on
-each side; it is deprecated and goes in 2.0.) A container stored as an attribute of an entity is
-serialized and restored normally, because both sides are `Serializable`.
+each side; it was deprecated in 1.9.0 and removed in 2.0.) A container stored as an attribute of
+an entity is serialized and restored normally, because both sides are `Serializable`.
 
 
 
@@ -138,6 +138,41 @@ except ValueError as e:
     print(e)  # "Unknown attributes provided for MyEntity: {'unknown_attr'}"
 ```
 
+### What a field starts as
+
+The value written after the annotation is what the field starts as:
+
+```python
+from typing import List
+
+class Reading(BaseEntity):
+    value: float = 0.0
+    unit: str = "Jy"
+    tags: List[str] = []
+    comment: str                       # nothing declared
+
+reading = Reading(name="r1")
+assert reading.value == 0.0
+assert reading.unit == "Jy"
+assert reading.comment is None         # a field with nothing declared starts as None
+```
+
+Three things follow, and each is what the syntax already suggested:
+
+- **A value passed in wins.** `Reading(name="r1", value=9.0)` is 9.0. Passing `None` on purpose
+  means None -- asking for nothing is not the same as not asking.
+- **A mutable start belongs to the object, not to the class.** `tags: List[str] = []` gives every
+  object its own empty list; appending to one leaves the others empty. This is the one place the
+  framework departs from a plain class body, where that list would be shared by everything.
+- **It is validated like anything else.** `size: int = "large"` fails when the object is built,
+  not later, and a constraint on the field applies to the declared value too.
+
+Declared values are inherited, and a subclass overrides one by declaring its own.
+
+> Before 2.0 the declaration was ignored: `value: float = 0.0` left `value` at None on every
+> instance while the class itself kept 0.0. Code that relied on that None now gets the declared
+> value instead.
+
 ### Checking a value yourself
 
 The `_validate_type` method validates that a given value matches the expected type from annotations.
@@ -156,8 +191,9 @@ The `_validate_type` method validates that a given value matches the expected ty
 
 - Handles complex types including Union, Dict, List, and nested entities.
 - Allows None values for every attribute except 'name', which containers use as the item key.
-  Unset annotated attributes are initialized to None by `__init__`, so a mandatory attribute
-  cannot be expressed through its annotation; enforce it in the subclass instead.
+  A field the constructor is not given starts as whatever the class declared, and as None when
+  the class declared nothing -- so a mandatory attribute cannot be expressed through its
+  annotation; enforce it with an `@invariant` or in the subclass instead.
 
 **Supported type hints:**
 
@@ -316,14 +352,47 @@ print(len(expensive))  # 1
 more_products = MyContainer(name="more_products")
 more_products.add(Product(name="Tool", price=5.99, category="Tools"))
 
-inventory.add(more_products)  # Merges containers
+inventory.add(more_products)                      # merges them in
 
-# Activate/deactivate
+# Turn items on and off. `isactive` is a flag on each item; nothing is removed by it
 inventory.deactivate_all()
-active_items = inventory.get_active_items()  # Empty list
-
+assert inventory.get_active_items() == []
 inventory.activate_all()
-active_items = inventory.get_active_items()  # All items
+assert len(inventory.get_active_items()) == len(inventory)
+
+inventory.deactivate_item("Tool")
+assert [item.name for item in inventory.get_inactive_items()] == ["Tool"]
+inventory.activate_item("Tool")
+```
+
+**What each of the bulk methods is for:**
+
+| Doing | Method | Note |
+| --- | --- | --- |
+| Is it here? | `has_item(name)` | The question `get` answers with None and a warning |
+| Take one out | `remove(name)` | Raises `NotFoundError` for a name it does not hold |
+| Empty it | `remove_all()` | The container itself stays: its name and its item type |
+| Replace everything | `set_items({name: item})` | One step, one cache invalidation |
+| Put one under a name | `set_item(name, item)` | Replaces whatever was there |
+| Drop by flag | `drop_active()`, `drop_inactive()` | Removes them, unlike `deactivate_*` |
+| Copy it | `clone(deep=True)` | A deep copy by default: the items are copies too |
+
+```python
+assert inventory.has_item("Tool") is True
+snapshot = inventory.clone()                      # independent of the original
+inventory.remove("Tool")
+assert inventory.has_item("Tool") is False
+assert snapshot.has_item("Tool") is True
+
+inventory.set_items({"Widget": Product(name="Widget", price=10.99, category="Tools")})
+assert [item.name for item in inventory.get_items()] == ["Widget"]
+
+snapshot.deactivate_item("Widget")
+snapshot.drop_active()                            # removes what is still active
+snapshot.drop_inactive()                          # and then the rest
+snapshot.remove_all()
+assert len(snapshot) == 0
+assert snapshot.name == "product_inventory"       # the container itself stays
 ```
 
 ### Serializing a container
@@ -502,6 +571,19 @@ The discriminator key is consumed rather than passed on, so the class being buil
 an attribute it never declared. It reaches inside collections too, so
 `List[Union[Sensor, LookAlike]]` works the same way.
 
+### Emptying an entity
+
+`reset_attributes()` sets every public attribute to None, keeping `name`, `isactive` and the
+framework's own state. It is what you want when an object is being reused rather than rebuilt:
+
+```python
+sample = Product(name="Widget", price=10.99, category="Tools")
+sample.reset_attributes()
+
+assert sample.price is None
+assert sample.name == "Widget" and sample.isactive is True
+```
+
 ## Caching and memory
 
 `use_cache=True` keeps the result of `to_dict` on the object. It is off by default, and what
@@ -537,16 +619,44 @@ items as well pays off only when they are also serialized individually and often
 
 Two behaviours worth knowing before turning it on:
 
-- **The mapping is returned as it is, not copied.** Mutating what `to_dict` returns corrupts
-  the cache for every later reader. Copy it before changing it.
+- **The mapping you get back *is* the cache, and it refuses to be written to.** `to_dict` on a
+  caching object returns a `ReadOnlyMapping` (and `ReadOnlyList` for the lists inside it):
+  reading, `json.dumps`, unpacking and comparison all work, and a write raises
+  `SerializationError`. Take `dict(...)` of it when you need to change something. Without
+  `use_cache` nothing is frozen, since nothing else holds the result.
 - **Invalidation climbs the ownership graph.** Changing a nested entity or a container item
   refreshes every cache above it, so a write is not free: with many owners the walk is the
-  dominant cost, and it currently runs even when no owner caches at all. That is item P6 in
-  [the roadmap](../ROADMAP.md).
+  dominant cost.
+
+```python
+cached = Product(name="Widget", price=10.99, category="Tools", use_cache=True)
+snapshot = cached.to_dict()
+
+try:
+    snapshot["price"] = 0.0
+except errors.SerializationError as error:
+    assert "read-only" in str(error).lower() or "copy" in str(error).lower()
+
+mine = dict(snapshot)                       # a plain, writable copy
+mine["price"] = 0.0
+```
 
 Use it for objects serialized repeatedly and written rarely -- a model rendered to a GUI on
 every redraw. Avoid it for write-heavy objects, where every write pays for the walk and
 throws the mapping away, and for one-shot serialization, where nothing reads the cache twice.
+
+**What the caches hold right now**, when a long-lived process wants to know:
+
+```python
+from msb_arch import cache_statistics
+
+counts = cache_statistics()
+assert set(counts) == {"objects", "populated", "entries"}
+```
+
+`objects` is how many live objects have caching enabled, `populated` how many currently hold a
+mapping, and `entries` the total number of keys across them -- computed on demand from the
+registry invalidation already keeps, so nothing is counted while the framework runs.
 
 ## Has this changed?
 
