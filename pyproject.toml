@@ -8,14 +8,14 @@ name = "msb_arch"
 # 1.1.2 was tagged and released with only the other one bumped -- so the build produced 1.1.1
 # again and PyPI refused it as a file it already had. Two sources of one number is one too many.
 dynamic = ["version"]
-description = "Mega-Super-Base (MSB) architecture for flexible and extensible Python applications"
+description = "A dependency-free domain layer for Python: entities, invariants and operations behind one entry point, driven by requests that are data"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {file = "LICENSE"}
 authors = [
     {name = "Alexey Rudnitskiy", email = "almax1024@gmail.com"}
 ]
-keywords = ["msb", "architecture", "extensible"]
+keywords = ["msb", "domain-driven-design", "ddd", "domain-model", "hexagonal-architecture", "ports-and-adapters", "command-pattern", "validation", "invariants", "replay"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",

@@ -13,6 +13,30 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [2.0.2] - 2026-09-15
+
+No code changed. The description now says what MSB is.
+
+### Changed
+
+- **Described as a domain layer.** The repository and the package called MSB "a flexible and abstract
+  mini-framework", which undersold it and explained nothing. It is the domain layer of an
+  application: the model, the rules it must obey and the operations over it, independent of any
+  interface, storage or transport, reached through one entry point by requests that are data. The
+  package imports nothing outside the standard library, and its layers import only inward.
+- **README: where MSB sits.** How it maps onto domain-driven design and ports-and-adapters, and what it
+  deliberately does not provide -- domain events, repositories and a unit of work, event sourcing --
+  with the reasoning in `docs/architecture.md`.
+- **Examples: one domain, any adapter.** A single domain behind HTTP, a command line and SQL storage in
+  turn, without the domain changing: CRUD as four requests, a FastAPI endpoint, command-line flags
+  derived from the catalogue, and `save`/`load` replaced to move from JSON files to SQLite.
+- The package description and keywords on PyPI.
+
+### Added
+
+- `tests/test_adapters.py`, which runs those adapters so the claim stays true. The HTTP test runs when
+  FastAPI is installed and is skipped otherwise; MSB itself still depends on nothing.
+
 ## [2.0.1] - 2026-09-01
 
 ### Changed

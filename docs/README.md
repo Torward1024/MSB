@@ -1,9 +1,12 @@
 # MSB documentation
 
-MSB (Mega-Super-Base) is an architecture for Python applications built around a single entry
-point: you describe your data as typed entities, you describe what may be done to them as
-operations, and everything reaches both through one orchestrator by sending a request that is
-data rather than a call.
+MSB (Mega-Super-Base) is a domain layer for Python with no dependencies: the model, the rules it
+must obey and the operations over it, independent of any interface, storage or transport. Every
+adapter — a window, a command line, a test, a server — reaches it through one entry point by
+sending a request that is data rather than a call.
+
+How that maps onto domain-driven design and ports-and-adapters is set out in
+[architecture](architecture.md#in-domain-driven-design-terms).
 
 **New here? Start with the [guide](guide.md).** It builds a working application from nothing,
 and every block in it runs.
@@ -72,7 +75,7 @@ error taxonomy, logging and the validation helpers.
 
 ## Version
 
-2.0.1
+2.0.2
 
 ## License
 

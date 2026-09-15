@@ -27,6 +27,48 @@ Around the three:
 | `errors.py` | The exception taxonomy |
 | `utils/` | Logging and the validation helpers |
 
+## In domain-driven design terms
+
+MSB is the domain layer of an application and the port into it. The application around it supplies
+the adapters: the interface people use, the transport requests arrive by, and anything the domain
+should not know about.
+
+```mermaid
+flowchart LR
+    GUI["GUI"] --> M
+    CLI["command line"] --> M
+    HTTP["HTTP handler"] --> M
+    TEST["test"] --> M
+    M["Manipulator — the port"] --> S["Super — domain services"]
+    S --> B["Base — entities, aggregates, rules"]
+```
+
+Arrows point inward only. The Base layer imports nothing from the other two, and the package imports
+nothing outside the standard library.
+
+| Concept | In MSB | Note |
+| --- | --- | --- |
+| Entity | `BaseEntity` | Identified by `name` within its owner; `address()` gives its place in the whole model |
+| Rules on a value | `Annotated[..., Constraint]` | Checked on construction, on assignment and on restore |
+| Aggregate | `BaseContainer`, `Project` | Owns its members; ownership drives cache invalidation and addressing |
+| Aggregate consistency | `@invariant` | Checked after every change to what the aggregate holds; a refused change is undone |
+| Domain service | `Super` | One operation, a handler per type, resolved through the type's ancestors |
+| Application service / port | `Manipulator` | The single entry point; knows every operation and every type |
+| Command / query | A request | Data, not a call — so it can be logged, queued, sent and replayed as it is |
+| Adapter | Anything sending requests | Lives in the application, never in MSB |
+| Cross-cutting concern | Interceptor | Sees every request and its response; may refuse or rewrite |
+| Persistence | `save`, `load` | Defaults, replaceable by registering an operation of the same name |
+| Command log | `RequestJournal` | Requests with their object's address, replayable against another model |
+
+### What is not here, and why
+
+| Not provided | Why |
+| --- | --- |
+| Domain events | Which events a domain raises is part of that domain's language, not of a framework. An interceptor sees every request and every response, which is where an application publishes its own |
+| Repositories, unit of work | They are how an application talks to its storage, and MSB has no storage. `save` and `load` are a default for the case every application has |
+| Immutable value objects | Fields are validated values, and identity is by address. An application wanting immutability can freeze its own types |
+| Event sourcing | The journal records the requests that were made, not the events that resulted. Replaying it re-runs the commands against a model, which is a different guarantee |
+
 ## What happens to a request
 
 ```mermaid

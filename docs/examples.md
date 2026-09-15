@@ -334,28 +334,166 @@ assert response["status"] is False
 A facade raises the kind of failure that happened. Ask for the response instead when you would
 rather read it.
 
-## Behind a web API
+## One domain, any adapter
 
-The request already is data, so the translation is a rename.
+MSB is the domain layer; everything that talks to the outside world is an adapter around it. This
+section keeps one small domain — customers — and puts it behind a web service, a command line and a
+database in turn. **The domain does not change once.** That is the point: moving from files to SQL,
+or from a desktop tool to an HTTP service, is replacing an adapter, not rewriting the application.
 
-```text
-from flask import Flask, jsonify, request
+```python
+from msb_arch import BaseContainer, BaseEntity, Manipulator, Super, invariant
 
-app = Flask(__name__)
+class Customer(BaseEntity):
+    email: str = ""
+    credit: float = 0.0
 
-@app.post("/api/request")
-def handle():
-    incoming = request.get_json()
-    response = depot.process_request({
-        "operation": incoming["operation"],
-        "obj": depot.get_managing_object(),
-        "attributes": incoming.get("attributes", {}),
-    })
-    return jsonify(response), 200 if response["status"] else 400
+    @invariant("credit cannot be negative")
+    def _solvent(self) -> bool:
+        return self.credit >= 0
 
-@app.post("/api/pipeline")
-def run_plan():
-    return jsonify(dict(depot.pipeline(request.get_json(), raise_on_error=False)))
+class Customers(BaseContainer[Customer]):
+    pass
+
+class Discount(Super):
+    OPERATION = "discount"
+
+    def _discount_customers(self, obj, attributes):
+        rate = attributes.get("rate", 0.1)
+        return {customer.name: round(customer.credit * rate, 2) for customer in obj.get_items()}
+
+class Service(Manipulator):
+    pass
+
+crm = Customers(name="crm")
+service = Service(base_classes=[Customer, Customers], managing_object=crm)
+service.register_operation(Discount(service))
 ```
 
-A plan is data too, so a client can post one and get every step's response back.
+### CRUD is four requests
+
+Create, read, update and delete are requests like any other. An object on the far side of a wire is
+named by its **address**, and `locate` turns the address back into the object:
+
+```python
+# create
+service.configure(crm, add=Customer.from_dict({"name": "ada", "email": "ada@example.com",
+                                                "credit": 120.0}))
+# read
+assert service.inspect(service.locate(["crm", "ada"]), get="credit") == 120.0
+# update -- the invariant still guards it
+service.configure(service.locate(["crm", "ada"]), set={"params": {"credit": 80.0}})
+assert crm.get("ada").credit == 80.0
+# delete
+service.configure(crm, remove="ada")
+assert len(crm) == 0
+```
+
+A refused update comes back as a failed response rather than a corrupted record:
+
+```python
+service.configure(crm, add=Customer(name="bob", credit=10.0))
+refused = service.configure(service.locate(["crm", "bob"]), set={"params": {"credit": -5.0}},
+                            raise_on_error=False)
+assert refused.ok is False and crm.get("bob").credit == 10.0
+```
+
+### Behind HTTP
+
+A web framework only translates JSON into a request and the response back. With FastAPI:
+
+```text
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.post("/request")
+def handle(body: dict):
+    target = service.locate(body["path"]) if body.get("path") else None
+    response = service.process_request({"operation": body["operation"], "obj": target,
+                                        "attributes": body.get("attributes", {})})
+    return dict(response)
+
+@app.get("/operations")
+def operations():
+    return service.describe_operations()      # the API describes itself
+```
+
+```text
+POST /request  {"operation": "configure", "path": ["crm", "bob"],
+                "attributes": {"set": {"params": {"credit": 50.0}}}}
+POST /request  {"operation": "discount", "attributes": {"rate": 0.2}}
+```
+
+Flask and Django are the same three lines inside their own view. The responses are plain
+dictionaries, so they serialize as they are. `tests/test_adapters.py` runs this service through
+FastAPI's test client whenever FastAPI is installed.
+
+### Behind a command line — with no list of flags
+
+A handler's parameters are derived from its code, so the command line builds its flags from the
+catalogue instead of repeating them. Add a parameter to the handler and the flag appears:
+
+```text
+import argparse
+
+accepts = service.describe_operations("discount")["discount"]["customers"]["accepts"]
+parser = argparse.ArgumentParser(prog="discount")
+for key in accepts:
+    parser.add_argument(f"--{key}", type=float)
+
+arguments = parser.parse_args(["--rate", "0.5"])
+given = {key: value for key, value in vars(arguments).items() if value is not None}
+assert service.discount(**given) == {"bob": 5.0}
+```
+
+A dialog does the same thing with a form field per key.
+
+The catalogue reads a handler's source, so this runs on classes defined in a module — which is
+every real application — and not on ones typed into an interactive session. `tests/test_adapters.py`
+runs it.
+
+### Moving the storage from files to SQL
+
+`save` and `load` are defaults. Registering operations of the same name replaces them, and nothing
+that calls `service.save(...)` notices. Here the model moves into SQLite using only the standard
+library; SQLAlchemy, a document store or an HTTP API has the same shape:
+
+```python
+import json
+import sqlite3
+
+class SqlSave(Super):
+    OPERATION = "save"
+
+    def _save(self, obj, attributes):
+        with sqlite3.connect(attributes["path"]) as db:
+            db.execute("CREATE TABLE IF NOT EXISTS models (name TEXT PRIMARY KEY, data TEXT)")
+            db.execute("INSERT OR REPLACE INTO models VALUES (?, ?)",
+                       (obj.name, json.dumps(obj.to_dict())))
+        return True
+
+class SqlLoad(Super):
+    OPERATION = "load"
+
+    def _load(self, obj, attributes):
+        with sqlite3.connect(attributes["path"]) as db:
+            (data,) = db.execute("SELECT data FROM models WHERE name = ?", (obj.name,)).fetchone()
+        return type(obj).from_dict(json.loads(data))
+
+service.register_operation(SqlSave(service))      # replaces the JSON default
+service.register_operation(SqlLoad(service))
+
+service.save(crm, path="crm.db")
+assert service.load(crm, path="crm.db") == crm     # rules re-checked on the way in
+```
+
+The invariants, the constraints and every operation came along unchanged, and so did their tests.
+That is what an independent domain layer is for.
+
+### Keep the ORM out of the entities
+
+It is tempting to make an entity an ORM model as well. Don't: the entity then depends on the
+database, the database's rules start leaking into the domain's, and the property that let the
+storage be swapped above is gone. Map between the two in an adapter — `to_dict` and `from_dict` are
+the seam — and the domain stays testable without a database at all.

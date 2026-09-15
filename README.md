@@ -1,35 +1,84 @@
-# MSB Architecture
+# MSB — Mega-Super-Base
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.0.1-brightgreen.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-2.0.2-brightgreen.svg)](https://github.com/Torward1024/MSB)
+[![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](pyproject.toml)
 
-Mega-Super-Base (MSB) is for the application that outgrew a script: one whose data has a shape
-worth validating, whose operations keep multiplying, and which now needs a window, a command line
-and a server over the same model without three copies of the logic.
-
-You describe the data as typed entities, you describe what may be done to it as operations, and
-everything reaches both through one orchestrator. A request is data, not a call:
+**A domain layer for Python, with no dependencies.** The model, the rules it must obey and the
+operations over it live in MSB, independent of any interface, storage or transport. Everything
+reaches them through one entry point, by sending a request that is data:
 
 ```text
 {"operation": "configure", "obj": part, "attributes": {"set": {"params": {"price": 4.5}}}}
 ```
 
-Which is a small thing that buys several large ones:
+A window, a command line, a test and an HTTP handler are then adapters that send the same
+dictionary. Nothing in the domain knows which one did.
 
-- The same code serves a dialog, a script and a remote caller, because none of them is calling a
-  method — they are all sending the same dictionary.
-- A session can be **recorded and replayed**: the journal keeps each request as data, with the
-  object's address in the model rather than a reference to it, so a recorded session runs again
-  against a model built from scratch and lands on the objects it meant.
-- Menus, dependency graphs, handler stubs and execution order are **derived from the code** rather
-  than listed, so none of them can go stale.
-- Metrics, auditing, authorisation and rate limiting hang on one hook that sees every request, and
-  the operations know nothing about them.
+What that buys:
 
-Written for a working instrument — [pAstroCORE](https://github.com/Torward1024/pAstroCORE), which
-plans radio astronomy observations — and everything here exists because that application needed
-it.
+- **One domain, several faces.** The same rules and operations serve a GUI, a script and a remote
+  caller, with no second copy of the logic in any of them.
+- **Rules enforced where the data is.** Types, constraints on values, and invariants across fields
+  and across a whole collection are checked when an object is built, when it is restored and after
+  every write. A refused change is undone, not half-applied.
+- **A session you can record and replay.** The journal keeps each request as data, with the
+  object's address in the model rather than a reference to it, so the same session runs again
+  against another project or in another process and lands on the objects it meant.
+- **Answers derived from the code.** Which operations exist, what each handler needs and accepts,
+  which type holds which, and what a change reaches are read back from the classes, so a menu, a
+  command line or a diagram built on them cannot go stale.
+- **Cross-cutting concerns kept out.** Metrics, auditing, authorisation and rate limiting hang on
+  one hook that sees every request; the domain knows nothing about them.
+
+In use behind [pAstroCORE](https://github.com/Torward1024/pAstroCORE), which plans radio astronomy
+observations through a desktop interface and a command line over one model.
+
+## Where MSB sits
+
+In domain-driven design and ports-and-adapters terms:
+
+| Concept | In MSB |
+| --- | --- |
+| Entities | `BaseEntity` — typed, validated fields; named within its owner, and addressable in the model |
+| Rules on values | `Annotated[float, Positive()]`, `Range`, `Predicate` — enforced on build, write and restore |
+| Aggregates and their consistency | `BaseContainer`, `Project` — an `@invariant` on the whole, checked after every change to what it holds, the change undone when refused |
+| Domain services | `Super` — an operation with a handler per type, resolved through inheritance |
+| The port | `Manipulator` — the single entry point every adapter talks to |
+| Commands and queries | Requests as data. The built-in `configure` writes and stops at the first failure; `inspect` reads and reports every outcome |
+| Adapters | Whatever sends a request — a GUI, a CLI, a test, an HTTP handler. None of them live in MSB |
+| Cross-cutting concerns | Interceptors |
+| Persistence | `save` and `load` — a replaceable JSON default, with schema versions and migrations |
+| Command log | `RequestJournal` — every request as data, replayable against another model |
+
+**Not provided, on purpose:** domain events, repositories and a unit of work, immutable value
+objects, and event sourcing. The journal records requests, not domain events. Those belong to the
+application, or to a library built for them. The reasoning is in [architecture](docs/architecture.md#in-domain-driven-design-terms).
+
+## Plug it into anything
+
+The domain never imports an adapter, so adapters are small and interchangeable:
+
+| Put MSB behind | How |
+| --- | --- |
+| **HTTP** — FastAPI, Flask, Django | A view turns JSON into a request; objects travel as addresses and come back through `locate` |
+| **A command line** | Flags built from the catalogue: a handler's parameters are derived from its code, so no list to keep in sync |
+| **A GUI** | The same requests; forms and menus derived the same way |
+| **SQL, a document store, an API** | Register your own `save` and `load`; the built-in JSON ones are defaults, not a law |
+
+```text
+@app.post("/request")
+def handle(body: dict):
+    target = service.locate(body["path"]) if body.get("path") else None
+    return dict(service.process_request({"operation": body["operation"], "obj": target,
+                                         "attributes": body.get("attributes", {})}))
+```
+
+That is a complete CRUD endpoint: create, read, update and delete are requests like any other, and
+the invariants guard every one of them. Moving from JSON files to a database, or from a desktop tool
+to a web service, replaces an adapter and leaves the domain and its tests untouched. Worked through
+in [examples](docs/examples.md#one-domain-any-adapter).
 
 ## Features
 
@@ -245,4 +294,4 @@ Available for collaboration, contract work and support — [almax1024@gmail.com]
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 2.0.1
+- **Version**: 2.0.2
