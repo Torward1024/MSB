@@ -43,11 +43,19 @@ Five are registered for you, in `msb_arch.super.builtins`:
 
 | Class | Operation | What it does |
 | --- | --- | --- |
-| `Inspector` | `inspect` | Applies the methods a request names, reporting every outcome |
-| `Configurator` | `configure` | The same, stopping at the first failure |
+| `Inspector` | `inspect` | Reads: applies the reading methods a request names -- `get`, `get_*`, `has_*`, `is_*` -- reporting every outcome |
+| `Configurator` | `configure` | Changes: applies any method a request names, stopping at the first failure |
 | `Catalogue` | `catalogue` | What is registered, and the shape of the model |
 | `Persistence` | `save` | Writes an object to a file as JSON, atomically |
 | `Loader` | `load` | Reads one back |
+
+**`inspect` only reads, and knows a read by its name.** `Inspector.reads(name)` is true for `get`
+and for a name starting with one of `READING_PREFIXES` (`get_`, `has_`, `is_`); a request naming
+anything else is refused with `RequestError` before any of it runs. Before 3.0 the two were one
+loop with a different strictness, so `inspect(box, remove="bolt")` removed the bolt and was recorded
+as a read. Decided by the name alone, so a caller knows the answer without the object -- a session
+filter, a permission check. A model with a reading verb of its own widens `READING_PREFIXES` in a
+subclass.
 
 Each is thin -- usually one call to `_apply_methods` -- so subclassing one to change the
 behaviour for a single type leaves the rest working:

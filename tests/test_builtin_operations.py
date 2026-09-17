@@ -30,6 +30,9 @@ class Widget(BaseEntity):
     def explode(self) -> None:
         raise RuntimeError("boom")
 
+    def get_broken(self) -> float:
+        raise RuntimeError("boom")
+
 
 class Widgets(BaseContainer[Widget]):
     pass
@@ -69,10 +72,10 @@ def test_the_builtins_serve_containers_too(bare):
 def test_reading_reports_every_method_even_when_one_fails(bare):
     """`strict=False` for inspect: a caller reading several things wants the whole picture."""
     dish = Widget(name="d", diameter=1.0)
-    results = bare.inspect(dish, get_diameter=None, explode=None, raise_on_error=False)
+    results = bare.inspect(dish, get_diameter=None, get_broken=None, raise_on_error=False)
 
     assert results["result"]["get_diameter"]["status"] is True
-    assert results["result"]["explode"]["status"] is False
+    assert results["result"]["get_broken"]["status"] is False
 
 
 def test_writing_stops_at_the_first_failure(bare):
@@ -82,6 +85,105 @@ def test_writing_stops_at_the_first_failure(bare):
 
     assert response["status"] is False
     assert dish.diameter == 1.0
+
+
+# --- inspect reads, and only reads (3.0.0) ---------------------------------------------------
+
+def test_inspect_refuses_a_method_that_is_not_named_as_a_read(bare):
+    """`inspect` and `configure` were one loop with a different strictness, so a request recorded
+    as a read could remove, activate or overwrite.
+
+    Found in an application: a source was deactivated through `inspect`. The journal said nothing
+    had changed, and when the source was not there the request came back quietly, where the same
+    request through `configure` raised.
+    """
+    dishes = Widgets(name="array")
+    dishes.add(Widget(name="DSS14", diameter=70.0))
+
+    with pytest.raises(errors.RequestError, match="'deactivate_item'.*configure"):
+        bare.inspect(dishes, deactivate_item="DSS14")
+    assert dishes.get("DSS14").isactive is True, "the refused request changed the object"
+
+    bare.configure(dishes, deactivate_item="DSS14")
+    assert dishes.get("DSS14").isactive is False
+
+
+def test_a_refused_request_runs_none_of_it(bare):
+    """Refused whole, before anything runs: reading half of it and writing none would still
+    report a read of an object the caller meant to change."""
+    dish = Widget(name="d", diameter=1.0)
+
+    response = bare.inspect(dish, get_diameter=None, set_diameter=5.0, raise_on_error=False)
+
+    assert response["status"] is False
+    assert "set_diameter" in response["error"]
+    assert dish.diameter == 1.0
+
+
+@pytest.mark.parametrize("name,reads", [
+    ("get", True), ("get_all", True), ("has_item", True), ("is_active", True),
+    ("getter", False), ("set", False), ("remove", False), ("deactivate_item", False),
+    ("clone", False), ("to_dict", False), ("history", False),
+])
+def test_a_read_is_known_by_its_name(name, reads):
+    """By the name alone, so a caller -- a session filter, a permission check -- knows the answer
+    without the object."""
+    assert Inspector.reads(name) is reads
+
+
+def test_a_member_is_read_by_the_same_rule(bare, bands):
+    """Descending into a member is not a way round it."""
+    with pytest.raises(Exception, match="set_rating"):
+        bare.inspect(bands, name="X", set_rating=1.0)
+    assert bands.get("X").rating == 8400.0
+
+
+def test_a_model_with_a_reading_verb_of_its_own_widens_the_rule():
+    """Rather than naming a read as something else."""
+    class Lock(BaseEntity):
+        engaged: bool
+
+        def can_open(self) -> bool:
+            return not self.engaged
+
+    class LockInspector(Inspector):
+        READING_PREFIXES = Inspector.READING_PREFIXES + ("can_",)
+
+    bench = Observatory(base_classes=[Lock], builtins=False)
+    bench.register_operation(LockInspector(bench))
+
+    assert bench.inspect(Lock(name="front", engaged=False), can_open=None) is True
+
+
+def test_configure_takes_reads_as_well_as_changes(bare):
+    """Changing a model is more than `set`, and a request that reads along the way is not wrong.
+    Only `inspect` is narrowed."""
+    dish = Widget(name="d", diameter=1.0)
+
+    answer = bare.configure(dish, set_diameter=2.0, get_diameter=None)
+
+    assert answer["get_diameter"]["result"] == 2.0
+
+
+def test_a_failed_request_is_logged_without_holding_what_it_named(bare, caplog):
+    """A log record keeps its arguments, and an exception keeps the frames that raised it -- and
+    those hold the request. Logged as the exception, a refused request stayed alive in any handler
+    that keeps records."""
+    import gc
+    import logging
+    import weakref
+
+    dish = Widget(name="d", diameter=1.0)
+    held = Widget(name="held", diameter=2.0)
+    watch = weakref.ref(held)
+
+    with caplog.at_level(logging.ERROR):
+        bare.inspect(dish, remove=held, raise_on_error=False)
+    assert caplog.records, "nothing was logged, so this checks nothing"
+
+    del held
+    gc.collect()
+    assert watch() is None, "a log record is keeping the request's objects alive"
 
 
 # --- what an existing application still gets ----------------------------------------------
@@ -221,7 +323,7 @@ def test_the_getter_is_a_hook_because_the_descent_is_not_uniform():
         def get_entry(self, name):
             return self.entries.get(name)
 
-        def count(self) -> int:
+        def get_count(self) -> int:
             return len(self.entries)
 
     class RegistryInspector(Inspector):
@@ -234,7 +336,7 @@ def test_the_getter_is_a_hook_because_the_descent_is_not_uniform():
     bench.register_operation(RegistryInspector(bench))
     registry = Registry(name="r", entries={"X": Band(name="X", rating=8400.0)})
 
-    assert bench.inspect(registry, count=None) == 1
+    assert bench.inspect(registry, get_count=None) == 1
     assert bench.inspect(registry, entry="X", get_rating=None) == 8400.0
 
 

@@ -518,11 +518,14 @@ class Super(ABC):
 
             result = getattr(self, handler_name)(obj, object_attributes)
             return self._build_response(obj, True, handler_name, result)
+        # The message is logged, not the exception. A log record keeps its arguments, and an
+        # exception keeps its traceback, whose frames keep every object the request named: a
+        # handler that stores records -- a test's capture, a buffering handler -- held all of it.
         except ValueError as e:
-            logger.error("Execution failed for operation '%s': %s", self._operation, e)
+            logger.error("Execution failed for operation '%s': %s", self._operation, str(e))
             return self._build_response(obj, False, None, None, str(e), type(e).__name__)
         except Exception as e:
-            logger.error("Unexpected error in execute for '%s': %s", self._operation, e)
+            logger.error("Unexpected error in execute for '%s': %s", self._operation, str(e))
             return self._build_response(obj, False, None, None, str(e), type(e).__name__)
         
     def clear_cache(self) -> None:

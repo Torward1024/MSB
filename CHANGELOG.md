@@ -13,6 +13,54 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [3.0.0] - 2026-09-17
+
+One behaviour narrowed, which is why this is a major version: `inspect` reads and does nothing else.
+
+### Changed -- breaking
+
+- **`inspect` only reads, and knows a read by its name.** A read is `get`, or a method whose name
+  starts with `get_`, `has_` or `is_`; a request naming anything else is refused with `RequestError`,
+  whole, before any of it runs:
+
+  ```python
+  manipulator.inspect(sources, deactivate_item="3C273")
+  # RequestError: inspect only reads, and 'deactivate_item' on Sources is not named as a read
+  # (get, get_*, has_*, is_*). A change is asked of configure
+  ```
+
+  `inspect` and `configure` were one loop, `_apply_methods`, with a different strictness, and the
+  documentation said as much -- "the method reads or writes". So anything `configure` could do,
+  `inspect` did too. Found downstream: a source was deactivated through `inspect`, the request
+  journal recorded a read, and when the source was not there the request came back quietly where
+  the same one through `configure` raised. An audit that says nothing changed when something did is
+  worse than none, and a session could not leave its reads out without keeping a list of which of
+  them were not.
+
+  Decided by the name alone, so a caller knows the answer without the object: `Inspector.reads(name)`.
+  A model with a reading verb of its own widens `Inspector.READING_PREFIXES` in a subclass.
+  `configure` is unchanged and still takes any method, reading ones included -- changing a model is
+  more than `set`, and a container adds, removes and activates.
+
+### Fixed
+
+- **A failed request no longer keeps what it named alive in the log.** `Super.execute` logged the
+  exception itself, a log record keeps its arguments, and an exception keeps the frames that raised
+  it -- which hold the request. Any handler that keeps records, a test's capture or a buffering
+  handler, held every object a failed request had named. It logs the message now.
+
+### Added
+
+- `Inspector.reads(method_name)` and `Inspector.READING_PREFIXES`.
+
+### Upgrading from 2.0.2
+
+| What you see | Why | What to do |
+| --- | --- | --- |
+| `RequestError: inspect only reads, and 'x' on T is not named as a read` | The request changes something, or reads through a method whose name does not say so | A change: ask `configure`. A read: rename the method `get_x`, `has_x` or `is_x` -- or, for a reading verb of your own, subclass `Inspector` and widen `READING_PREFIXES` |
+| A request that read and wrote through `inspect` now does neither | It is refused whole, before anything runs | Split it: `configure` the change, `inspect` the reads |
+| `inspect(obj, clone=None)`, `to_dict=None` or `fingerprint=None` is refused | Those read, and their names do not say so | Call them on the object, or read through `get` |
+
 ## [2.0.2] - 2026-09-15
 
 No code changed. The description now says what MSB is.

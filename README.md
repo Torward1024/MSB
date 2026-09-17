@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.0.2-brightgreen.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-3.0.0-brightgreen.svg)](https://github.com/Torward1024/MSB)
 [![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](pyproject.toml)
 
 **A domain layer for Python, with no dependencies.** The model, the rules it must obey and the
@@ -46,7 +46,7 @@ In domain-driven design and ports-and-adapters terms:
 | Aggregates and their consistency | `BaseContainer`, `Project` — an `@invariant` on the whole, checked after every change to what it holds, the change undone when refused |
 | Domain services | `Super` — an operation with a handler per type, resolved through inheritance |
 | The port | `Manipulator` — the single entry point every adapter talks to |
-| Commands and queries | Requests as data. The built-in `configure` writes and stops at the first failure; `inspect` reads and reports every outcome |
+| Commands and queries | Requests as data. The built-in `configure` writes and stops at the first failure; `inspect` only reads -- `get`, `get_*`, `has_*`, `is_*` -- and reports every outcome |
 | Adapters | Whatever sends a request — a GUI, a CLI, a test, an HTTP handler. None of them live in MSB |
 | Cross-cutting concerns | Interceptors |
 | Persistence | `save` and `load` — a replaceable JSON default, with schema versions and migrations |
@@ -294,4 +294,4 @@ Available for collaboration, contract work and support — [almax1024@gmail.com]
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 2.0.2
+- **Version**: 3.0.0

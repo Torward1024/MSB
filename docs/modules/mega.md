@@ -309,8 +309,8 @@ The draft produces a plan and hands it to `pipeline`; it runs nothing itself.
 
 | Operation | Handler | What it does |
 | --- | --- | --- |
-| `inspect` | `_inspect` | Applies the methods a request names, reporting every outcome |
-| `configure` | `_configure` | The same, stopping at the first failure |
+| `inspect` | `_inspect` | Reads: applies the reading methods a request names -- `get`, `get_*`, `has_*`, `is_*` -- reporting every outcome |
+| `configure` | `_configure` | Changes: applies any method a request names, stopping at the first failure |
 | `catalogue` | `_catalogue`, `_catalogue_order`, `_catalogue_model` | What is registered, and the shape of the model |
 | `save` | `_save` | Writes an object to a file as JSON, atomically |
 | `load` | `_load` | Reads one back |
@@ -499,12 +499,12 @@ A handler that is itself a coroutine is awaited rather than run on the executor:
 
 ```python
 class Probe(BaseEntity):
-    async def fetch_status(self) -> str:
+    async def get_status(self) -> str:
         await asyncio.sleep(0)
         return "ready"
 
 remote = Bench(base_classes=[Probe])
-assert asyncio.run(remote.ainspect(Probe(name="p"), fetch_status=None)) == "ready"
+assert asyncio.run(remote.ainspect(Probe(name="p"), get_status=None)) == "ready"
 ```
 
 The executor is created on first asynchronous use and never before. `close()` shuts it down, or

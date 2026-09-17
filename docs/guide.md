@@ -218,8 +218,26 @@ workshop.configure(widget, set_price=6.0)
 assert widget.price == 6.0
 ```
 
-`inspect` and `configure` follow from the request model itself — an attribute names a method, and
-the method reads or writes — so they serve every type you ever add.
+`inspect` and `configure` follow from the request model itself — an attribute names a method — so
+they serve every type you ever add. **The name says which of the two may call it.** `inspect` only
+reads: it calls `get`, and methods whose names start with `get_`, `has_` or `is_`, and refuses a
+request naming anything else before running any of it. `configure` changes, and calls any method,
+since changing a model is more than `set` — a container adds, removes and activates.
+
+```python
+from msb_arch import RequestError
+
+try:
+    workshop.inspect(widget, set_price=1.0)
+    raise AssertionError("a change went through inspect")
+except RequestError as refused:
+    assert "configure" in str(refused)
+assert widget.price == 6.0
+```
+
+So a request recorded as `inspect` changed nothing — which is what lets a session leave its reads
+out, and a permission check allow them. A method that only reads under another name is renamed; a
+model with a reading verb of its own, `can_` say, widens `Inspector.READING_PREFIXES` in a subclass.
 
 Ask for several things at once and every outcome comes back:
 
@@ -547,6 +565,7 @@ except (DispatchError, MSBError):
 | Writing to a cached `to_dict()` raises | That mapping **is** the cache. Take `dict(...)` of it when you need to change something |
 | A `Callable` field breaks `save` | A function is code, not data. Store the *name* of the operation and look it up |
 | `inspect` reports a failure but the response says success | Reading is not strict: it applies what it can and reports each outcome. `configure` stops at the first failure, since a half-applied configuration is not a result |
+| `RequestError: inspect only reads, and '...' is not named as a read` | Since 3.0, `inspect` knows a read by its name: `get`, `get_*`, `has_*`, `is_*`. Ask `configure` for a change. A method that only reads under another name is renamed, or `Inspector.READING_PREFIXES` widened in a subclass |
 | A handler is not found for your subclass | It is, since 1.10: resolution walks the base classes. Check the operation is registered and the type is in `base_classes` |
 | Nothing happens when a session is replayed | The requests probably failed to resolve: point the orchestrator at the model with `set_managing_object`, and check `outcome.failed` |
 

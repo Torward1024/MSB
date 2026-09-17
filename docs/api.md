@@ -373,6 +373,11 @@ with the object itself.
 `Inspector` and `Configurator` both take `NESTED_KEY` (`"name"`) to address one member of a
 collection, and both have a `_nested_getter(obj)` hook returning how to fetch a member.
 
+`Inspector.reads(method_name)` -> bool says whether a name is a read: `get`, or a name starting with
+one of `Inspector.READING_PREFIXES` (`("get_", "has_", "is_")`). `_inspect` refuses a request naming
+anything else -- `NESTED_KEY` aside -- with `RequestError`, before running any of it. `Configurator`
+applies any method.
+
 ### Response
 
 What every request produces — a facade, `process_request`, each entry of a batch, each step of a

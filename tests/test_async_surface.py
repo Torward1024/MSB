@@ -28,18 +28,21 @@ from msb_arch import (BaseEntity,
 class Job(BaseEntity):
     size: int
 
-    def crunch(self) -> int:
+    def get_snapshot(self):
+        return self.to_dict()
+
+    def get_checksum(self) -> int:
         return sum(index * index for index in range(self.size))
 
     def double(self) -> int:
         self.size *= 2
         return self.size
 
-    async def fetch(self) -> str:
+    async def get_fetched(self) -> str:
         await asyncio.sleep(0.01)
         return "fetched"
 
-    def explode(self) -> None:
+    def get_broken(self) -> None:
         raise RuntimeError("boom")
 
 
@@ -82,8 +85,8 @@ def test_the_synchronous_call_blocks_the_loop_and_the_asynchronous_one_does_not(
     job = Job(name="j", size=2_000_000)
 
     async def scenario():
-        _, blocked = await heartbeat_during(lambda: bench.inspect(job, crunch=None))
-        _, free = await heartbeat_during(lambda: bench.ainspect(job, crunch=None))
+        _, blocked = await heartbeat_during(lambda: bench.inspect(job, get_checksum=None))
+        _, free = await heartbeat_during(lambda: bench.ainspect(job, get_checksum=None))
         return blocked, free
 
     blocked, free = asyncio.run(scenario())
@@ -95,7 +98,7 @@ def test_the_synchronous_call_blocks_the_loop_and_the_asynchronous_one_does_not(
 
 def test_an_async_facade_returns_what_the_sync_one_returns(bench):
     job = Job(name="j", size=100)
-    assert asyncio.run(bench.ainspect(job, crunch=None)) == bench.inspect(job, crunch=None)
+    assert asyncio.run(bench.ainspect(job, get_checksum=None)) == bench.inspect(job, get_checksum=None)
 
 
 def test_every_operation_gets_an_async_twin(bench):
@@ -107,7 +110,7 @@ def test_every_operation_gets_an_async_twin(bench):
 def test_the_synchronous_api_is_untouched(bench):
     """Additive means additive: nothing about the old surface changed."""
     job = Job(name="j", size=10)
-    assert bench.inspect(job, crunch=None) == 285
+    assert bench.inspect(job, get_checksum=None) == 285
     bench.configure(job, double=None)
     assert job.size == 20
 
@@ -115,16 +118,16 @@ def test_the_synchronous_api_is_untouched(bench):
 def test_aprocess_request_takes_the_same_request(bench):
     job = Job(name="j", size=10)
     response = asyncio.run(bench.aprocess_request(
-        {"operation": "inspect", "obj": job, "attributes": {"crunch": None}}))
+        {"operation": "inspect", "obj": job, "attributes": {"get_checksum": None}}))
     assert response["status"] is True
-    assert response["result"]["crunch"]["result"] == 285
+    assert response["result"]["get_checksum"]["result"] == 285
 
 
 def test_abatch_runs_a_batch(bench):
     job = Job(name="j", size=4)
     responses = asyncio.run(bench.abatch([
         {"operation": "configure", "obj": job, "attributes": {"double": None}},
-        {"operation": "inspect", "obj": job, "attributes": {"crunch": None}},
+        {"operation": "inspect", "obj": job, "attributes": {"get_checksum": None}},
     ]))
     assert len(responses) == 2
     assert job.size == 8
@@ -135,15 +138,15 @@ def test_abatch_runs_a_batch(bench):
 def test_an_async_method_on_an_entity_is_awaited(bench):
     """Applying it on a worker thread produces a coroutine; it is awaited back on the loop."""
     job = Job(name="j", size=1)
-    assert asyncio.run(bench.ainspect(job, fetch=None)) == "fetched"
+    assert asyncio.run(bench.ainspect(job, get_fetched=None)) == "fetched"
 
 
 def test_an_async_method_is_awaited_inside_a_batch(bench):
     job = Job(name="j", size=1)
     responses = asyncio.run(bench.abatch([
-        {"operation": "inspect", "obj": job, "attributes": {"fetch": None}},
+        {"operation": "inspect", "obj": job, "attributes": {"get_fetched": None}},
     ]))
-    assert responses["0"]["result"]["fetch"]["result"] == "fetched"
+    assert responses["0"]["result"]["get_fetched"]["result"] == "fetched"
 
 
 # --- failures behave the same -------------------------------------------------------------
@@ -151,12 +154,12 @@ def test_an_async_method_is_awaited_inside_a_batch(bench):
 def test_a_failure_raises_the_same_way(bench):
     job = Job(name="j", size=1)
     with pytest.raises(errors.HandlerError):
-        asyncio.run(bench.aconfigure(job, explode=None))
+        asyncio.run(bench.aconfigure(job, get_broken=None))
 
 
 def test_a_failure_can_be_reported_instead(bench):
     job = Job(name="j", size=1)
-    response = asyncio.run(bench.aconfigure(job, explode=None, raise_on_error=False))
+    response = asyncio.run(bench.aconfigure(job, get_broken=None, raise_on_error=False))
     assert response["status"] is False
 
 
@@ -170,8 +173,8 @@ def test_one_interceptor_serves_both_paths_unchanged(bench):
     bench.add_interceptor(journal)
     job = Job(name="j", size=10)
 
-    bench.inspect(job, crunch=None)
-    asyncio.run(bench.ainspect(job, crunch=None))
+    bench.inspect(job, get_checksum=None)
+    asyncio.run(bench.ainspect(job, get_checksum=None))
 
     assert metrics.snapshot()["inspect"]["calls"] == 2
     assert len(journal) == 2
@@ -184,7 +187,7 @@ def test_an_interceptor_can_still_refuse_on_the_async_path(bench):
 
     bench.add_interceptor(deny)
     job = Job(name="j", size=10)
-    response = asyncio.run(bench.ainspect(job, crunch=None, raise_on_error=False))
+    response = asyncio.run(bench.ainspect(job, get_checksum=None, raise_on_error=False))
     assert response["error"] == "not allowed"
 
 
@@ -193,13 +196,13 @@ def test_an_interceptor_can_still_refuse_on_the_async_path(bench):
 def test_no_executor_exists_until_something_asynchronous_happens():
     """An application that never goes asynchronous never starts a thread."""
     orchestrator = Bench(base_classes=[Job])
-    orchestrator.inspect(Job(name="j", size=10), crunch=None)
+    orchestrator.inspect(Job(name="j", size=10), get_checksum=None)
     assert orchestrator._executor is None
     orchestrator.close()
 
 
 def test_close_shuts_the_executor_down(bench):
-    asyncio.run(bench.ainspect(Job(name="j", size=10), crunch=None))
+    asyncio.run(bench.ainspect(Job(name="j", size=10), get_checksum=None))
     assert bench._executor is not None
     bench.close()
     assert bench._executor is None
@@ -213,15 +216,15 @@ def test_close_is_safe_to_call_twice_and_when_nothing_started():
 
 def test_the_orchestrator_works_again_after_being_closed(bench):
     job = Job(name="j", size=10)
-    asyncio.run(bench.ainspect(job, crunch=None))
+    asyncio.run(bench.ainspect(job, get_checksum=None))
     bench.close()
-    assert asyncio.run(bench.ainspect(job, crunch=None)) == 285
+    assert asyncio.run(bench.ainspect(job, get_checksum=None)) == 285
 
 
 def test_it_can_be_used_as_a_context_manager():
     job = Job(name="j", size=10)
     with Bench(base_classes=[Job]) as orchestrator:
-        assert asyncio.run(orchestrator.ainspect(job, crunch=None)) == 285
+        assert asyncio.run(orchestrator.ainspect(job, get_checksum=None)) == 285
         started = orchestrator._executor
     assert started is not None
     assert orchestrator._executor is None
@@ -237,10 +240,10 @@ def test_several_requests_can_be_gathered(bench):
     interleave their results, and each gets its own answer.
     """
     jobs = [Job(name=f"j{index}", size=1000 + index) for index in range(4)]
-    expected = [job.crunch() for job in jobs]
+    expected = [job.get_checksum() for job in jobs]
 
     async def scenario():
-        return await asyncio.gather(*(bench.ainspect(job, crunch=None) for job in jobs))
+        return await asyncio.gather(*(bench.ainspect(job, get_checksum=None) for job in jobs))
 
     assert asyncio.run(scenario()) == expected
 
@@ -260,7 +263,7 @@ def test_the_loop_still_runs_while_several_requests_are_gathered(bench):
             return ticks
 
         counter = asyncio.create_task(ticking())
-        await asyncio.gather(*(bench.ainspect(job, crunch=None) for job in jobs))
+        await asyncio.gather(*(bench.ainspect(job, get_checksum=None) for job in jobs))
         stop.set()
         return await counter
 
@@ -280,10 +283,10 @@ def test_an_async_facade_answers_in_the_same_type_as_the_sync_one(bench):
 
     job = Job(name="j", size=10)
 
-    good = asyncio.run(bench.ainspect(job, crunch=None, raise_on_error=False))
+    good = asyncio.run(bench.ainspect(job, get_checksum=None, raise_on_error=False))
     assert isinstance(good, Response)
     assert good.ok is True
-    assert good.value == bench.inspect(job, crunch=None)
+    assert good.value == bench.inspect(job, get_checksum=None)
 
     # `configure` stops at the first failure, so the whole response fails -- unlike `inspect`,
     # which reads everything it can and reports each outcome.
@@ -300,7 +303,7 @@ def test_awaiting_a_response_leaves_a_cached_mapping_read_only(bench):
 
     job = Job(name="cached", size=4, use_cache=True)
 
-    snapshot = asyncio.run(bench.ainspect(job, to_dict=None))
+    snapshot = asyncio.run(bench.ainspect(job, get_snapshot=None))
 
     assert isinstance(snapshot, ReadOnlyMapping)
     assert snapshot == job.to_dict()
@@ -312,7 +315,7 @@ def test_a_method_results_mapping_keeps_its_type_through_the_await(bench):
 
     job = Job(name="j", size=10)
 
-    response = asyncio.run(bench.ainspect(job, crunch=None, double=None, raise_on_error=False))
+    response = asyncio.run(bench.ainspect(job, get_checksum=None, get="size", raise_on_error=False))
 
     assert isinstance(response["result"], MethodResults)
-    assert set(response["result"]) == {"crunch", "double"}
+    assert set(response["result"]) == {"get_checksum", "get"}

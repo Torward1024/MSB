@@ -2,15 +2,16 @@
 
 | Operation | What it does |
 | --- | --- |
-| `inspect` | Applies every method a request names and reports each outcome |
-| `configure` | The same, stopping at the first failure |
+| `inspect` | Reads: applies the reading methods a request names and reports each outcome |
+| `configure` | Changes: applies any method a request names, stopping at the first failure |
 | `catalogue` | Reports what is registered, and the shape of the model |
 | `save` | Writes an object to a file |
 | `load` | Reads one back |
 
 `inspect` and `configure` follow from the request model rather than from any domain: an attribute
-names a method, and the method either reads or writes. Operations like `calculate` are domain work
-and stay yours to write.
+names a method, and **the name says whether it reads**. A read is `get`, or a name starting with
+`get_`, `has_` or `is_`; `inspect` refuses anything else, and `configure` takes both. Operations
+like `calculate` are domain work and stay yours to write.
 
 All are registered unless a `Manipulator` is built with `builtins=False`. Registering an operation
 of the same name replaces one silently: it is a default being overridden, not a collision.
@@ -71,7 +72,7 @@ def _descend(operation: Super, obj: Any, attributes: Dict[str, Any]) -> Optional
 
 
 class Inspector(Super):
-    """Reads an object: applies every method a request names and reports each outcome.
+    """Reads an object: applies the reading methods a request names and reports each outcome.
 
     Example:
         ```python
@@ -79,6 +80,13 @@ class Inspector(Super):
         ```
 
     Notes:
+        - **Only reads.** A method is a read when its name says so -- `get`, or a name starting
+          with `get_`, `has_` or `is_` -- and a request naming anything else is refused whole,
+          before any of it runs. `inspect` and `configure` used to be the same loop with a
+          different strictness, so `inspect(box, remove="bolt")` removed the bolt and the journal
+          recorded a read: an audit that says nothing changed is worse than none.
+        - A model with a reading verb of its own -- `can_`, say -- widens `reads` in a subclass
+          rather than naming a read as something else.
         - `strict=False`: a request naming several methods reports every outcome rather than
           stopping at the first failure, since a reader usually wants the whole picture.
     """
@@ -88,6 +96,26 @@ class Inspector(Super):
     # The attribute a request uses to name one member of a collection. Change it in a
     # subclass whose model spells it differently.
     NESTED_KEY = "name"
+
+    #: What a reading method's name starts with, besides `get` on its own.
+    READING_PREFIXES = ("get_", "has_", "is_")
+
+    @classmethod
+    def reads(cls, method_name: str) -> bool:
+        """Report whether a method's name says it only reads.
+
+        Args:
+            method_name (str): The name a request uses.
+
+        Returns:
+            bool: True for `get` and for a name starting with `get_`, `has_` or `is_`.
+
+        Notes:
+            - Decided by the name alone, so it costs nothing and a caller can know the answer
+              without the object. A method that reads under another name is renamed, or a
+              subclass widens this; a method named as a read that writes is a bug in the model.
+        """
+        return method_name == "get" or method_name.startswith(cls.READING_PREFIXES)
 
     def _nested_getter(self, obj: Any) -> Optional[Callable]:
         """Return how to fetch a member of `obj` by name, or None if it holds no members.
@@ -109,7 +137,7 @@ class Inspector(Super):
         return getattr(obj, "get_item", None)
 
     def _inspect(self, obj: Any, attributes: Dict[str, Any]) -> Any:
-        """Apply every method the request names to any object.
+        """Apply every reading method the request names to any object.
 
         Args:
             obj (Any): The object to read.
@@ -117,15 +145,28 @@ class Inspector(Super):
 
         Returns:
             MethodResults: Every method that ran, mapped to its outcome.
+
+        Raises:
+            RequestError: If the request names a method that is not a read, naming it and saying
+                where a change is asked. Nothing in the request has run.
         """
         descended = _descend(self, obj, attributes)
         if descended is not None:
             return descended
+        # `NESTED_KEY` is how a request addresses a member, not a method; on an object with no
+        # members it is applied and reported as a method it does not have, as it always was.
+        refused = [name for name in attributes
+                   if name != self.NESTED_KEY and not self.reads(name)]
+        if refused:
+            named = ", ".join(f"'{name}'" for name in refused)
+            raise RequestError(
+                f"inspect only reads, and {named} on {type(obj).__name__} is not named as a read "
+                f"(get, get_*, has_*, is_*). A change is asked of configure")
         return self._apply_methods(obj, attributes, strict=False)
 
 
 class Configurator(Super):
-    """Changes an object: applies every setter a request names and reports each outcome.
+    """Changes an object: applies every method a request names and reports each outcome.
 
     Example:
         ```python
@@ -133,6 +174,9 @@ class Configurator(Super):
         ```
 
     Notes:
+        - Any method, reading ones included: changing a model is more than `set` -- a container
+          adds, removes and activates -- and a request that reads along the way is not wrong.
+          The narrow one is `inspect`, so that a request recorded as a read is one.
         - `strict=True`: the first failure stops the rest, since a half-applied configuration is
           worse than a rejected one.
         - Returns `MethodResults`, uniformly, which is what makes a request history replayable.

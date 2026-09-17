@@ -436,7 +436,7 @@ def test_a_method_a_type_does_not_have_is_not_an_error_in_the_log(caplog):
     instrument = Instrument(name="i")
 
     with caplog.at_level(logging.WARNING):
-        answer = orchestrator.inspect(instrument, no_such_method=None, raise_on_error=False)
+        answer = orchestrator.inspect(instrument, get_no_such_thing=None, raise_on_error=False)
 
-    assert answer["result"]["no_such_method"]["status"] is False
+    assert answer["result"]["get_no_such_thing"]["status"] is False
     assert caplog.records == []
