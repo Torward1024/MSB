@@ -345,6 +345,39 @@ expensive = inventory.get_by_value({"price": 25.50})
 print(len(expensive))  # 1
 ```
 
+### A name is an identity
+
+A container is keyed by the names of what it holds, so a renamed item would leave it answering
+to the old one. An entity a container holds therefore **refuses to be renamed**:
+
+```python
+from msb_arch.errors import ItemNameError
+
+inventory.add(Product(name="Sprocket", price=3.5, category="Tools"))
+
+try:
+    inventory["Sprocket"].name = "Cog"
+except ItemNameError as refused:
+    print(refused)
+# Product 'Sprocket' is held by MyContainer 'product_inventory' under that name and cannot
+# be renamed to 'Cog': a name identifies an entity. Add another and remove this one.
+
+loose = Product(name="draft", price=1.0, category="Tools")
+loose.name = "Bolt"          # nothing holds it yet
+inventory.add(loose)
+print("Bolt" in inventory)   # True
+```
+
+It applies to both paths -- `set({"name": ...})` and plain assignment -- and only while a
+container holds it. An entity held as a *field* of another entity is not keyed by its name, and
+one that belongs to nothing is free to be named: building an object, or preparing one to be
+added, is exactly that.
+
+Before this, a rename was accepted and nothing told the container. `get` stopped finding the
+item, `to_dict` wrote the old key beside the new name, and `from_dict` refused the file it had
+just been given -- naming a mismatch the user never made. Something that needs another name is
+another entity: add it, and remove the old one.
+
 ### In bulk
 
 ```python

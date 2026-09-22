@@ -19,6 +19,7 @@ from contextvars import ContextVar
 from threading import RLock
 from ..errors import (AttributeNotFoundError,
                       InvariantError,
+                      ItemNameError,
                       ResolutionError,
                       SerializationError,
                       TypeValidationError,
@@ -1614,6 +1615,42 @@ class Serializable(ABC, metaclass=EntityMeta):
               as a key makes it unreachable, exactly as for any mutable key.
         """
         return hash((type(self), self.name))
+    def _refuse_a_rename(self, wanted: Any) -> None:
+        """Refuse to rename an entity that a container holds under its name.
+
+        Args:
+            wanted (Any): The name being assigned.
+
+        Raises:
+            ItemNameError: When a container holds this entity under the name it has now.
+
+        Notes:
+            - **A container is keyed by the names of what it holds**, and nothing told it when a
+              name changed. `item.set({"name": "two"})` left the container answering to `one`,
+              `get("two")` returning None, and `to_dict` writing the old key beside the new name
+              -- a file that `from_dict` then refused, naming a mismatch the user never made.
+              Every application on this framework had it.
+            - **Refused rather than rekeyed.** A name identifies an entity: results, sessions
+              and files refer to it, and a rename that rewrote a key would leave all three
+              pointing at nothing. Something that needs another name is another entity -- add it
+              and remove the old one.
+            - Only when a container holds it. An entity held as a *field* of another entity is
+              not keyed by its name, and one that belongs to nothing is still free to be named:
+              which is what building an object, or preparing one to be added, does.
+        """
+        held = self.__dict__.get('name', _MISSING)
+        if held is _MISSING or wanted == held or not self.__dict__.get('_parents'):
+            return
+        for ref in list(self.__dict__['_parents'].values()):
+            owner = ref()
+            items = getattr(owner, '_items', None) if owner is not None else None
+            if isinstance(items, dict) and items.get(held) is self:
+                raise ItemNameError(
+                    f"{type(self).__name__} '{held}' is held by "
+                    f"{type(owner).__name__} '{getattr(owner, 'name', '?')}' under that name and "
+                    f"cannot be renamed to '{wanted}': a name identifies an entity. Add another "
+                    f"and remove this one.")
+
     def __setattr__(self, key: str, value: Any) -> None:
         """Set an attribute with type validation.
 
@@ -1635,6 +1672,8 @@ class Serializable(ABC, metaclass=EntityMeta):
             - Says nothing at DEBUG. A line per attribute write is noise at any useful volume,
               and what was requested of which object is what `RequestJournal` records.
         """
+        if key == 'name':
+            self._refuse_a_rename(value)
         if key.startswith('_') or key in _ASSIGNABLE_STATE:
             super().__setattr__(key, value)
             return

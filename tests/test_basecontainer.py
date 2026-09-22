@@ -662,3 +662,81 @@ class TestContainerAttributeIntrospection:
         assert container.has_item("item1") is True
         assert container.has_attribute("item1") is False
         assert container.has_attribute("isactive") is True
+
+
+class TestANameIsAnIdentity:
+    """A container is keyed by the names of what it holds, and nothing told it when one changed.
+
+    `item.set({"name": "two"})` left the container answering to `one`, `get("two")` returning
+    None, and `to_dict` writing the old key beside the new name -- a file `from_dict` then
+    refused, naming a mismatch the user never made. Found in an application, fixed here: every
+    application on this framework had it.
+    """
+
+    def test_an_entity_a_container_holds_refuses_to_be_renamed(self):
+        from msb_arch.errors import ItemNameError
+
+        box = TestContainer(name="box")
+        box.add(TestEntity(name="one", value=1))
+        held = box.get("one")
+
+        with pytest.raises(ItemNameError, match="cannot be renamed"):
+            held.set({"name": "two"})
+        with pytest.raises(ItemNameError, match="cannot be renamed"):
+            held.name = "two"
+
+        assert held.name == "one", "the refused rename left the entity changed"
+        assert list(box.get_all()) == ["one"]
+
+    def test_what_a_refused_rename_says(self):
+        from msb_arch.errors import ItemNameError
+
+        box = TestContainer(name="box")
+        box.add(TestEntity(name="one", value=1))
+
+        with pytest.raises(ItemNameError) as refused:
+            box.get("one").name = "two"
+
+        said = str(refused.value)
+        for part in ("TestEntity", "'one'", "TestContainer", "'box'", "'two'", "Add another"):
+            assert part in said, f"the refusal does not say {part}: {said}"
+
+    def test_a_container_that_held_a_rename_still_writes_a_file_it_can_read(self):
+        box = TestContainer(name="box")
+        box.add(TestEntity(name="one", value=1))
+        try:
+            box.get("one").name = "two"
+        except Exception:                                # refused, which is the point
+            pass
+
+        assert list(TestContainer.from_dict(box.to_dict()).get_all()) == ["one"]
+
+    def test_an_entity_nothing_holds_is_still_free_to_be_named(self):
+        """Building one, or preparing one to be added, is renaming it before anything holds it."""
+        free = TestEntity(name="draft", value=1)
+        free.set({"name": "final"})
+        assert free.name == "final"
+
+        box = TestContainer(name="box")
+        box.add(free)
+        assert list(box.get_all()) == ["final"]
+
+    def test_an_entity_held_as_a_field_is_not_keyed_by_its_name(self):
+        """Only a container keys by name. A field is a field."""
+        class Holder(BaseEntity):
+            inner: TestEntity
+
+        held = TestEntity(name="inner", value=1)
+        Holder(name="holder", inner=held)
+
+        held.name = "renamed"
+        assert held.name == "renamed"
+
+    def test_an_entity_taken_out_of_a_container_can_be_renamed_again(self):
+        box = TestContainer(name="box")
+        box.add(TestEntity(name="one", value=1))
+        loose = box.get("one")
+        box.remove("one")
+
+        loose.name = "two"
+        assert loose.name == "two"

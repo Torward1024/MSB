@@ -13,6 +13,44 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [3.1.0] - 2026-09-22
+
+A name is an identity: an entity a container holds refuses to be renamed.
+
+### Fixed
+
+- **A renamed item left its container keyed by what it used to be called.** `name` is an
+  ordinary field, so `item.set({"name": "two"})` and `item.name = "two"` were both accepted --
+  and nothing told the container that holds it under `one`. After that, `get("two")` returned
+  None, `to_dict` wrote the old key beside the new name, and `from_dict` refused the file it had
+  just been handed: `Item name 'two' does not match key 'one'`. Every application on this
+  framework had it; it was found in one, where renaming a source through the model produced a
+  project that could not be opened again, and renaming one through the interface was refused
+  with the same message -- so the feature had never worked.
+
+  An entity a container holds now refuses the rename itself, on both paths, naming both names
+  and what to do instead:
+
+  ```text
+  ItemNameError: Product 'Sprocket' is held by MyContainer 'product_inventory' under that
+  name and cannot be renamed to 'Cog': a name identifies an entity. Add another and remove
+  this one.
+  ```
+
+  **Refused rather than rekeyed.** Results, sessions and files refer to an entity by name; a
+  rename that quietly rewrote a key would leave all three pointing at nothing. Something that
+  needs another name is another entity.
+
+  It applies only while a container holds it. An entity held as a *field* of another entity is
+  not keyed by its name, and one that belongs to nothing is free to be named -- which is what
+  building an object, or preparing one to be added, does.
+
+### Upgrading from 3.0.0
+
+| What you see | Why | What to do |
+| --- | --- | --- |
+| `ItemNameError: ... cannot be renamed` | Something renamed an entity a container holds, which used to corrupt the container silently | Add an entity under the new name and remove the old one, or rename it before adding it |
+
 ## [3.0.0] - 2026-09-17
 
 One behaviour narrowed, which is why this is a major version: `inspect` reads and does nothing else.
