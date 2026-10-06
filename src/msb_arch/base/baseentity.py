@@ -61,8 +61,10 @@ class BaseEntity(Serializable):
                 if key not in self._fields:
                     raise UnknownAttributeError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
                 if key in _INTERNAL:
-                    # `__setattr__` sets these without checking, since the framework writes them
-                    # itself; a caller naming one through `set` still has to mean it.
+                    # Framework state the framework writes itself -- the type cache, the cached
+                    # mapping, the caching flag. `__setattr__` lets those through untouched, so a
+                    # caller naming one here is held to the annotation. `name` and `isactive` are
+                    # checked by `__setattr__` as well.
                     self._validate_type(key, value, self._fields.get(key))
                 setattr(self, key, value)          # which validates everything else
         finally:

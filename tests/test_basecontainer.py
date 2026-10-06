@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 from typing import Dict, Any
 from msb_arch.base.baseentity import BaseEntity, CYCLIC_REFERENCE
 from msb_arch.base.basecontainer import BaseContainer
+from msb_arch.errors import TypeValidationError
 
 
 class TestEntity(BaseEntity):
@@ -740,3 +741,34 @@ class TestANameIsAnIdentity:
 
         loose.name = "two"
         assert loose.name == "two"
+
+    def test_a_name_is_still_checked_against_its_type_on_assignment(self):
+        """The constructor refuses these two, and assignment used to accept them.
+
+        `name` and `isactive` were written straight through, so `part.name = None` built an
+        object that serialised and could then not be restored -- `from_dict` refuses a null name
+        -- and `part.isactive = "yes"` counted as neither active nor inactive while writing a
+        string where a boolean belongs.
+        """
+        free = TestEntity(name="draft", value=1)
+
+        with pytest.raises(TypeValidationError):
+            free.name = None
+        with pytest.raises(TypeValidationError):
+            free.name = 42
+        with pytest.raises(TypeValidationError):
+            free.isactive = "yes"
+        with pytest.raises(TypeValidationError):
+            free.isactive = 1
+
+        assert free.name == "draft" and free.isactive is True
+
+        free.name = "final"
+        free.isactive = False
+        assert (free.name, free.isactive) == ("final", False)
+
+    def test_what_a_renamed_object_writes_can_always_be_read_back(self):
+        free = TestEntity(name="draft", value=1)
+        free.name = "final"
+
+        assert TestEntity.from_dict(dict(free.to_dict())) == free

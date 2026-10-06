@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.1.0-brightgreen.svg)](https://github.com/Torward1024/MSB)
+[![Version](https://img.shields.io/badge/version-3.1.1-brightgreen.svg)](https://github.com/Torward1024/MSB)
 [![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](pyproject.toml)
 
 **A domain layer for Python, with no dependencies.** The model, the rules it must obey and the
@@ -294,4 +294,4 @@ Available for collaboration, contract work and support — [almax1024@gmail.com]
 - **Author**: Alexey Rudnitskiy
 - **Email**: [almax1024@gmail.com](mailto:almax1024@gmail.com)
 - **Repository**: [https://github.com/Torward1024/MSB](https://github.com/Torward1024/MSB)
-- **Version**: 3.1.0
+- **Version**: 3.1.1

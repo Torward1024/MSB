@@ -13,6 +13,25 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [3.1.1] - 2026-10-06
+
+### Fixed
+
+- **`name` and `isactive` were written without being checked.** The constructor refuses
+  `name=None` and a non-boolean `isactive`; assignment accepted both, because those two keys were
+  written straight through. What that produced:
+
+  - `part.name = None` gave an object that **serialised and could not be restored** -- `to_dict`
+    wrote a null name and `from_dict` refuses one -- and that no container would accept.
+  - `part.name = 42` gave a non-string identity, in a release whose point was that a name *is* an
+    identity.
+  - `part.isactive = "yes"` gave an object counted as neither active nor inactive, writing a
+    string where a boolean belongs, which `from_dict` then refuses.
+
+  Both are now checked against the same types the constructor checks them against, before the
+  rename rule runs. Writing an attribute is no slower: the difference between the two versions,
+  measured in alternating runs, is smaller than the machine's own spread.
+
 ## [3.1.0] - 2026-09-22
 
 A name is an identity: an entity a container holds refuses to be renamed.

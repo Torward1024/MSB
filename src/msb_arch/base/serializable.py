@@ -1671,9 +1671,18 @@ class Serializable(ABC, metaclass=EntityMeta):
               and writing to it afterwards cannot disagree about what a field accepts.
             - Says nothing at DEBUG. A line per attribute write is noise at any useful volume,
               and what was requested of which object is what `RequestJournal` records.
+            - `name` and `isactive` are checked against the same types the constructor checks
+              them against. They used to be written straight through, so `part.name = None` and
+              `part.isactive = "yes"` were accepted on an object whose constructor refuses both:
+              the result serialised and then could not be restored, and a non-boolean `isactive`
+              counted as neither active nor inactive.
         """
         if key == 'name':
+            if not isinstance(value, str):
+                self._validate_type('name', value, str)
             self._refuse_a_rename(value)
+        elif key == 'isactive' and not isinstance(value, bool):
+            self._validate_type('isactive', value, bool)
         if key.startswith('_') or key in _ASSIGNABLE_STATE:
             super().__setattr__(key, value)
             return
