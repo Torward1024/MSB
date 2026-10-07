@@ -254,3 +254,40 @@ def test_a_bool_is_not_a_number_for_a_constraint():
     """True is 1 to Python, and a rule about a size should not accept it."""
     with pytest.raises(errors.TypeValidationError):
         Positive().check(True, "size")
+
+
+def test_a_group_one_field_of_which_is_refused_writes_none_of_it():
+    """`set` applies a group together and puts the whole of it back when an `@invariant`
+    refuses it. A constraint on one field refuses inside the loop instead, so the fields
+    written before it stayed written: `set({"label": "new", "price": -1})` renamed a product
+    and then refused its price. An application cannot fix that from outside, which is why two
+    editors in pAstroCORE restated the model's own rules before writing.
+    """
+    product = make()
+    before = product.to_dict()
+
+    with pytest.raises(errors.ConstraintError):
+        product.set({"label": "renamed", "price": -1.0})
+
+    assert product.label == before["label"], "the field written before the refusal stayed"
+    assert product.to_dict() == before, "a refused group left part of itself behind"
+
+
+def test_a_group_one_field_of_which_is_the_wrong_type_writes_none_of_it():
+    """The same, for a type rather than a constraint: both raise inside the loop."""
+    product = make()
+    before = product.to_dict()
+
+    with pytest.raises(errors.TypeValidationError):
+        product.set({"label": "renamed", "stock": "many"})
+
+    assert product.to_dict() == before, "a refused group left part of itself behind"
+
+
+def test_a_group_that_is_accepted_is_written_whole():
+    """The guard must not undo a group that nothing refused."""
+    product = make()
+
+    product.set({"label": "renamed", "price": 99.0})
+
+    assert (product.label, product.price) == ("renamed", 99.0)

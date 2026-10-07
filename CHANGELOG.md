@@ -13,6 +13,29 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [3.1.2] - 2026-10-07
+
+### Fixed
+
+- **A group of attributes one of which was refused left the rest written.** `set` applies a
+  group together and puts the whole of it back when an `@invariant` refuses it. A constraint or
+  a type refuses inside the loop instead, before the rules are reached, and what had already
+  been written stayed written.
+
+  `product.set({"label": "renamed", "price": -1.0})` refused the price and renamed the product.
+  An application cannot repair that from outside, which is why one caller restated the model's
+  own rules in two dialogs before writing anything.
+
+  The old values are now kept whatever the class carries, and any refusal puts the group back.
+  Keeping them costs 0.49 us against 14.2 us for a `set` of four fields, 3.4%, measured on an
+  otherwise idle machine.
+
+### Upgrading from 3.1.1
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| A refused `set` now leaves the object as it was, where it used to leave part of the group written | The group is restored on any refusal rather than only on an `@invariant` | Nothing. Code that worked around it by re-reading the object, or by checking the values itself first, can stop |
+
 ## [3.1.1] - 2026-10-06
 
 ### Fixed

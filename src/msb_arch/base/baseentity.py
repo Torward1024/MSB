@@ -53,7 +53,9 @@ class BaseEntity(Serializable):
               If the group leaves the object breaking a rule, every attribute in it goes back.
         """
         rules = self.__class__._invariant_cache
-        restore = ({key: self.__dict__.get(key, _MISSING) for key in params} if rules else None)
+        # Kept whether or not there are rules: a constraint or a type refuses *inside* the
+        # loop, and what was written before it has to go back as well.
+        restore = {key: self.__dict__.get(key, _MISSING) for key in params}
         if rules:
             self.__dict__['_holding_invariants'] = True
         try:
@@ -67,6 +69,9 @@ class BaseEntity(Serializable):
                     # checked by `__setattr__` as well.
                     self._validate_type(key, value, self._fields.get(key))
                 setattr(self, key, value)          # which validates everything else
+        except BaseException:
+            self._put_back(restore)
+            raise
         finally:
             if rules:
                 self.__dict__.pop('_holding_invariants', None)
@@ -75,16 +80,30 @@ class BaseEntity(Serializable):
             try:
                 self.check_invariants()
             except InvariantError:
-                for key, previous in restore.items():
-                    if previous is _MISSING:
-                        self.__dict__.pop(key, None)
-                    else:
-                        object.__setattr__(self, key, previous)
-                self._invalidate_cache()
+                self._put_back(restore)
                 raise
 
         self._invalidate_cache()
         logger.debug("Updated attributes of %s: %s", self.__class__.__name__, list(params.keys()))
+
+    def _put_back(self, restore: Dict[str, Any]) -> None:
+        """Return every attribute of a refused group to what it was.
+
+        Args:
+            restore (dict): What each key held before the group was applied, `_MISSING` for
+                a key the object did not have.
+
+        Notes:
+            - Written past `__setattr__`, which would check what is already known to be good
+              and would re-run the rules this is undoing.
+        """
+        for key, previous in restore.items():
+            if previous is _MISSING:
+                self.__dict__.pop(key, None)
+            else:
+                object.__setattr__(self, key, previous)
+        self._invalidate_cache()
+
     def get(self, key: Union[str, List[str], None] = None) -> Union[Any, Dict[str, Any]]:
         """Retrieve one or more attributes of the entity.
 
