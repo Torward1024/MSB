@@ -286,6 +286,13 @@ def member_called(name: str, owner: Any) -> Optional[Any]:
             found = owner.get_item(name)
         except Exception:                                       # noqa: BLE001 - nothing of that name
             found = None
+        if found is None:
+            # An address recorded before 2026-10 names the project's own container, which is not
+            # an item and so cannot be asked for by name. Matching it here keeps those journals
+            # replayable; new addresses skip it entirely.
+            held = getattr(owner, "__dict__", {}).get("_items")
+            if getattr(held, "name", None) == name:
+                found = held
     if isinstance(found, Serializable):
         return found
 
@@ -299,6 +306,28 @@ def member_called(name: str, owner: Any) -> Optional[Any]:
         if isinstance(value, Serializable) and getattr(value, "name", None) == name:
             return value
     return None
+
+
+def _is_a_projects_own_container(obj: Any) -> bool:
+    """Return whether this is the container a `Project` keeps its items in.
+
+    Args:
+        obj (Any): A candidate owner met while walking up the ownership graph.
+
+    Returns:
+        bool: True when one of its owners holds it as its own `_items`.
+
+    Notes:
+        - Asked of the object rather than of a type, so nothing here imports `Project`.
+    """
+    owners = getattr(obj, "__dict__", _NOTHING).get("_parents")
+    if not owners:
+        return False
+    for reference in owners.values():
+        owner = reference()
+        if owner is not None and getattr(owner, "__dict__", _NOTHING).get("_items") is obj:
+            return True
+    return False
 
 
 def path_of(obj: Any) -> List[str]:
@@ -354,7 +383,12 @@ def path_of(obj: Any) -> List[str]:
         if not owner_name:
             break
         seen.add(id(owner))
-        upwards.append(owner_name)
+        # A project holds its items in a container of its own making, named after it. That
+        # container is an implementation detail: naming it in an address ties the address to the
+        # project's name a second time, and -- worse -- nothing can ask a project for it by name,
+        # so `locate` could not follow a path that mentioned it. The project is the address.
+        if not _is_a_projects_own_container(owner):
+            upwards.append(owner_name)
         current = owner
     upwards.reverse()
     return upwards

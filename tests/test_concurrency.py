@@ -186,6 +186,28 @@ class TestSerializationUnderThreads:
 
         run_in_threads(worker)
 
+    def test_serialising_while_another_thread_adds_does_not_explode(self):
+        """Not a promise about writing one object from two threads -- that stays the caller's
+        business. But a serialisation walked the live mapping, so a member arriving halfway
+        through raised `RuntimeError: dictionary changed size during iteration` out of the middle
+        of `to_dict`. It reads a snapshot of the composition now: the answer is what the
+        container held when the reader asked.
+        """
+        box = ConcurrentBox(name="box")
+        for item in range(10):
+            box.add(ConcurrentEntity(name=f"item{item}", value=item, label="x"))
+
+        def worker(index):
+            if index % 2:
+                for round_index in range(ROUNDS):
+                    box.add(ConcurrentEntity(name=f"added{index}_{round_index}",
+                                             value=round_index, label="x"))
+            else:
+                for _ in range(ROUNDS):
+                    assert isinstance(box.to_dict()["items"], dict)
+
+        run_in_threads(worker)
+
 
 class TestHandlerCacheUnderThreads:
     def test_dispatch_from_several_threads(self):

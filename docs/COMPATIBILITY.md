@@ -131,6 +131,30 @@ warning for a release and then going.
   walk, and a name is unique within a container rather than across a model. Where the answer
   matters, address the object: `locate(path)` is defined, `find(name)` is a convenience.
 
+## Behaviour corrected in 3.2.0
+
+Five promises the documentation made and the code did not keep. Each changes what an existing
+application sees, and in every case what it saw before was wrong.
+
+- **A container's and a project's own declared fields now survive a round trip, and count towards
+  equality.** `to_dict` wrote a container's fields and `from_dict` dropped them, restoring the
+  class's defaults over what the file said; a project wrote nothing about them at all. Equality
+  ignored them, so a test comparing a restored object with the original passed while the values
+  were being lost. Two objects that differ in such a field are no longer equal.
+- **A project's file carries its fields.** A project that declares none writes exactly the keys it
+  always did, so files only change shape for applications that have something more to say.
+  `isactive` is written only once it is no longer the default, the rule `schema_version` follows.
+- **`set` means the same thing everywhere.** A container checked its rules between the fields of
+  one group and kept what it had already written; a project had no `set` at all, which left a rule
+  over two of its fields impossible to satisfy. One implementation now: the group is applied
+  together, the rules are checked once at the end, and a refusal puts every field back.
+- **`save` refuses to write a state that could not be loaded.** Restoring checks an object's rules
+  and writing did not, so a file could be written and then refuse to open.
+- **A copy belongs to whoever copied it.** `deepcopy` treats a weak reference as atomic, so a
+  copied subtree kept pointing at the objects the original belonged to -- an item `add` had just
+  copied in had two owners. Addresses are built from that graph, so an address could walk into the
+  tree the copy came from.
+
 ## Behaviour widened in 1.10.0
 
 Resolving a handler now walks the object's ancestors between its own type and the operation's

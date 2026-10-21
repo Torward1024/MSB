@@ -369,11 +369,19 @@ def test_a_project_has_a_fingerprint_and_a_revision():
 
 
 def test_the_shape_of_a_saved_project_is_unchanged():
-    """Files written by earlier versions still read, so the keys stay exactly these."""
+    """Files written by earlier versions still read, so a plain project writes exactly these.
+
+    A project that has something more to say writes more: its own declared fields, and
+    `isactive` once it is no longer the default. Both follow the rule `schema_version` follows --
+    nothing extra in everybody's data for a feature most projects never use.
+    """
     project = Tasks(name="p")
     project.create_item("t1")
 
     assert sorted(dict(project.to_dict())) == ["items", "name"]
+
+    project.isactive = False
+    assert sorted(dict(project.to_dict())) == ["isactive", "items", "name"]
 
 
 def test_a_rule_about_the_project_is_checked_on_every_change():

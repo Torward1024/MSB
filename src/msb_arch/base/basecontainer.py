@@ -13,8 +13,8 @@ from typing import (Dict,
                     get_type_hints, 
                     get_args, 
                     get_origin)
-from ..base.serializable import (CYCLIC_REFERENCE, SCHEMA_FIELD, Serializable, _TRAVERSAL,
-                                 _read_only)
+from ..base.serializable import (CYCLIC_REFERENCE, SCHEMA_FIELD, Serializable, _MISSING,
+                                 _TRAVERSAL, _read_only)
 from ..errors import (AttributeNotFoundError,
                       ConstraintError,
                       DuplicateNameError,
@@ -28,6 +28,9 @@ from ..errors import (AttributeNotFoundError,
 from ..utils.logging_setup import logger
 
 T = TypeVar('T', bound=Serializable)
+
+#: Keys `from_dict` restores itself, so `_declared_payload` leaves them to it.
+_RESTORED_SEPARATELY = frozenset(("name", "isactive", "items", "type"))
 
 class BaseContainer(Serializable, ABC, Generic[T]):
     """Abstract base class for managing a collection of objects addressed by name.
@@ -119,7 +122,8 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             "Make sure you use BaseContainer[YourType] syntax."
         )
 
-    def __init__(self, items: Dict[str, T] = None, name: str = None, isactive: bool = True, use_cache: bool = False):
+    def __init__(self, items: Dict[str, T] = None, name: str = None, isactive: bool = True,
+                 use_cache: bool = False, **fields: Any):
         """Initialize the BaseContainer with a name, activation status, and optional items.
 
         Args:
@@ -127,6 +131,10 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             name (str, optional): An optional identifier for the container. Defaults to None.
             isactive (bool): Initial activation status of the container. Defaults to True.
             use_cache (bool): Enable caching for `to_dict` results. Defaults to False.
+            **fields (Any): Values for the container's own annotated fields, exactly as an
+                entity takes them. A container that declares `role: str = "spare"` is built with
+                `Shelf(name="s", role="main")`, and that field is written, restored and compared
+                like any other.
 
         Raises:
             TypeError: If items or its values do not match expected types.
@@ -154,6 +162,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         self._item_type = item_type
         
         super().__init__(
+            **fields,
             name=name,
             isactive=isactive,
             _items=initial_items,
@@ -451,27 +460,22 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         return self.get_by_value({"isactive": False})
     
     def set(self, params: Dict[str, Any]) -> None:
-        """Set container attributes from a dictionary with type validation.
+        """Write several fields at once, and the items with them.
 
         Args:
-            params (Dict[str, Any]): Dictionary with attribute names and values to update.
+            params (Dict[str, Any]): Field names mapped to values. `_items` is routed to
+                `set_items`, so a caller can replace the contents and some fields in one call.
 
-        Raises:
-            ValueError: If an attribute is not defined in the class annotations.
-            TypeError: If an attribute value does not match its annotated type.
+        Notes:
+            - Everything else is `Serializable.set`: the group is applied together, the rules are
+              checked once at the end, and a refusal puts every field back.
         """
-        for key, value in params.items():
-            if key == "_items":
-                self.set_items(value)
-            elif key not in self._fields:
-                raise UnknownAttributeError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
-            else:
-                expected_type = self._resolve_type(self._fields[key])
-                self._validate_type(key, value, expected_type)
-                setattr(self, key, value)
-        if self._use_cache and hasattr(self, '_cached_to_dict'):
-            self._cached_to_dict = None
-        logger.debug("Updated attributes of %s: %s", self.__class__.__name__, params)
+        items = params.get("_items", _MISSING)
+        if items is not _MISSING:
+            params = {key: value for key, value in params.items() if key != "_items"}
+            self.set_items(items)
+        if params:
+            super().set(params)
 
     def set_items(self, items: Dict[str, T]) -> None:
         """Set or replace all items in the container.
@@ -534,7 +538,7 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             BaseContainer[T]: A new instance of the same class with identical items.
         """
         if deep:
-            new_items = {name: item.clone() for name, item in self._items.items()}
+            new_items = {name: item.clone() for name, item in list(self._items.items())}
         else:
             new_items = self._items.copy()
         return self.__class__(items=new_items, name=self.name, isactive=self.isactive, use_cache=self._use_cache)
@@ -650,7 +654,11 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         try:
             data = super().to_dict()
             items_dict = {}
-            for name, item in self._items.items():
+            # A snapshot of the mapping, not of the items: serialising takes a while, and a
+            # thread adding a member meanwhile would otherwise raise "dictionary changed size
+            # during iteration" out of the middle of it. The reader gets the composition as it
+            # was when it asked, which is what a serialisation is.
+            for name, item in list(self._items.items()):
                 if id(item) in seen:
                     if handle_cyclic_refs == "raise":
                         raise SerializationError(f"Cyclic reference detected for item '{name}'")
@@ -730,7 +738,10 @@ class BaseContainer(Serializable, ABC, Generic[T]):
                 items[key] = selected_type.from_dict(item_data)
             except TypeError as e:
                 raise SerializationError(f"Failed to deserialize item '{key}' in {cls.__name__}: {str(e)}") from e
-        return cls(items=items, name=data.get("name"), isactive=data.get("isactive", True))
+        # The container's own declared fields, which `to_dict` has always written and this used
+        # to drop -- restoring the class's defaults over what the file said.
+        return cls(items=items, name=data.get("name"), isactive=data.get("isactive", True),
+                   **cls._declared_payload(data, _RESTORED_SEPARATELY))
     
     def __iter__(self) -> Iterator[T]:
         """Iterate over the items in the container.
@@ -800,9 +811,15 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         """
         if not isinstance(other, self.__class__):
             return False
-        return (self.name == other.name and
+        if not (self.name == other.name and
                 self.isactive == other.isactive and
-                self.get_all() == other.get_all())
+                self.get_all() == other.get_all()):
+            return False
+        # The container's own fields count too. Leaving them out made every round-trip test of a
+        # container that declares any of them pass while the values were being lost.
+        return all(getattr(self, field, None) == getattr(other, field, None)
+                   for field in self.__class__._written_fields()
+                   if field not in ("name", "isactive"))
 
     __hash__ = Serializable.__hash__
 

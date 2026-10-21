@@ -14,7 +14,7 @@ from typing import (Dict,
 import json
 import hashlib
 import weakref
-from copy import copy
+from copy import copy, deepcopy
 from contextvars import ContextVar
 from threading import RLock
 from ..errors import (AttributeNotFoundError,
@@ -382,6 +382,43 @@ class Serializable(ABC, metaclass=EntityMeta):
             _CACHING_OBJECTS[id(self)] = self
 
         logger.debug("Initialized %s instance with name=%s, isactive=%s", self.__class__.__name__, name, isactive)
+    def __deepcopy__(self, memo: Dict[int, Any]) -> 'Serializable':
+        """Return a copy that belongs to nobody until something adopts it.
+
+        Args:
+            memo (Dict[int, Any]): The identities `deepcopy` has already copied.
+
+        Returns:
+            Serializable: A deep copy, with no owners and no cached serialization of its own.
+
+        Notes:
+            - **Ownership is not copied.** `deepcopy` treats a weak reference as atomic, so a
+              copied subtree used to keep pointing at the objects the original belonged to: the
+              item `add` had just copied into a container had two owners, the container and the
+              original's container, and an address built from the ownership graph could walk into
+              the tree the copy came from. Dropping them here lets `_adopt` record exactly the
+              owners the copy really has.
+            - The cached mapping is the original's. A copy starts without one and fills it on
+              demand, registering itself so invalidation can find it.
+        """
+        copied = self.__class__.__new__(self.__class__)
+        memo[id(self)] = copied
+        for key, value in self.__dict__.items():
+            if key == '_parents':
+                # Not copied at all: the weak references point at the original's owners, and
+                # `deepcopy` hands back the very same references. `_adopt` records the owners the
+                # copy really has, below and when something takes it.
+                continue
+            object.__setattr__(copied, key,
+                               None if key == '_cached_to_dict' else deepcopy(value, memo))
+        if copied.__dict__.get('_use_cache'):
+            _CACHING_OBJECTS[id(copied)] = copied
+        # The copy's own parts belong to the copy. Dropping ownership without rebuilding it
+        # inside left a copy whose members had no owner at all, so writing to one of them
+        # refreshed nothing and the copy's cached mapping went stale.
+        copied._adopt()
+        return copied
+
     def _adopt(self, owner: Optional['Serializable'] = None, _seen: Optional[Set[int]] = None) -> None:
         """Record ownership for this entity and for everything it holds.
 
@@ -675,6 +712,110 @@ class Serializable(ABC, metaclass=EntityMeta):
                 declared = vars(klass)[field]
                 return declared, isinstance(declared, _MUTABLE_STARTS)
         return None, False
+
+    def set(self, params: Dict[str, Any]) -> None:
+        """Write several fields at once, as one change.
+
+        Args:
+            params (Dict[str, Any]): Field names mapped to the values to write.
+
+        Raises:
+            TypeValidationError: If a value does not match the field's annotation.
+            UnknownAttributeError: If a name is not a field of this class.
+            InvariantError: If the group leaves the object breaking one of its own rules.
+
+        Notes:
+            - Only fields the class declares can be written.
+            - **A group is applied together.** Rules declared with `@invariant` are checked once,
+              at the end, rather than between two fields that have to move together -- which is
+              what makes `end` and `start` settable at all when one must stay after the other.
+              If anything refuses the group -- a type, a constraint or a rule -- every field in it
+              goes back.
+            - Lives here so that an entity, a container and a project all mean the same thing by
+              it. A container used to check its rules between fields and keep what it had already
+              written; a project had no `set` at all, which left a rule across two of its fields
+              impossible to satisfy.
+        """
+        rules = self.__class__._invariant_cache
+        # Kept whether or not there are rules: a constraint or a type refuses *inside* the
+        # loop, and what was written before it has to go back as well.
+        restore = {key: self.__dict__.get(key, _MISSING) for key in params}
+        if rules:
+            self.__dict__['_holding_invariants'] = True
+        try:
+            for key, value in params.items():
+                if key not in self._fields:
+                    raise UnknownAttributeError(f"Unknown attribute '{key}' for {self.__class__.__name__}")
+                if key in _INTERNAL:
+                    # Framework state the framework writes itself -- the type cache, the cached
+                    # mapping, the caching flag. `__setattr__` lets those through untouched, so a
+                    # caller naming one here is held to the annotation. `name` and `isactive` are
+                    # checked by `__setattr__` as well.
+                    self._validate_type(key, value, self._fields.get(key))
+                setattr(self, key, value)          # which validates everything else
+        except BaseException:
+            self._put_back(restore)
+            raise
+        finally:
+            if rules:
+                self.__dict__.pop('_holding_invariants', None)
+
+        if rules:
+            try:
+                self.check_invariants()
+            except InvariantError:
+                self._put_back(restore)
+                raise
+
+        self._invalidate_cache()
+        logger.debug("Updated attributes of %s: %s", self.__class__.__name__, list(params.keys()))
+
+    def _put_back(self, restore: Dict[str, Any]) -> None:
+        """Return every attribute of a refused group to what it was.
+
+        Args:
+            restore (dict): What each key held before the group was applied, `_MISSING` for
+                a key the object did not have.
+
+        Notes:
+            - Written past `__setattr__`, which would check what is already known to be good
+              and would re-run the rules this is undoing.
+        """
+        for key, previous in restore.items():
+            if previous is _MISSING:
+                self.__dict__.pop(key, None)
+            else:
+                object.__setattr__(self, key, previous)
+        self._invalidate_cache()
+
+    @classmethod
+    def _declared_payload(cls, data: Dict[str, Any], skip: frozenset) -> Dict[str, Any]:
+        """Return the declared fields a serialized mapping carries, ready for the constructor.
+
+        Args:
+            data (Dict[str, Any]): A mapping `to_dict` produced.
+            skip (frozenset): Keys the caller restores itself -- `name`, `items`, `type`.
+
+        Returns:
+            Dict[str, Any]: Field name to restored value, for every declared public field the
+                mapping mentions. Each value goes through `_deserialize_value`, so a nested
+                entity, a tuple or a `Type[X]` comes back as its annotation declares.
+
+        Notes:
+            - A container and a project write their own fields like any other object, and used to
+              drop them on the way back in: the mapping said `role='encoder'` and the restored
+              object said `role='associative'`, which `__eq__` then called equal.
+            - Keys the class never declared are left alone rather than refused, because a
+              container's mapping carries `items` and `type` beside its fields.
+        """
+        resolved = cls._resolved_fields()
+        payload = {}
+        for key, value in data.items():
+            if key in skip or key.startswith('_') or key not in resolved:
+                continue
+            payload[key] = cls._deserialize_value(value, resolved[key], f"{cls.__name__}.{key}",
+                                                  cls.DISCRIMINATORS.get(key))
+        return payload
 
     @classmethod
     def _written_fields(cls) -> tuple:

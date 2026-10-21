@@ -483,6 +483,12 @@ Get item by name.
 
 **Returns:** Item instance
 
+##### `set(params: Dict[str, Any]) -> None`
+
+Write several of the project's own fields as one change: the rules are checked once at the end, and
+if anything refuses the group every field in it goes back. The same method an entity and a
+container have.
+
 ##### `get_items() -> List[BaseEntity]`
 
 Every item the project holds, in the order they were added — the same thing

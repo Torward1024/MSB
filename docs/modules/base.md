@@ -266,7 +266,10 @@ except errors.InvariantError:
 assert window.end == 2.0                      # the write was undone
 ```
 
-Two fields that must move together are set together. `set` applies the whole group and checks
+Two fields that must move together are set together, and `set` means the same thing on an
+entity, a container and a project -- one implementation, since a container used to check its
+rules between the fields of one group and keep what it had already written, and a project had
+no `set` at all. `set` applies the whole group and checks
 once at the end, which is what makes such a rule satisfiable at all:
 
 ```python
@@ -292,6 +295,18 @@ class Antennas(BaseContainer[Antenna]):
 rack = Antennas(name="rack")
 rack.add(Antenna(name="a1"))
 ```
+
+**A rule over a whole aggregate** -- "every edge joins a zone that exists", where the edges and the
+zones are two members the aggregate holds -- is checked when the aggregate itself changes, when it
+is built, when it is restored, when it is **saved**, and whenever the application asks
+(`check_invariants()`). It is deliberately **not** checked after every change inside a member:
+measured on an aggregate of 512 members, one such check costs 106 µs against 7.8 µs for adding a
+member, so checking after each one would make assembling the aggregate quadratic. An application
+that wants a guard after every structural change has the interceptor chain, which sees every
+request.
+
+Writing is what closes the gap that leaves: `save` refuses to write a state that breaks a rule,
+because restoring checks them -- otherwise a file could be written and then refuse to open.
 
 | | |
 | --- | --- |
@@ -378,6 +393,30 @@ item, `to_dict` wrote the old key beside the new name, and `from_dict` refused t
 just been given -- naming a mismatch the user never made. Something that needs another name is
 another entity: add it, and remove the old one.
 
+### A container has fields of its own
+
+A container is not only a collection: it can declare fields like an entity, and they are treated
+like an entity's. They are passed at construction, written, restored, compared and guarded:
+
+```python
+class Shelf(BaseContainer[Product]):
+    role: str = "spare"
+    capacity: int = 100
+
+shelf = Shelf(name="front", role="main", capacity=20)
+shelf.add(Product(name="Widget", price=10.99, category="Tools"))
+
+restored = Shelf.from_dict(dict(shelf.to_dict()))
+assert (restored.role, restored.capacity) == ("main", 20)
+assert restored == shelf
+assert shelf != Shelf(name="front", role="spare", capacity=20)
+```
+
+Until 3.2.0 those fields were second class: the constructor refused them, `from_dict` dropped them
+and restored the class's defaults over what the file said, and `__eq__` left them out -- so a
+round-trip test comparing the restored object with the original passed while the values were being
+lost. A `Project` is the same in this respect, and wrote nothing about them at all.
+
 ### In bulk
 
 ```python
@@ -463,6 +502,30 @@ new_inventory = MyContainer.from_dict(data)   # a concrete subclass, not the gen
 | `__setitem__(key, value)` | Sets an item by key |
 | `__delitem__(key)` | Deletes an item by key |
 | `__contains__(key)` | Checks if an item is in the container |
+
+### A copy belongs to whoever copied it
+
+`add` stores a copy by default, and a copy starts owned by nobody until something adopts it:
+
+```python
+class Boxes(BaseContainer[MyContainer]):
+    pass
+
+loose = MyContainer(name="box")
+loose.add(Product(name="Widget", price=10.99, category="Tools"))
+shelf_of_boxes = Boxes(name="shelf")
+shelf_of_boxes.add(loose)                      # a copy goes in
+
+held = shelf_of_boxes.get("box")
+owners = [reference() for reference in held.get("Widget").__dict__["_parents"].values()]
+assert owners == [held]                        # the copy's item belongs to the copy
+```
+
+This matters because the ownership graph is what an address is built from, and what cache
+invalidation climbs. `deepcopy` treats a weak reference as atomic, so before 3.2.0 a copied
+subtree kept pointing at the objects the original belonged to: an item had two owners, the
+container it was just put into and the original's container, and an address could walk into the
+tree the copy came from. A copy's own parts now belong to the copy.
 
 ### The cached serialization is a snapshot
 

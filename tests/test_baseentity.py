@@ -101,8 +101,9 @@ class TestBaseEntitySet:
         with pytest.raises(TypeError):
             test_entity.set({"value": "invalid"})
 
-    @patch('msb_arch.base.baseentity.logger')
+    @patch('msb_arch.base.serializable.logger')
     def test_set_logs(self, mock_logger, test_entity):
+        # `set` is one implementation on `Serializable` now, so that is where it logs from.
         test_entity.set({"value": 100})
         mock_logger.debug.assert_called()
 

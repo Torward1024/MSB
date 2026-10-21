@@ -13,6 +13,84 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [3.2.0] - 2026-10-21
+
+Reported from downstream, where a model of a brain was being put on MSB. Seven defects, all
+reproduced here before anything was changed; five of them were one thing seen from different
+sides -- a container and a project did not really own the fields they declared.
+
+### Fixed
+
+- **A container and a project keep their own declared fields.** The constructor refused them,
+  `from_dict` dropped them -- restoring the class's defaults over what the file said -- and a
+  project never wrote them at all, in the one class the documentation calls the thing an
+  application writes to a file. They are now passed at construction, written, restored and
+  compared:
+
+  ```python
+  class Shelf(BaseContainer[Product]):
+      role: str = "spare"
+
+  shelf = Shelf(name="front", role="main")
+  assert Shelf.from_dict(dict(shelf.to_dict())) == shelf        # and role is still "main"
+  ```
+
+- **Equality counts those fields.** This is what kept the loss invisible: a round-trip test
+  comparing the restored object with the original passed while every one of those values was being
+  replaced by a default. Two objects differing in such a field are no longer equal.
+
+- **`save` refuses to write a state that could not be loaded.** Restoring checks an object's rules;
+  writing did not. So a project whose rule was broken saved cleanly and then failed to open --
+  which, for an application whose file is its accumulated work, is the whole of it.
+
+  A rule over a whole aggregate stays checked when the aggregate itself changes, on build, on
+  restore, at save, and on demand. It is still **not** checked after every change inside a member
+  it holds, and that is deliberate: measured on 512 members, one such check costs 106 us against
+  7.8 us for adding a member, so checking after each one would make assembling the aggregate
+  quadratic. An application wanting a guard after every structural change has the interceptor
+  chain.
+
+- **An address round-trips through a nested project.** A project holds its items in a container of
+  its own making, named after it, and that container was named in the address -- which nothing can
+  ask a project for, so `locate` could not follow the path. Addresses skip it now, and one recorded
+  before this release still resolves, so journals on disk stay replayable.
+
+- **A copy belongs to whoever copied it.** `deepcopy` treats a weak reference as atomic, so a
+  copied subtree kept pointing at the objects the original belonged to: the item `add` had just
+  copied into a container had two owners, and an address built from the ownership graph could walk
+  into the tree the copy came from. A copy now starts owned by nobody and adopts its own parts --
+  which also means its cached serialization follows its own writes rather than going stale.
+
+- **Serialising a container no longer trips over a member arriving.** `to_dict` walked the live
+  mapping, so another thread adding a member halfway through raised `RuntimeError: dictionary
+  changed size during iteration` out of the middle of it. It reads a snapshot of the composition
+  now -- 304 us against 303 us over 200 members, which is the cost of one shallow copy. Writing one
+  object from two threads is still the caller's business; blowing up in the middle of a read was
+  not a reasonable way to say so.
+
+- **A project adopts the container it keeps.** Ownership is walked through declared fields, and
+  `_items` is framework state rather than a field, so a copied project's container had no owner and
+  the chain an address is built from stopped there.
+
+### Changed
+
+- **One `set`, on `Serializable`.** A container checked its rules between the fields of one group
+  and kept what it had already written when one was refused; a project had no `set` at all, which
+  left a rule over two of its fields impossible to satisfy -- the one thing the `@invariant`
+  documentation says `set` is for. The group is now applied together, the rules are checked once at
+  the end, and a refusal puts every field back, whichever of the three it is. A container still
+  routes `_items` to `set_items`, which is its own business.
+
+### Added
+
+- `Project.set(params)`, by inheritance.
+
+### Upgrading from 3.1.2
+
+Read the five corrections in [`COMPATIBILITY.md`](docs/COMPATIBILITY.md#behaviour-corrected-in-320).
+Nothing to do unless an application relied on one of the wrong answers: a test asserting that two
+objects differing in a declared field are equal, or a save of a state that breaks its own rules.
+
 ## [3.1.2] - 2026-10-07
 
 ### Fixed

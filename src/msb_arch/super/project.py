@@ -1,7 +1,7 @@
 # super/project.py
 from abc import ABC, abstractmethod
 from threading import RLock
-from typing import Dict, Any, Optional, Type, List, TypeVar
+from typing import Dict, Any, Optional, Set, Type, List, TypeVar
 from ..utils.validation import check_non_empty_string
 from ..errors import DuplicateNameError, InvariantError, SerializationError, TypeValidationError
 from ..utils.logging_setup import logger
@@ -9,6 +9,9 @@ from ..base.basecontainer import BaseContainer
 from ..base.baseentity import BaseEntity
 from ..base.serializable import Serializable
 T = TypeVar('T', bound=Serializable)
+
+#: Keys `from_dict` restores itself, so `_declared_payload` leaves them to it.
+_RESTORED_SEPARATELY = frozenset(("name", "isactive", "items", "type"))
 
 class Project(Serializable, ABC):
     """A named collection of entities with a factory for creating them.
@@ -46,12 +49,16 @@ class Project(Serializable, ABC):
     # classes that compare unequal.
     _container_lock = RLock()
 
-    def __init__(self, name: str = "DEFAULT_PROJECT", items: Optional[Dict[str, BaseEntity]] = None):
+    def __init__(self, name: str = "DEFAULT_PROJECT", items: Optional[Dict[str, BaseEntity]] = None,
+                 isactive: bool = True, **fields: Any):
         """Initialize a Project with a name and an optional dictionary of BaseEntity items.
 
         Args:
             name (str): The name of the project. Must be a non-empty string. Defaults to "DEFAULT_PROJECT".
             items (Optional[Dict[str, BaseEntity]]): Optional dictionary of BaseEntity items to initialize the project with. Defaults to None.
+            isactive (bool): Initial activation status. Defaults to True.
+            **fields (Any): Values for the project's own annotated fields, exactly as an entity
+                takes them -- `Zone(name="v1", role="encoder")`.
 
         Raises:
             ValueError: If the name is not a non-empty string.
@@ -61,7 +68,7 @@ class Project(Serializable, ABC):
         # exist until three lines further down. Held back over the base constructor and run once
         # the project is whole.
         self.__dict__['_holding_invariants'] = True
-        super().__init__(name=name)
+        super().__init__(name=name, isactive=isactive, **fields)
         # Set past `__setattr__`: `_items` is framework state, and the container adopts the
         # project as its owner so that an item's address runs through the project.
         object.__setattr__(self, '_items', self._create_container(items=items, name=f"{name}_items"))
@@ -70,6 +77,28 @@ class Project(Serializable, ABC):
         if self.__class__._invariant_cache:
             self.check_invariants()
         logger.debug("Initialized project '%s' with %s items", name, len(self._items))
+
+    def _adopt(self, owner: Optional['Serializable'] = None, _seen: Optional[Set[int]] = None) -> None:
+        """Record ownership for this project, its fields and the container it keeps.
+
+        Args:
+            owner (Optional[Serializable]): Whatever is taking ownership of the project.
+            _seen (Optional[Set[int]]): Internal. Identities already visited.
+
+        Notes:
+            - Extends `Serializable._adopt` to cover `_items`, which is framework state rather
+              than a declared field and so is not walked as one -- the same reason
+              `BaseContainer` extends it. Without this a copied project's container had no
+              owner, which broke the chain an address is built from: the address of a column
+              inside a copied zone started at the zone's private container and went no further.
+        """
+        seen = set() if _seen is None else _seen
+        if id(self) in seen:
+            return
+        super()._adopt(owner, seen)
+        held = self.__dict__.get('_items')
+        if held is not None:
+            held._adopt(self, seen)
 
     @classmethod
     def _create_container(cls, items: Optional[Dict[str, BaseEntity]] = None, name: str = None) -> BaseContainer:
@@ -373,6 +402,18 @@ class Project(Serializable, ABC):
             Dict[str, Any]: A dictionary containing the project's name and serialized items.
         """
         data = {"name": self.name, "items": self._items.to_dict()["items"]}
+        if self.isactive is not True:
+            # Written only by a project that has actually been deactivated, so a file saved by an
+            # application that never touches this is byte for byte what it always was -- the same
+            # rule `schema_version` follows, and for the same reason.
+            data["isactive"] = self.isactive
+        # The project's own fields. They were left out entirely, so a project that declared any
+        # of them wrote a file that said nothing about them and read back the class's defaults --
+        # in the one class the documentation calls "the thing an application writes to a file".
+        for field in self.__class__._written_fields():
+            if field in ("name", "isactive"):
+                continue
+            data[field] = self._serialize_value(getattr(self, field, None), set())
         if self.SCHEMA_VERSION != 1:
             # Written only by a project that has actually versioned itself, so a file saved
             # by an application that never touches this is byte for byte what it always was.
@@ -441,7 +482,8 @@ class Project(Serializable, ABC):
                 except (TypeError, ValueError) as e:
                     logger.error("Failed to deserialize item '%s' for project: %s", k, str(e))
                     raise SerializationError(f"Invalid data for item '{k}': {str(e)}") from e
-            return cls(name=data["name"], items=items)
+            return cls(name=data["name"], items=items, isactive=data.get("isactive", True),
+                       **cls._declared_payload(data, _RESTORED_SEPARATELY))
         except (KeyError, TypeError, ValueError) as e:
             logger.error("Failed to deserialize Project from dict with name '%s': %s", data.get('name', 'unknown'), str(e))
             raise SerializationError(f"Invalid project data: {str(e)}") from e
@@ -462,7 +504,14 @@ class Project(Serializable, ABC):
         """
         if not isinstance(other, self.__class__):
             return NotImplemented if not isinstance(self, other.__class__) else False
-        return self.name == other.name and self._items == other._items
+        if not (self.name == other.name and self.isactive == other.isactive
+                and self._items == other._items):
+            return False
+        # Its own fields count too. Without them a round trip that lost every one of them still
+        # compared equal, which is what kept the loss invisible.
+        return all(getattr(self, field, None) == getattr(other, field, None)
+                   for field in self.__class__._written_fields()
+                   if field not in ("name", "isactive"))
 
     def __hash__(self) -> int:
         """Projects are mutable; hashing one by identity keeps it usable as a dict key."""

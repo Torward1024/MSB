@@ -316,6 +316,40 @@ assert tasks.get_item("design").priority == 1
 `get_items()` returns the items and `get_all()` returns them by name -- the same pair a container
 has, so a function written for one works on the other.
 
+### It has fields of its own
+
+A project declares fields like anything else, and they are passed at construction, written to the
+file, restored from it and compared:
+
+```python
+class Sprint(Tasks):
+    goal: str = ""
+    capacity: int = 10
+
+sprint = Sprint(name="s1", goal="ship it", capacity=3)
+sprint.create_item("design")
+
+restored = Sprint.from_dict(dict(sprint.to_dict()))
+assert (restored.goal, restored.capacity) == ("ship it", 3)
+assert restored == sprint
+```
+
+`set` writes several of them as one change, with the rules checked once at the end and the whole
+group put back if anything refuses:
+
+```python
+sprint.set({"goal": "ship it twice", "capacity": 6})
+assert (sprint.goal, sprint.capacity) == ("ship it twice", 6)
+```
+
+Before 3.2.0 a project wrote nothing about its own fields -- in the one class the documentation
+calls the thing an application writes to a file -- restored the class's defaults over whatever the
+file said, called two projects with different fields equal, and had no `set`, which left a rule
+over two of its fields impossible to satisfy.
+
+A project with no fields of its own writes the two keys it always did, so files do not change
+shape for applications that never declare any.
+
 ### What it offers
 
 | Doing | Method |
