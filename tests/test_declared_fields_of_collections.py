@@ -170,3 +170,83 @@ def test_a_container_still_replaces_its_items_through_set():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# --- a subclass with a constructor of its own ------------------------------------------------------
+
+class NarrowShelf(BaseContainer[Col]):
+    """The common shape downstream: a constructor that names what it takes and nothing more."""
+
+    role: str = "spare"
+
+    def __init__(self, items=None, name=None, isactive=True, use_cache=False):
+        super().__init__(items=items, name=name, isactive=isactive, use_cache=use_cache)
+
+
+class NarrowZone(Project):
+    _item_type = Col
+
+    role: str = "spare"
+
+    def __init__(self, name="NARROW", items=None):
+        super().__init__(name=name, items=items)
+
+    def create_item(self, item_code: str = "ITEM", isactive: bool = True) -> None:
+        self.add_item(Col(name=item_code))
+
+
+def test_a_container_whose_constructor_is_narrow_still_restores_its_fields():
+    """`from_dict` must not hand a class keywords its constructor never asked for.
+
+    Caught by an application downstream whose project declares `__init__(self, name, items)`:
+    3.2.0 passed the fields as keywords and every `from_dict` raised `TypeError`. Where the
+    constructor cannot take them, they are applied after it -- as one group, so the rules are
+    still checked once.
+    """
+    shelf = NarrowShelf(name="front")
+    shelf.role = "main"
+    shelf.add(Col(name="c0"))
+
+    restored = NarrowShelf.from_dict(json.loads(json.dumps(dict(shelf.to_dict()))))
+
+    assert restored.role == "main"
+    assert restored == shelf
+
+
+def test_a_project_whose_constructor_is_narrow_still_restores_its_fields():
+    zone = NarrowZone(name="v1")
+    zone.role = "main"
+    zone.create_item("c0")
+
+    restored = NarrowZone.from_dict(json.loads(json.dumps(dict(zone.to_dict()))))
+
+    assert restored.role == "main"
+    assert restored == zone
+
+
+def test_a_narrow_project_restores_an_inactive_flag_too():
+    zone = NarrowZone(name="v1")
+    zone.isactive = False
+
+    assert NarrowZone.from_dict(dict(zone.to_dict())).isactive is False
+
+
+def test_a_rule_over_restored_fields_is_checked_once_on_a_narrow_subclass():
+    class Banded(NarrowZone):
+        capacity: int = 10
+
+        @invariant("capacity must fit the role")
+        def _fits(self) -> bool:
+            return self.capacity <= (5 if self.role == "main" else 100)
+
+    sound = Banded(name="v1")
+    sound.set({"role": "main", "capacity": 5})
+
+    assert Banded.from_dict(dict(sound.to_dict())) == sound
+
+    broken = dict(sound.to_dict())
+    broken["capacity"] = 50
+    # Restoring wraps what went wrong in `SerializationError` -- data that cannot be read is
+    # what the caller asked about -- and carries the rule in the message.
+    with pytest.raises(errors.SerializationError, match="capacity must fit the role"):
+        Banded.from_dict(broken)

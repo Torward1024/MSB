@@ -789,6 +789,33 @@ class Serializable(ABC, metaclass=EntityMeta):
         self._invalidate_cache()
 
     @classmethod
+    def _takes_field_kwargs(cls) -> bool:
+        """Report whether this class's constructor accepts arbitrary field keywords.
+
+        Returns:
+            bool: True when `__init__` has a `**kwargs` of its own.
+
+        Notes:
+            - A subclass is free to write a narrower constructor -- `__init__(self, name, items)`
+              is a common and reasonable one -- and `from_dict` must not hand such a class
+              keywords it never asked for. Where it cannot, the fields are applied after
+              construction instead.
+            - Worked out once per class: reading a signature is not something to do per object.
+        """
+        cached = cls.__dict__.get('_field_kwargs_cache')
+        if cached is not None:
+            return cached
+
+        from inspect import Parameter, signature
+        try:
+            takes = any(parameter.kind is Parameter.VAR_KEYWORD
+                        for parameter in signature(cls.__init__).parameters.values())
+        except (TypeError, ValueError):                 # a constructor that cannot be read
+            takes = False
+        type.__setattr__(cls, '_field_kwargs_cache', takes)
+        return takes
+
+    @classmethod
     def _declared_payload(cls, data: Dict[str, Any], skip: frozenset) -> Dict[str, Any]:
         """Return the declared fields a serialized mapping carries, ready for the constructor.
 

@@ -482,8 +482,19 @@ class Project(Serializable, ABC):
                 except (TypeError, ValueError) as e:
                     logger.error("Failed to deserialize item '%s' for project: %s", k, str(e))
                     raise SerializationError(f"Invalid data for item '{k}': {str(e)}") from e
-            return cls(name=data["name"], items=items, isactive=data.get("isactive", True),
-                       **cls._declared_payload(data, _RESTORED_SEPARATELY))
+            fields = cls._declared_payload(data, _RESTORED_SEPARATELY)
+            isactive = data.get("isactive", True)
+            if cls._takes_field_kwargs():
+                return cls(name=data["name"], items=items, isactive=isactive, **fields)
+            # A subclass that wrote its own constructor takes the two arguments it declared --
+            # `__init__(self, name, items)` is the common shape -- so the rest is applied after
+            # it, as one group, with the rules checked once.
+            restored = cls(name=data["name"], items=items)
+            if isactive is not True:
+                restored.isactive = isactive
+            if fields:
+                restored.set(fields)
+            return restored
         except (KeyError, TypeError, ValueError) as e:
             logger.error("Failed to deserialize Project from dict with name '%s': %s", data.get('name', 'unknown'), str(e))
             raise SerializationError(f"Invalid project data: {str(e)}") from e

@@ -740,8 +740,16 @@ class BaseContainer(Serializable, ABC, Generic[T]):
                 raise SerializationError(f"Failed to deserialize item '{key}' in {cls.__name__}: {str(e)}") from e
         # The container's own declared fields, which `to_dict` has always written and this used
         # to drop -- restoring the class's defaults over what the file said.
-        return cls(items=items, name=data.get("name"), isactive=data.get("isactive", True),
-                   **cls._declared_payload(data, _RESTORED_SEPARATELY))
+        fields = cls._declared_payload(data, _RESTORED_SEPARATELY)
+        if fields and cls._takes_field_kwargs():
+            return cls(items=items, name=data.get("name"),
+                       isactive=data.get("isactive", True), **fields)
+        restored = cls(items=items, name=data.get("name"), isactive=data.get("isactive", True))
+        if fields:
+            # A subclass with a constructor of its own takes the arguments it declared; its
+            # fields are written afterwards, as one group so its rules are checked once.
+            restored.set(fields)
+        return restored
     
     def __iter__(self) -> Iterator[T]:
         """Iterate over the items in the container.

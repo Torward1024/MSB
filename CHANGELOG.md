@@ -13,6 +13,24 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [3.2.1] - 2026-10-21
+
+### Fixed
+
+- **A subclass with a constructor of its own could not be restored.** 3.2.0 passed a container's
+  and a project's declared fields to the constructor as keywords, which is right for the classes
+  that take `**fields` and wrong for every class that wrote its own narrower `__init__` --
+  `__init__(self, name, items)` is the common shape, and the application this release came from
+  uses it. Every `from_dict` on such a class raised `TypeError: got an unexpected keyword
+  argument`.
+
+  Where the constructor cannot take them, the fields are applied after it instead, as one group,
+  so the rules are still checked once. Whether a class takes them is read from its signature once
+  per class.
+
+  Found by running the downstream suite against the release: 1604 of its tests pass on 3.2.1,
+  where 3.2.0 broke 668 of them.
+
 ## [3.2.0] - 2026-10-21
 
 Reported from downstream, where a model of a brain was being put on MSB. Seven defects, all
