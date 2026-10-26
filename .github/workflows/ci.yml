@@ -10,6 +10,16 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    strategy:
+      # `requires-python` promises 3.12 and up, and only 3.12 was ever run. An untested promise
+      # is what 3.2.0 cost: a release green here raised TypeError in every subclass downstream.
+      # One version failing must not hide the rest, so the matrix does not stop at the first.
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13', '3.14', '3.15']
+
+    name: test (Python ${{ matrix.python-version }})
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -17,7 +27,7 @@ jobs:
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.12'
+        python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
       run: |
