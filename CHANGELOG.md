@@ -13,6 +13,55 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [3.2.2] - 2026-10-26
+
+`requires-python` promised four interpreters. The workflow ran one. Two of the other three had
+been broken for a year, and the suite was green the whole time.
+
+### Fixed
+
+- **A class keeps the fields it declares, on Python 3.14 and 3.15.** Those versions made
+  annotations lazy ([PEP 649](https://peps.python.org/pep-0649/) and
+  [PEP 749](https://peps.python.org/pep-0749/)): a class body that annotates a name no longer
+  leaves `__annotations__` in the namespace a metaclass is handed, it leaves an `__annotate__`
+  function that computes them on demand. The metaclass read the namespace key, found nothing,
+  and dropped every field the class declared itself:
+
+  ```python
+  class Client(BaseEntity):
+      credit: float = 0.0
+
+  Client(name="c", credit=5.0)    # UnknownAttributeError: Unknown attributes ... {'credit'}
+  ```
+
+  Fields inherited from a base still arrived, because reading `__annotations__` off a *built*
+  class does call `__annotate__` — so a hierarchy failed on exactly the fields it added. 273
+  tests failed on 3.14 and 3.15; all 1017 passed on 3.12.
+
+  Annotations are now read through `annotationlib.get_annotations` where it exists, with
+  `Format.FORWARDREF` so an annotation naming a class defined further down a module still does
+  not have to resolve while the class is being built — which is the laziness those PEPs added.
+  On 3.12 and 3.13 the previous path is untouched.
+
+### Changed
+
+- **The suite runs on every Python the metadata promises**: 3.12, 3.13, 3.14 and 3.15, with
+  `fail-fast: false` so one version failing cannot hide the rest.
+
+### Added
+
+- `tests/test_interpreter_versions.py`, which holds the promise and the matrix to each other.
+  It fails on the first interpreter the matrix does not list — the only moment anybody is in a
+  position to notice — and refuses any new direct read of `__annotations__` in the package, the
+  implementation detail that cost two versions.
+
+### Upgrading from 3.2.1
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| `UnknownAttributeError` for a field the class plainly declares, on Python 3.14 or 3.15 | Lazy annotations; the declared field never reached `_fields` | Upgrade. Nothing in your code was wrong |
+| Nothing, on Python 3.12 or 3.13 | Those versions were never affected | Upgrade when convenient |
+
 ## [3.2.1] - 2026-10-21
 
 ### Fixed

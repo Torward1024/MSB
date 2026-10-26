@@ -131,6 +131,14 @@ warning for a release and then going.
   walk, and a name is unique within a container rather than across a model. Where the answer
   matters, address the object: `locate(path)` is defined, `find(name)` is a convenience.
 
+## Behaviour corrected in 3.2.2
+
+- **A class's own declared fields work on Python 3.14 and 3.15.** They were silently dropped
+  there: the metaclass read `__annotations__` out of the class namespace, and those versions
+  moved it behind a lazily called `__annotate__` function (PEP 649/749). Inherited fields were
+  unaffected, so a hierarchy broke on precisely the fields each class added. No API changed;
+  code that was correct simply works now. 3.12 and 3.13 are untouched.
+
 ## Behaviour corrected in 3.2.0
 
 Five promises the documentation made and the code did not keep. Each changes what an existing
