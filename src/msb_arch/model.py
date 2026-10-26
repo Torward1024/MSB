@@ -19,7 +19,7 @@ Limits:
 import logging
 from typing import Any, Dict, List, Optional, Set, get_args
 
-from .base.serializable import Serializable
+from .base.serializable import Serializable, _own_annotations
 from .utils.logging_setup import logger
 
 #: The derivation only. Callers go through `manipulator.describe_model()`.
@@ -301,7 +301,7 @@ def member_called(name: str, owner: Any) -> Optional[Any]:
         return held
 
     # A container held in a field carries its own name, which is the one a path records.
-    for field in getattr(type(owner), "__annotations__", {}):
+    for field in _own_annotations(type(owner)):
         value = getattr(owner, field, None)
         if isinstance(value, Serializable) and getattr(value, "name", None) == name:
             return value

@@ -64,6 +64,52 @@ _TRAVERSAL: ContextVar = ContextVar("msb_arch_to_dict_seen", default=None)
 # of a set, and the death of either would stop tracking the other.
 _CACHING_OBJECTS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
+try:
+    # Python 3.14 made annotations lazy (PEP 649/749): a class body that annotates a name no
+    # longer leaves `__annotations__` in the namespace, it leaves an `__annotate__` function
+    # that computes them on demand. Reading the namespace key found nothing there, so every
+    # field a class declared itself was lost -- `credit: float = 0.0` became an unknown
+    # attribute -- while fields inherited from a base still arrived, because reading
+    # `__annotations__` off a built class does call `__annotate__`. Tested on 3.12 only, so
+    # 3.14 and 3.15 were broken for a year without a red light.
+    from annotationlib import Format as _AnnotationFormat, get_annotations as _get_annotations
+except ImportError:                     # 3.12 and 3.13, where the namespace key is the truth
+    _AnnotationFormat = None
+    _get_annotations = None
+
+
+def _own_annotations(owner: Any, namespace: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Return the annotations a class declares itself, without inheriting or evaluating.
+
+    Args:
+        owner (Any): The class to read. On 3.14 and later this is asked for its annotations
+            even when a raw namespace is also available, since the namespace no longer has them.
+        namespace (Optional[Dict[str, Any]]): The class body's namespace, when the caller is a
+            metaclass that has one. Used only on 3.12 and 3.13.
+
+    Returns:
+        Dict[str, Any]: Field name mapped to its annotation, which may be a string or a
+            `ForwardRef`; `_resolve_type` already reduces both against the declaring class.
+
+    Notes:
+        - `Format.FORWARDREF` rather than the default: an annotation naming a class defined
+          further down the module would otherwise raise at class-creation time, which is
+          exactly the lazy evaluation 3.14 introduced to avoid. An unresolved name arrives as
+          a `ForwardRef` and travels the same path a string annotation always has.
+        - Own annotations only, on every version. The merge across bases is the caller's job,
+          and it is done bases-first so that a subclass redeclaring a field wins.
+    """
+    if _get_annotations is not None:
+        try:
+            return dict(_get_annotations(owner, format=_AnnotationFormat.FORWARDREF))
+        except Exception:               # a broken `__annotate__` must not stop class creation
+            logger.debug("Could not read the annotations of %r", owner)
+            return {}
+    if namespace is not None:
+        return dict(namespace.get('__annotations__', {}) or {})
+    return dict(getattr(owner, '__annotations__', {}) or {})
+
+
 class EntityMeta(ABCMeta):
     """Metaclass for Serializable to handle type annotations and enforce attribute validation.
 
@@ -96,8 +142,8 @@ class EntityMeta(ABCMeta):
         for base in reversed(bases):
             if hasattr(base, '_fields'):
                 annotations.update(base._fields)
-            annotations.update(getattr(base, '__annotations__', {}))
-        annotations.update(attrs.get('__annotations__', {}))
+            annotations.update(_own_annotations(base))
+        annotations.update(_own_annotations(new_class, attrs))
         new_class._fields = annotations
         new_class._type_cache = {}
         # Rules declared with `@invariant`, collected here rather than on first use: the check
