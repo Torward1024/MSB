@@ -7,6 +7,9 @@ release changed is in [`CHANGELOG.md`](../CHANGELOG.md); what will not break is 
 From here MSB takes bug fixes and performance work. New surface needs a reason no existing part
 of the framework can serve, and the table below is where that argument starts.
 
+3.3.0 added [`NotNone()`](guide.md#requiring-a-field-value) after applications had to repeat
+the same invariant for each required field. The rule is declared on the field itself.
+
 ## Decided against
 
 Each was considered and closed. Recorded so it is decided once rather than argued again.

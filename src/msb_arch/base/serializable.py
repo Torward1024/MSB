@@ -25,7 +25,7 @@ from ..errors import (AttributeNotFoundError,
                       TypeValidationError,
                       UnknownAttributeError)
 from ..utils.logging_setup import logger
-from ..utils.validation import Constraint
+from ..utils.validation import Constraint, NotNone
 
 CYCLIC_REFERENCE = "<cyclic reference>"
 
@@ -40,6 +40,14 @@ _MISSING = object()
 #: a class is the oldest mistake in the language, and a field declared `= []` means "each starts
 #: empty" rather than "all share this one".
 _MUTABLE_STARTS = (list, dict, set, bytearray)
+
+
+def _not_none_rule(hint: Any) -> Optional[NotNone]:
+    """Return the rule on this position, without inspecting nested annotations."""
+    for rule in getattr(hint, '__metadata__', ()):
+        if isinstance(rule, NotNone):
+            return rule
+    return None
 
 # Guards the class registry. Declaring a class and reading the registry can happen on
 # different threads, and a WeakSet cannot be added to while it is being iterated.
@@ -391,17 +399,17 @@ class Serializable(ABC, metaclass=EntityMeta):
             self._validate_type('isactive', isactive, bool)
         super().__setattr__('isactive', isactive)
         
-        settable, known = self.__class__._init_plan()
+        settable, known, required = self.__class__._init_plan()
         for field, expected_type, checker, start, copied in settable:
             if field in _INTERNAL and field not in kwargs:
                 continue
             value = kwargs.get(field, _MISSING)
             if value is _MISSING:
                 value = copy(start) if copied else start
-            # What `_validate_type` does, with the checker looked up once per class. None is
-            # accepted for every field but `name`, which is checked above.
-            if value is not None and (checker is None or not checker(value)):
-                # The compiled form answers yes or no; the walk says which element was wrong.
+            if value is None:
+                if field in required:
+                    required[field].check(None, f"Attribute '{field}'")
+            elif checker is None or not checker(value):
                 self._check_type(field, value, expected_type, f"Attribute '{field}'")
             super().__setattr__(field, value)
             if isinstance(value, Serializable):
@@ -613,23 +621,23 @@ class Serializable(ABC, metaclass=EntityMeta):
             TypeError: If the value does not match the expected type, or if 'name' is None.
 
         Notes:
-            - `None` is accepted for every attribute except 'name', because unset annotated
-              attributes are initialized to None by `__init__`. Requiring a value therefore
-              cannot be expressed through the annotation alone; enforce it in the subclass.
-            - 'name' is the only mandatory attribute: containers index their items by it.
+            - An unset field is allowed unless its annotation carries `NotNone()`.
+            - Containers require a name to index their items.
             - The structural check is delegated to `_check_type`, which walks nested generics.
         """
-        if key == 'name' and value is None:
-            raise TypeValidationError(f"Attribute '{key}' cannot be None")
         if value is None:
-            return
-
-        checker = self.__class__._compiled_validator(expected_type)
-        if checker is not None and checker(value):
-            return
+            if key == 'name':
+                raise TypeValidationError(f"Attribute '{key}' cannot be None")
+            if key == 'isactive':
+                # The fast path for built-in state passes bool here even on a subclass.
+                expected_type = self._resolved_fields()[key]
+        else:
+            checker = self.__class__._compiled_validator(expected_type)
+            if checker is not None and checker(value):
+                return
 
         # Nothing compiled, or the compiled form said no and the walk names what failed.
-        self._check_type(key, value, expected_type, f"Attribute '{key}'")
+        self._check_value(key, value, expected_type, f"Attribute '{key}'")
 
     @classmethod
     def _resolved_fields(cls) -> Dict[str, Any]:
@@ -698,10 +706,10 @@ class Serializable(ABC, metaclass=EntityMeta):
         """Return the fields to set when building one of these, and the names it accepts.
 
         Returns:
-            Tuple[Tuple[Tuple[str, Any, Any, Any, bool], ...], frozenset]: For each field, its
+            tuple: For each field, its
                 name, its resolved annotation, its compiled check, what it starts as, and
                 whether that has to be copied per instance. Plus the set of names a constructor
-                may be given.
+                may be given and the fields with a `NotNone` constraint.
 
         Notes:
             - Resolving an annotation gives the same answer for every instance, so it is done
@@ -718,21 +726,44 @@ class Serializable(ABC, metaclass=EntityMeta):
               list shared by every object of a class is never what was meant.
         """
         plan = cls.__dict__.get('_init_plan_cache')
-        if plan is not None and plan[2] == len(cls._fields):
-            return plan[0], plan[1]
+        if plan is not None and len(plan[1]) == len(cls._fields):
+            return plan
 
         settable = []
+        required = {}
         for field, hint in cls._fields.items():
             start, copied = cls._starting_value(field)
             try:
-                resolved = cls._resolve_type(hint)
+                resolved = cls._declared_type(field, hint)
             except Exception:                       # reported later, against a real value
                 settable.append((field, hint, None, start, copied))
                 continue
-            settable.append((field, resolved, cls._compiled_validator(hint), start, copied))
-        built = (tuple(settable), frozenset(cls._fields), len(cls._fields))
+            settable.append((field, resolved, cls._compiled_validator(resolved), start, copied))
+            rule = _not_none_rule(resolved)
+            if rule is not None:
+                required[field] = rule
+        built = (tuple(settable), frozenset(cls._fields), required)
         type.__setattr__(cls, '_init_plan_cache', built)
-        return built[0], built[1]
+        return built
+
+    @classmethod
+    def _declared_type(cls, field: str, hint: Any) -> Any:
+        """Resolve a postponed expression in the scope of the class which declared it."""
+        if isinstance(hint, str) and '[' in hint:
+            from inspect import get_annotations, getmodule
+            for owner in cls.__mro__:
+                if _own_annotations(owner).get(field) != hint:
+                    continue
+                # Inspect only this declaration. An unrelated forward reference can still
+                # be unresolved. Serialized type names never enter this path.
+                def declaration() -> hint:
+                    pass
+                module = getmodule(owner)
+                scope = dict(vars(owner))
+                scope[owner.__name__] = owner
+                return get_annotations(declaration, globals=vars(module) if module else {},
+                                       locals=scope, eval_str=True)['return']
+        return cls._resolve_type(hint)
 
     @classmethod
     def _starting_value(cls, field: str):
@@ -835,31 +866,48 @@ class Serializable(ABC, metaclass=EntityMeta):
         self._invalidate_cache()
 
     @classmethod
-    def _takes_field_kwargs(cls) -> bool:
-        """Report whether this class's constructor accepts arbitrary field keywords.
-
-        Returns:
-            bool: True when `__init__` has a `**kwargs` of its own.
-
-        Notes:
-            - A subclass is free to write a narrower constructor -- `__init__(self, name, items)`
-              is a common and reasonable one -- and `from_dict` must not hand such a class
-              keywords it never asked for. Where it cannot, the fields are applied after
-              construction instead.
-            - Worked out once per class: reading a signature is not something to do per object.
-        """
-        cached = cls.__dict__.get('_field_kwargs_cache')
-        if cached is not None:
+    def _constructor_keywords(cls) -> Optional[Dict[str, bool]]:
+        """Map accepted keywords to whether they are required, or return None for **kwargs."""
+        cached = cls.__dict__.get('_field_kwargs_cache', _MISSING)
+        if cached is not _MISSING:
             return cached
 
         from inspect import Parameter, signature
         try:
-            takes = any(parameter.kind is Parameter.VAR_KEYWORD
-                        for parameter in signature(cls.__init__).parameters.values())
-        except (TypeError, ValueError):                 # a constructor that cannot be read
-            takes = False
-        type.__setattr__(cls, '_field_kwargs_cache', takes)
-        return takes
+            params = signature(cls.__init__).parameters.values()
+        except (TypeError, ValueError):
+            params = ()
+        keywords = None
+        if not any(p.kind is Parameter.VAR_KEYWORD for p in params):
+            keywords = {p.name: p.default is Parameter.empty for p in params
+                        if p.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)}
+        type.__setattr__(cls, '_field_kwargs_cache', keywords)
+        return keywords
+
+    @classmethod
+    def _with_fields(cls, fields: Dict[str, Any], **options: Any):
+        """Pass declared fields to the constructor it exposes and apply the rest as a group."""
+        keywords = cls._constructor_keywords()
+        if keywords is None:
+            return cls(**options, **fields)
+        required = cls._init_plan()[2]
+        # Existing optional fields of narrow constructors are restored after construction.
+        # Only pass a field early if the signature or its NotNone annotation requires it.
+        initial = {key: value for key, value in fields.items()
+                   if key in keywords and (keywords[key] or key in required)}
+        pending = {key: value for key, value in fields.items() if key not in initial}
+        # Older project constructors take only name and items. Their activation flag is
+        # restored after construction when the stored value differs from its default.
+        if 'isactive' not in keywords and 'isactive' in options:
+            active = options.pop('isactive')
+            if active is not True:
+                pending['isactive'] = active
+        if 'use_cache' not in keywords:
+            options.pop('use_cache', None)
+        restored = cls(**options, **initial)
+        if pending:
+            restored.set(pending)
+        return restored
 
     @classmethod
     def _declared_payload(cls, data: Dict[str, Any], skip: frozenset) -> Dict[str, Any]:
@@ -1054,6 +1102,22 @@ class Serializable(ABC, metaclass=EntityMeta):
         return shape
 
     @classmethod
+    def _check_value(cls, key: str, value: Any, hint: Any, subject: str, *,
+                     allow_unset: bool = True) -> None:
+        """Apply the null rule at this annotation, then check the type of a supplied value.
+
+        Mapping keys always undergo their type check. Other positions allow an unset value
+        unless explicitly marked. Existing constraints only receive supplied values.
+        """
+        if value is None:
+            rule = _not_none_rule(hint)
+            if rule is not None:
+                rule.check(None, subject)
+            if allow_unset:
+                return
+        cls._check_type(key, value, hint, subject)
+
+    @classmethod
     def _check_type(cls, key: str, value: Any, expected_type: Any, subject: str) -> None:
         """Recursively check a non-None value against a (possibly generic) type hint.
 
@@ -1072,7 +1136,7 @@ class Serializable(ABC, metaclass=EntityMeta):
             TypeError: If the value does not match the expected type.
 
         Notes:
-            - `None` elements inside collections are skipped, mirroring the top-level rule.
+            - Collection values follow the same null rule as a field via `_check_value`.
             - Type hints whose origin is an abstract collection (e.g. `Sequence[int]`) are
               checked with `isinstance` against the origin only; their elements are left
               unchecked so that arbitrary iterables are never consumed during validation.
@@ -1171,9 +1235,7 @@ class Serializable(ABC, metaclass=EntityMeta):
         if resolved_item_type is Any:
             return
         for item in values:
-            if item is None:
-                continue
-            cls._check_type(key, item, resolved_item_type, subject)
+            cls._check_value(key, item, resolved_item_type, subject)
     @classmethod
     def _check_mapping(cls, key: str, value: Dict[Any, Any], key_type: Any, value_type: Any,
                        subject: str) -> None:
@@ -1197,9 +1259,9 @@ class Serializable(ABC, metaclass=EntityMeta):
             return
         for k, v in value.items():
             if check_keys:
-                cls._check_type(key, k, resolved_key_type, f"Key in '{key}'")
-            if check_values and v is not None:
-                cls._check_type(key, v, resolved_value_type, f"Value in '{key}'")
+                cls._check_value(key, k, resolved_key_type, f"Key in '{key}'", allow_unset=False)
+            if check_values:
+                cls._check_value(key, v, resolved_value_type, f"Value in '{key}'")
     @classmethod
     def _check_tuple(cls, key: str, value: tuple, type_args: tuple, subject: str) -> None:
         """Check a tuple against either a variadic or a fixed-length type hint.
@@ -1224,9 +1286,7 @@ class Serializable(ABC, metaclass=EntityMeta):
         if len(value) != len(type_args):
             raise TypeValidationError(f"{subject} must have {len(type_args)} items, got {len(value)}")
         for index, (item, item_type) in enumerate(zip(value, type_args)):
-            if item is None:
-                continue
-            cls._check_type(key, item, item_type, f"Item {index} in tuple '{key}'")
+            cls._check_value(key, item, item_type, f"Item {index} in tuple '{key}'")
     def activate(self) -> None:
         """Activate the entity, setting its status to active.
 
@@ -1358,7 +1418,7 @@ class Serializable(ABC, metaclass=EntityMeta):
         if value is None:
             return None
 
-        _, _, origin, args = cls._hint_shape(hint)
+        hint, _, origin, args = cls._hint_shape(hint)
 
         # A number or a string against an unparameterized hint is already what it will be.
         if origin is None and type(value) in _PLAIN:
@@ -1409,6 +1469,8 @@ class Serializable(ABC, metaclass=EntityMeta):
             return tuple(value)
         if origin is dict and isinstance(value, dict):
             key_hint = args[0] if len(args) == 2 else Any
+            if hasattr(key_hint, '__metadata__'):
+                key_hint = cls._hint_shape(key_hint)[0]
             member = args[1] if len(args) == 2 else Any
             return {cls._restore_key(key, key_hint): cls._deserialize_value(item, member,
                                                                             field_path,

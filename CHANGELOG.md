@@ -13,6 +13,30 @@ causes it, and what to do about it. Start there when moving between versions. An
 records what was true at the time of that release and is not rewritten afterwards; where a
 statement has since been overtaken, a note says where it was resolved.
 
+## [3.3.0] - 2026-11-17
+
+### Added
+
+- `Annotated[T, NotNone()]` requires a non-null value on construction, assignment and
+  restore. A declared default satisfies the rule. Combine it with `NonEmpty()` for a
+  required, nonblank string. See the [guide](docs/guide.md#requiring-a-field-value).
+
+### Fixed
+
+- Container clones preserve their declared fields. A mixed `set()` that replaces items
+  and fields restores the original items when a field fails validation.
+- Containers and projects pass required field keywords to custom constructors on restore.
+- Postponed field annotations retain their constraints when another field names a type
+  that has yet to be defined.
+- Restoring a field uses the underlying type of an `Annotated` entity or numeric mapping key.
+
+### Upgrade
+
+| Model | Action |
+| --- | --- |
+| Existing fields | No changes required. Unmarked fields keep their existing null behaviour. |
+| Adding `NotNone()` to saved data | Provide a default for missing keys or migrate the records. Migrate explicit `null` values before restoring. |
+
 ## [3.2.2] - 2026-10-26
 
 `requires-python` promised four interpreters. The workflow ran one. Two of the other three had

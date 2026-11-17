@@ -32,7 +32,7 @@ short:
 | **Protocols** | `MethodProvider`, `Interceptor` |
 | **Interceptors** | `RequestMetrics`, `RequestJournal` |
 | **Derivation** | `derive`, `label_for`, `order`, `derive_model`, `dependents_of`, `holdings_of`, `path_of` |
-| **Constraints** | `Constraint`, `Positive`, `NonNegative`, `NonZero`, `NonEmpty`, `Range`, `Predicate`, `invariant` |
+| **Constraints** | `Constraint`, `Positive`, `NonNegative`, `NonZero`, `NonEmpty`, `NotNone`, `Range`, `Predicate`, `invariant` |
 | **Exceptions** | `MSBError` and everything beneath it |
 | **Utilities** | `logger`, `setup_logging`, `cache_statistics` |
 

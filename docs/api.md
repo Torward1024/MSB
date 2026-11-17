@@ -108,7 +108,8 @@ Check if attribute exists.
 ##### `reset_attributes() -> None`
 
 Set every public attribute to None, releasing what it referred to. `name`, `isactive` and
-underscore-prefixed fields are kept. The object stays usable.
+underscore-prefixed fields are kept. A field marked with `NotNone()` makes the reset raise
+`ConstraintError` before clearing any field.
 
 ##### `__getitem__(key: str) -> Any`
 
@@ -1151,7 +1152,8 @@ implemented, since that is Python's contract rather than MSB's.
 An attribute's annotation is its validation rule, enforced structurally and nested to any depth:
 `Union`, `Optional`, `List`, `Set`, `FrozenSet`, `Tuple` (fixed and variadic), `Dict`, `Literal`,
 `Type[X]`, `Callable`, and any `Serializable` subclass. Constraints go beside the type —
-`price: Annotated[float, Positive()]`.
+`price: Annotated[float, Positive()]`. Use `sku: Annotated[str, NotNone()]` to require a
+non-null value after defaults have been applied.
 
 See [Type Validation](modules/base.md#type-validation-_validate_type) for what each hint accepts
 and what it refuses.

@@ -272,9 +272,8 @@ class Constraint(ABC):
         class Product(BaseEntity):
             price: Annotated[float, Positive()]
 
-    The annotation is checked first, then every constraint on it, so a constraint only ever
-    sees a value of the declared type. Each delegates to the function of the same meaning
-    above, which is where the message and the logging live.
+    For supplied values, the annotation is checked before its constraints. An unset field
+    skips these checks unless its annotation includes `NotNone()`.
 
     Subclass this to add a rule of your own; `check` is the whole interface.
     """
@@ -321,6 +320,14 @@ class NonEmpty(Constraint):
 
     def check(self, value: Any, name: str) -> None:
         check_non_empty_string(value, name)
+
+
+class NotNone(Constraint):
+    """Require a value after applying the field's declared default."""
+
+    def check(self, value: Any, name: str) -> None:
+        if value is None:
+            raise ConstraintError(f"{name} must not be None")
 
 
 class Range(Constraint):

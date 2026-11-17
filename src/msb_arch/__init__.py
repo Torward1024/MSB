@@ -36,6 +36,7 @@ from .utils.validation import (Constraint,
                                NonEmpty,
                                NonNegative,
                                NonZero,
+                               NotNone,
                                Positive,
                                Predicate,
                                Range)
@@ -44,11 +45,11 @@ __all__ = ["Serializable", "BaseEntity", "BaseContainer", "Super", "Project", "M
            "MSBError", "ValidationError", "TypeValidationError", "ConstraintError", "InvariantError", "UnknownAttributeError", "ItemNameError",
            "DuplicateNameError", "ResolutionError", "NotFoundError", "AttributeNotFoundError", "SerializationError",
            "OperationError", "RegistrationError", "DispatchError", "RequestError", "HandlerError",
-           "Constraint", "invariant", "Positive", "NonNegative", "NonZero", "NonEmpty", "Range", "Predicate",
+           "Constraint", "invariant", "Positive", "NonNegative", "NonZero", "NonEmpty", "NotNone", "Range", "Predicate",
            "MethodProvider", "Interceptor", "Inspector", "Configurator", "Catalogue", "Persistence", "Loader",
            "derive", "label_for", "order", "derive_model", "dependents_of", "holdings_of",
            "ReadOnlyMapping", "ReadOnlyList",
            "path_of",
            "RequestMetrics", "RequestJournal", "cache_statistics"]
 
-__version__ = "3.2.2"
+__version__ = "3.3.0"

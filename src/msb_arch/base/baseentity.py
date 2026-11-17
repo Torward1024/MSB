@@ -132,6 +132,9 @@ class BaseEntity(Serializable):
     def reset_attributes(self) -> None:
         """Set every public attribute to None, releasing whatever it referred to.
 
+        Raises:
+            ConstraintError: If a field to reset is marked with `NotNone()`.
+
         Notes:
             - 'name' and 'isactive' are kept, and so is every underscore-prefixed field:
               those hold framework state such as the shared type cache, and nulling them
@@ -146,10 +149,12 @@ class BaseEntity(Serializable):
             >>> part.price is None
             True
         """
-        for key in self._fields:
-            if key in ("name", "isactive") or key.startswith('_'):
-                continue
-            if hasattr(self, key):
+        # Refuse the reset before clearing any other field.
+        for key, rule in self._init_plan()[2].items():
+            if key not in _INTERNAL and not key.startswith('_'):
+                rule.check(None, f"Attribute '{key}'")
+        for key in self._written_fields():
+            if key not in _INTERNAL and hasattr(self, key):
                 super().__setattr__(key, None)
         self._invalidate_cache()
 
@@ -181,7 +186,7 @@ class BaseEntity(Serializable):
         """
         if key not in self._fields:
             raise NotFoundError(f"Attribute '{key}' not found in {self.__class__.__name__}")
-        expected_type = self._resolve_type(self._fields[key])
+        expected_type = self._resolved_fields()[key]
         self._validate_type(key, value, expected_type)
         setattr(self, key, value)
         self._invalidate_cache()

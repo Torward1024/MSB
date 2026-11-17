@@ -91,6 +91,38 @@ except ConstraintError as error:
 `Predicate` takes any callable and the words to use when it says no, which covers the rules that
 have no name of their own.
 
+### Requiring a field value
+
+Use `NotNone()` when an object needs a value as soon as it exists. A missing field uses its
+declared default. An explicit `None` raises `ConstraintError` even when a default exists.
+Combine `NotNone()` with `NonEmpty()` to require a nonblank string.
+
+```python
+from typing import Annotated
+from msb_arch import BaseEntity, NonEmpty, NotNone
+
+class StockItem(BaseEntity):
+    sku: Annotated[str, NotNone(), NonEmpty()]
+    quantity: Annotated[int, NotNone()] = 0
+    note: str
+
+item = StockItem(name="part", sku="A1")
+assert item.quantity == 0 and item.note is None
+```
+
+```python
+# raises: ConstraintError
+StockItem(name="part")              # sku has no default
+```
+
+```python
+# raises: ConstraintError
+item.quantity = None
+```
+
+`set()` and `from_dict()` enforce the same rule. When adding it to an existing model,
+supply a default for older records missing the field, and migrate any stored `null` values.
+
 ### A rule about the whole object
 
 A constraint guards one value. It cannot say that a discount is not larger than the price, or that

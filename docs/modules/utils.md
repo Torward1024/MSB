@@ -292,12 +292,14 @@ except ConstraintError as error:
 | `NonNegative()` | zero or greater | `check_non_negative` |
 | `NonZero()` | not zero | `check_non_zero` |
 | `NonEmpty()` | a string with more than whitespace | `check_non_empty_string` |
+| `NotNone()` | a value other than `None` | -- |
 | `Range(min, max)` | between two bounds, inclusive | `check_range` |
 | `Predicate(test, description)` | anything a function can decide | -- |
 
-The type is checked first and the constraints after, so a rule never sees a value it was not
-written for. Several may sit on one field and all of them apply. `None` is still allowed
-wherever the annotation permits it, since an unset attribute starts as `None`.
+For a supplied value, MSB checks the type, then each constraint. An unset field skips value
+constraints unless its annotation includes `NotNone()`. Use `Annotated[str, NotNone(), NonEmpty()]`
+for a required, nonblank string. Use `list[Annotated[str, NotNone()]]` to require a value for
+each element when assigning the list. See the [guide](../guide.md#requiring-a-field-value).
 
 `Predicate` is the escape hatch for a one-off rule:
 

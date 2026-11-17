@@ -190,10 +190,9 @@ The `_validate_type` method validates that a given value matches the expected ty
 **Notes:**
 
 - Handles complex types including Union, Dict, List, and nested entities.
-- Allows None values for every attribute except 'name', which containers use as the item key.
-  A field the constructor is not given starts as whatever the class declared, and as None when
-  the class declared nothing -- so a mandatory attribute cannot be expressed through its
-  annotation; enforce it with an `@invariant` or in the subclass instead.
+- A missing field starts with its declared default, or `None` if it has none.
+  Mark a field with `Annotated[T, NotNone()]` to require a non-null value.
+  Containers also require a name as the item key. See the [required field example](../guide.md#requiring-a-field-value).
 
 **Supported type hints:**
 

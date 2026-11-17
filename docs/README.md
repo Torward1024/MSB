@@ -75,7 +75,7 @@ error taxonomy, logging and the validation helpers.
 
 ## Version
 
-3.2.2
+3.3.0
 
 ## License
 

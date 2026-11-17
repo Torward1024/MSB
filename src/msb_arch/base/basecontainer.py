@@ -471,11 +471,23 @@ class BaseContainer(Serializable, ABC, Generic[T]):
               checked once at the end, and a refusal puts every field back.
         """
         items = params.get("_items", _MISSING)
-        if items is not _MISSING:
-            params = {key: value for key, value in params.items() if key != "_items"}
+        if items is _MISSING:
+            if params:
+                super().set(params)
+            return
+        if len(params) == 1:
             self.set_items(items)
-        if params:
-            super().set(params)
+            return
+        # A mixed write also restores the items if validation of another field fails.
+        previous = self._items.copy()
+        try:
+            self.set_items(items)
+            super().set({key: value for key, value in params.items() if key != "_items"})
+        except BaseException:
+            self._items.clear()
+            self._items.update(previous)
+            self._invalidate_cache()
+            raise
 
     def set_items(self, items: Dict[str, T]) -> None:
         """Set or replace all items in the container.
@@ -541,7 +553,10 @@ class BaseContainer(Serializable, ABC, Generic[T]):
             new_items = {name: item.clone() for name, item in list(self._items.items())}
         else:
             new_items = self._items.copy()
-        return self.__class__(items=new_items, name=self.name, isactive=self.isactive, use_cache=self._use_cache)
+        fields = {key: getattr(self, key) for key in self._written_fields()
+                  if key not in _RESTORED_SEPARATELY}
+        return self._with_fields(deepcopy(fields) if deep else fields, items=new_items,
+                                 name=self.name, isactive=self.isactive, use_cache=self._use_cache)
 
     def activate_item(self, name: str) -> None:
         """Activate an item in the container by its name.
@@ -741,16 +756,9 @@ class BaseContainer(Serializable, ABC, Generic[T]):
         # The container's own declared fields, which `to_dict` has always written and this used
         # to drop -- restoring the class's defaults over what the file said.
         fields = cls._declared_payload(data, _RESTORED_SEPARATELY)
-        if fields and cls._takes_field_kwargs():
-            return cls(items=items, name=data.get("name"),
-                       isactive=data.get("isactive", True), **fields)
-        restored = cls(items=items, name=data.get("name"), isactive=data.get("isactive", True))
-        if fields:
-            # A subclass with a constructor of its own takes the arguments it declared; its
-            # fields are written afterwards, as one group so its rules are checked once.
-            restored.set(fields)
-        return restored
-    
+        return cls._with_fields(fields, items=items, name=data.get("name"),
+                                isactive=data.get("isactive", True))
+
     def __iter__(self) -> Iterator[T]:
         """Iterate over the items in the container.
 
